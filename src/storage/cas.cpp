@@ -22,6 +22,32 @@ namespace {
 
 std::atomic<uint64_t> g_cas_seq{0};
 
+void load_stats_file(const std::string& cache_root, uint64_t& hits,
+                     uint64_t& misses) {
+  fs::path stats_file = fs::path(cache_root) / "stats.dat";
+  std::ifstream ifs(stats_file);
+  if (ifs.is_open()) {
+    ifs >> hits >> misses;
+  }
+}
+
+void save_stats_file(const std::string& cache_root, uint64_t hits,
+                     uint64_t misses) {
+  fs::path stats_file = fs::path(cache_root) / "stats.dat";
+  fs::path tmp_file = fs::path(cache_root) / "tmp" /
+                      ("stats_" + std::to_string(::getpid()) + ".tmp");
+  std::ofstream ofs(tmp_file, std::ios::trunc);
+  if (ofs.is_open()) {
+    ofs << hits << " " << misses << "\n";
+    ofs.close();
+    std::error_code ec;
+    fs::rename(tmp_file, stats_file, ec);
+    if (ec) {
+      fs::remove(tmp_file, ec);
+    }
+  }
+}
+
 std::string resolve_cache_root(std::string path) {
   if (path.empty()) {
     const char* env_cas = std::getenv("VIRMUX_CAS_DIR");
@@ -62,6 +88,8 @@ CasStore::CasStore(std::string cache_root)
   fs::path tmp_dir = fs::path(cache_root_) / "tmp";
   fs::create_directories(tmp_dir, ec);
   fs::permissions(tmp_dir, fs::perms::owner_all, fs::perm_options::replace, ec);
+
+  load_stats_file(cache_root_, hits_, misses_);
 }
 
 std::string CasStore::get_path(const std::string& key) const {
@@ -69,6 +97,11 @@ std::string CasStore::get_path(const std::string& key) const {
       key.find('\\') != std::string::npos ||
       key.find("..") != std::string::npos) {
     return {};
+  }
+  if (key.size() >= 4) {
+    return (fs::path(cache_root_) / "objects" / key.substr(0, 2) /
+            key.substr(2, 2) / key)
+        .string();
   }
   if (key.size() >= 2) {
     return (fs::path(cache_root_) / "objects" / key.substr(0, 2) / key)
@@ -175,6 +208,7 @@ bool CasStore::put_bytes(const std::string& key,
 bool CasStore::get(const std::string& key, const std::string& dest_path) {
   if (key.empty()) {
     misses_++;
+    save_stats_file(cache_root_, hits_, misses_);
     return false;
   }
 
@@ -182,10 +216,15 @@ bool CasStore::get(const std::string& key, const std::string& dest_path) {
   std::error_code ec;
   if (!fs::is_regular_file(src, ec)) {
     misses_++;
+    save_stats_file(cache_root_, hits_, misses_);
     return false;
   }
 
   hits_++;
+  save_stats_file(cache_root_, hits_, misses_);
+
+  // Update access time for true LRU eviction
+  fs::last_write_time(src, fs::file_time_type::clock::now(), ec);
 
   fs::path dest(dest_path);
   if (dest.has_parent_path()) {
@@ -195,8 +234,24 @@ bool CasStore::get(const std::string& key, const std::string& dest_path) {
     }
   }
 
-  fs::copy_file(src, dest, fs::copy_options::overwrite_existing, ec);
-  return !ec;
+  pid_t pid = ::getpid();
+  uint64_t seq = g_cas_seq.fetch_add(1, std::memory_order_relaxed);
+  std::string temp_dest = dest.string() + ".tmp." + std::to_string(pid) +
+                          "." + std::to_string(seq);
+
+  fs::copy_file(src, temp_dest, fs::copy_options::overwrite_existing, ec);
+  if (ec) {
+    fs::remove(temp_dest, ec);
+    return false;
+  }
+
+  fs::rename(temp_dest, dest, ec);
+  if (ec) {
+    fs::remove(temp_dest, ec);
+    return false;
+  }
+
+  return true;
 }
 
 size_t CasStore::prune(uint64_t max_bytes) {
@@ -252,8 +307,11 @@ size_t CasStore::prune(uint64_t max_bytes) {
 
 CasStats CasStore::get_stats() const {
   CasStats stats{};
-  stats.hits = hits_;
-  stats.misses = misses_;
+  uint64_t h = hits_;
+  uint64_t m = misses_;
+  load_stats_file(cache_root_, h, m);
+  stats.hits = h;
+  stats.misses = m;
 
   std::error_code ec;
   fs::path objects_dir = fs::path(cache_root_) / "objects";
@@ -276,6 +334,7 @@ CasStats CasStore::get_stats() const {
 void CasStore::reset_stats() noexcept {
   hits_ = 0;
   misses_ = 0;
+  save_stats_file(cache_root_, 0, 0);
 }
 
 }  // namespace virmux

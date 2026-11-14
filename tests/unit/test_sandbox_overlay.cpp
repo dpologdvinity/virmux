@@ -227,7 +227,7 @@ void test_sandbox_ephemeral_default_current_path(void) {
   cleanup_test_dir(temp_dir);
 }
 
-void test_sandbox_ephemeral_fallback_on_invalid_dir(void) {
+void test_sandbox_ephemeral_fail_closed_on_invalid_dir(void) {
   virmux::SandboxConfig cfg{
       .ephemeral = true,
       .workspace_dir = "/tmp/virmux_nonexistent_workspace_99999",
@@ -238,10 +238,10 @@ void test_sandbox_ephemeral_fallback_on_invalid_dir(void) {
   char arg2[] = "exit 0";
   char* argv[] = {arg0, arg1, arg2, nullptr};
 
-  // Overlay setup should fail, log warning, fallback to non-ephemeral,
-  // then child tries to chdir to nonexistent dir and exits 127
+  // Overlay setup must fail-closed: return -1 immediately without executing
+  // command on host when ephemeral mode is requested.
   int exit_code = virmux::spawn_command(cfg, argv);
-  TEST_ASSERT_EQUAL_INT(127, exit_code);
+  TEST_ASSERT_EQUAL_INT(-1, exit_code);
 }
 
 int main(void) {
@@ -252,6 +252,6 @@ int main(void) {
   RUN_TEST(test_sandbox_scratch_isolated_per_invocation);
   RUN_TEST(test_sandbox_custom_scratch_dir);
   RUN_TEST(test_sandbox_ephemeral_default_current_path);
-  RUN_TEST(test_sandbox_ephemeral_fallback_on_invalid_dir);
+  RUN_TEST(test_sandbox_ephemeral_fail_closed_on_invalid_dir);
   return UNITY_END();
 }

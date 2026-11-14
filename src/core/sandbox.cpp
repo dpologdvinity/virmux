@@ -217,10 +217,8 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
     if (!overlay->setup()) {
       std::fprintf(
           stderr,
-          "warning: [overlay] failed to setup ephemeral workspace layout; "
-          "falling back to non-ephemeral\n");
-      overlay.reset();
-      is_ephemeral = false;
+          "error: [overlay] failed to setup ephemeral workspace layout\n");
+      return -1;
     }
   }
 

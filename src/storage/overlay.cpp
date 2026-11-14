@@ -75,22 +75,6 @@ std::string expand_home_path(std::string path) {
   return path;
 }
 
-void fix_permissions_recursive(const fs::path& path) noexcept {
-  std::error_code ec;
-  fs::permissions(path, fs::perms::owner_all, fs::perm_options::add, ec);
-  if (!fs::is_directory(path, ec)) {
-    return;
-  }
-  for (const auto& entry : fs::directory_iterator(
-           path, fs::directory_options::skip_permission_denied, ec)) {
-    fs::permissions(entry.path(), fs::perms::owner_all, fs::perm_options::add,
-                    ec);
-    if (entry.is_directory(ec)) {
-      fix_permissions_recursive(entry.path());
-    }
-  }
-}
-
 }  // namespace
 
 OverlayWorkspace::OverlayWorkspace(OverlayConfig config)
@@ -140,6 +124,12 @@ bool OverlayWorkspace::setup() {
     return false;
   }
 
+  // Reject paths containing commas or colons which corrupt overlay mount options
+  if (config_.lower_dir.find(',') != std::string::npos ||
+      config_.lower_dir.find(':') != std::string::npos) {
+    return false;
+  }
+
   std::string expanded_lower = expand_home_path(config_.lower_dir);
   std::error_code ec;
   if (!fs::exists(expanded_lower, ec) ||
@@ -154,6 +144,10 @@ bool OverlayWorkspace::setup() {
   config_.lower_dir = canonical_lower.string();
 
   std::string base_dir = resolve_runtime_dir(config_.runtime_dir);
+  if (base_dir.find(',') != std::string::npos ||
+      base_dir.find(':') != std::string::npos) {
+    return false;
+  }
   fs::path base_path(base_dir);
   if (!fs::create_directories(base_path, ec) && !fs::exists(base_path, ec)) {
     return false;
@@ -210,21 +204,24 @@ bool OverlayWorkspace::mount_in_current_namespace() {
   std::string opts = "lowerdir=" + config_.lower_dir +
                      ",upperdir=" + upper_dir_ + ",workdir=" + work_dir_;
   int res = ::mount("overlay", merged_dir_.c_str(), "overlay", 0, opts.c_str());
-  if (res == 0) {
-    mounted_ = true;
-    if (!config_.lower_dir.empty()) {
-      if (::mount(merged_dir_.c_str(), config_.lower_dir.c_str(), nullptr,
-                  MS_BIND | MS_REC, nullptr) != 0) {
-        std::fprintf(stderr,
-                     "warning: [overlay] bind mount of merged dir onto lower "
-                     "dir failed: %s\n",
-                     std::strerror(errno));
-      }
-    }
-    return true;
+  if (res != 0) {
+    return false;
   }
 
-  return false;
+  mounted_ = true;
+  if (!config_.lower_dir.empty()) {
+    if (::mount(merged_dir_.c_str(), config_.lower_dir.c_str(), nullptr,
+                MS_BIND | MS_REC, nullptr) != 0) {
+      std::fprintf(stderr,
+                   "error: [overlay] bind mount of merged dir onto lower "
+                   "dir failed: %s\n",
+                   std::strerror(errno));
+      ::umount2(merged_dir_.c_str(), MNT_DETACH);
+      mounted_ = false;
+      return false;
+    }
+  }
+  return true;
 }
 
 void OverlayWorkspace::teardown() noexcept {
@@ -237,10 +234,7 @@ void OverlayWorkspace::teardown() noexcept {
   }
 
   if (!upper_dir_.empty()) {
-    try {
-      cleanse_path(upper_dir_);
-    } catch (...) {
-    }
+    cleanse_path(upper_dir_);
   }
 
   if (!session_dir_.empty()) {

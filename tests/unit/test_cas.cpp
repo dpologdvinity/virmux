@@ -106,9 +106,10 @@ void test_cas_put_get_bytes(void) {
   TEST_ASSERT_TRUE(put_ok);
   TEST_ASSERT_TRUE(cas.contains(key));
 
-  std::string expected_prefix = key.substr(0, 2);
-  std::string expected_path =
-      temp_dir + "/objects/" + expected_prefix + "/" + key;
+  std::string expected_prefix1 = key.substr(0, 2);
+  std::string expected_prefix2 = key.substr(2, 2);
+  std::string expected_path = temp_dir + "/objects/" + expected_prefix1 + "/" +
+                              expected_prefix2 + "/" + key;
   TEST_ASSERT_EQUAL_STRING(expected_path.c_str(), cas.get_path(key).c_str());
   TEST_ASSERT_TRUE(fs::exists(expected_path));
 
@@ -259,6 +260,51 @@ void test_cas_prune_lru(void) {
   cleanup_test_dir(temp_dir);
 }
 
+void test_cas_stats_persistence_and_true_lru(void) {
+  std::string temp_dir = create_test_temp_dir();
+  std::string dest = temp_dir + "/dest.txt";
+
+  {
+    virmux::CasStore cas1(temp_dir);
+    std::string obj1(100, 'X');
+    std::string key1 = virmux::sha256_hash(obj1);
+    cas1.put_bytes(key1, std::span<const uint8_t>(
+                             reinterpret_cast<const uint8_t*>(obj1.data()), 100));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+    std::string obj2(100, 'Y');
+    std::string key2 = virmux::sha256_hash(obj2);
+    cas1.put_bytes(key2, std::span<const uint8_t>(
+                             reinterpret_cast<const uint8_t*>(obj2.data()), 100));
+
+    // Touch obj1 via get() -> updates last_write_time so obj1 is newer than obj2
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    TEST_ASSERT_TRUE(cas1.get(key1, dest));
+    TEST_ASSERT_FALSE(cas1.get("nonexistent_key", dest));
+  }
+
+  // Open fresh CasStore instance: verify hits and misses were persisted
+  {
+    virmux::CasStore cas2(temp_dir);
+    virmux::CasStats stats = cas2.get_stats();
+    TEST_ASSERT_EQUAL_UINT64(1, stats.hits);
+    TEST_ASSERT_EQUAL_UINT64(1, stats.misses);
+    TEST_ASSERT_EQUAL_UINT(2, stats.object_count);
+
+    // Prune to 150 bytes: obj2 should be evicted (LRU), obj1 remains because touched
+    std::string key1 = virmux::sha256_hash(std::string(100, 'X'));
+    std::string key2 = virmux::sha256_hash(std::string(100, 'Y'));
+
+    size_t pruned = cas2.prune(150);
+    TEST_ASSERT_EQUAL_UINT(1, pruned);
+    TEST_ASSERT_TRUE(cas2.contains(key1));
+    TEST_ASSERT_FALSE(cas2.contains(key2));
+  }
+
+  cleanup_test_dir(temp_dir);
+}
+
 void test_cas_overwrite_atomic(void) {
   std::string temp_dir = create_test_temp_dir();
   virmux::CasStore cas(temp_dir);
@@ -302,6 +348,7 @@ int main(void) {
   RUN_TEST(test_cas_put_file_and_atomic_staging);
   RUN_TEST(test_cas_stats_and_reset);
   RUN_TEST(test_cas_prune_lru);
+  RUN_TEST(test_cas_stats_persistence_and_true_lru);
   RUN_TEST(test_cas_overwrite_atomic);
   return UNITY_END();
 }

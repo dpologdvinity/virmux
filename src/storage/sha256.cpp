@@ -224,7 +224,7 @@ std::string sha256_hash_file(const std::string& file_path) {
     ctx.update(buffer.data(), static_cast<size_t>(bytes_read));
   }
 
-  if (file.bad()) {
+  if (file.bad() || (file.fail() && !file.eof())) {
     return "";
   }
 

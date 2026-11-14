@@ -290,6 +290,66 @@ void test_cleanse_path_symlinks_and_broken_symlinks(void) {
   std::filesystem::remove_all(base_dir);
 }
 
+void test_fix_permissions_recursive_symlink_safety(void) {
+  char dir_template[] = "/tmp/virmux_fixperm_XXXXXX";
+  char* tmp_dir = ::mkdtemp(dir_template);
+  TEST_ASSERT_NOT_NULL(tmp_dir);
+
+  char out_template[] = "/tmp/virmux_fixperm_out_XXXXXX";
+  char* tmp_out = ::mkdtemp(out_template);
+  TEST_ASSERT_NOT_NULL(tmp_out);
+
+  std::string base_dir(tmp_dir);
+  std::string out_dir(tmp_out);
+
+  // Outside target file with 0444 read-only permissions
+  std::string outside_target = out_dir + "/external_file.txt";
+  {
+    std::ofstream out(outside_target);
+    out << "external secret data\n";
+  }
+  std::error_code ec;
+  std::filesystem::permissions(outside_target, std::filesystem::perms::owner_read,
+                               std::filesystem::perm_options::replace, ec);
+
+  // Inside base_dir: read-only directory and file, plus a symlink pointing outside
+  std::string internal_dir = base_dir + "/readonly_subdir";
+  std::filesystem::create_directory(internal_dir, ec);
+  std::string internal_file = internal_dir + "/ro_file.txt";
+  {
+    std::ofstream out(internal_file);
+    out << "internal data\n";
+  }
+  std::filesystem::permissions(internal_file, std::filesystem::perms::owner_read,
+                               std::filesystem::perm_options::replace, ec);
+  std::filesystem::permissions(internal_dir,
+                               std::filesystem::perms::owner_read |
+                                   std::filesystem::perms::owner_exec,
+                               std::filesystem::perm_options::replace, ec);
+
+  // Symlink pointing to outside target
+  std::string symlink_path = base_dir + "/link_to_external";
+  std::filesystem::create_symlink(outside_target, symlink_path, ec);
+
+  // Fix permissions on base_dir
+  virmux::fix_permissions_recursive(base_dir);
+
+  // Verify internal read-only subdir was fixed so remove_all succeeds
+  TEST_ASSERT_TRUE(std::filesystem::remove_all(base_dir, ec) > 0);
+  TEST_ASSERT_FALSE(ec);
+
+  // Verify external file was NEVER touched or chown'd/chmod'd
+  auto out_perms = std::filesystem::status(outside_target, ec).permissions();
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(std::filesystem::perms::owner_read),
+      static_cast<int>(out_perms & std::filesystem::perms::owner_all));
+
+  // Cleanup external dir
+  std::filesystem::permissions(outside_target, std::filesystem::perms::owner_all,
+                               std::filesystem::perm_options::replace, ec);
+  std::filesystem::remove_all(out_dir, ec);
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_cleanse_path_evicts_cache_without_deleting_file);
@@ -298,5 +358,6 @@ int main(void) {
   RUN_TEST(test_cleanse_path_directory_continues_past_unreadable);
   RUN_TEST(test_cleanse_path_nonexistent_and_empty);
   RUN_TEST(test_cleanse_path_symlinks_and_broken_symlinks);
+  RUN_TEST(test_fix_permissions_recursive_symlink_safety);
   return UNITY_END();
 }

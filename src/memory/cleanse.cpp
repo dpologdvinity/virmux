@@ -87,4 +87,33 @@ void cleanse_path(std::string_view path) {
   }
 }
 
+void fix_permissions_recursive(const std::filesystem::path& path) noexcept {
+  std::error_code ec;
+  if (std::filesystem::is_symlink(path, ec)) {
+    return;
+  }
+  std::filesystem::permissions(
+      path, std::filesystem::perms::owner_all,
+      std::filesystem::perm_options::add | std::filesystem::perm_options::nofollow,
+      ec);
+  if (!std::filesystem::is_directory(path, ec)) {
+    return;
+  }
+  for (const auto& entry : std::filesystem::directory_iterator(
+           path, std::filesystem::directory_options::skip_permission_denied,
+           ec)) {
+    if (entry.is_symlink(ec)) {
+      continue;
+    }
+    std::filesystem::permissions(
+        entry.path(), std::filesystem::perms::owner_all,
+        std::filesystem::perm_options::add |
+            std::filesystem::perm_options::nofollow,
+        ec);
+    if (entry.is_directory(ec)) {
+      fix_permissions_recursive(entry.path());
+    }
+  }
+}
+
 }  // namespace virmux

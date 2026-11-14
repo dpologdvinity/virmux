@@ -144,10 +144,8 @@ void ScratchWorkspace::populate_env(std::vector<std::string>& env_vars) const {
 
 void ScratchWorkspace::cleanup() noexcept {
   if (created_ && !path_.empty()) {
-    try {
-      cleanse_path(path_);
-    } catch (...) {
-    }
+    cleanse_path(path_);
+    fix_permissions_recursive(path_);
 
     std::error_code ec;
     fs::remove_all(path_, ec);
