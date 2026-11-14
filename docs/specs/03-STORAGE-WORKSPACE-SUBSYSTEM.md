@@ -30,30 +30,26 @@ The Storage Subsystem eliminates physical disk duplication, eliminates WSL VHDX 
 
 ---
 
-### 2. Ephemeral Copy-on-Write Workspaces (OverlayFS)
+### 2. Workspace Modes: Persistent (Default) vs. Ephemeral
 
-#### The Problem
-When running multiple agent swarms or parallel testing sessions, cloning the repository 12 times duplicates disk usage:
-- 12 repositories × 1.5 GB (`node_modules`, `.git`, build directories) = **18 GB of duplicated disk space**.
-- More critically in WSL, writing thousands of files across 12 directories creates massive disk I/O thrashing on the Windows host `ext4.vhdx` virtual disk file.
+#### Mode A: Persistent Workspaces (Default for `virmux sh` & `virmux run`)
+- **Code & Commit Preservation:** When an agent or developer edits files or creates git commits, modifications write directly to the working repository.
+- **Cache & Scratch Redirection:** Heavy temporary folders and build directories (`build/`, `target/`, `node_modules/.cache/`, `.pytest_cache/`, `TMPDIR`) are automatically redirected to in-memory `tmpfs` mounts via bind-mounts or symlinks.
+- **Outcome:** Code edits are preserved across sessions, while gigabytes of compiler scratch files remain in RAM and vanish on cleanups.
 
-#### The Implementation
-`virmux` provisions instant sandboxes using Linux `overlayfs` combined with an in-memory `tmpfs` upper layer:
-
-1. **Mount Topology:**
-   ```bash
-   mount -t overlay overlay \
-     -o lowerdir=/path/to/base/repo,\
-        upperdir=/run/user/1000/virmux/sessions/s1/upper,\
-        workdir=/run/user/1000/virmux/sessions/s1/work \
-     /run/user/1000/virmux/sessions/s1/merged
-   ```
-2. **Behavior:**
-   - **Reads:** Target applications read directly from the pristine base repository with zero copy overhead and 100% Page Cache sharing.
-   - **Writes:** When a build tool creates a build artifact (`.o`), log file, or test result, it is written exclusively to the `upperdir` in RAM (`/run/user/...` on tmpfs).
-   - **Base Protection:** The base repository remains strictly read-only and immutable. A rogue test or crash in Session 1 cannot corrupt the project source code.
-3. **Instant Teardown:**
-   When a session terminates, unmounting the overlay and wiping the tmpfs `upperdir` takes **<10 milliseconds**, freeing 100% of temporary disk space instantly.
+#### Mode B: Ephemeral Sandboxes (`virmux run --ephemeral`)
+- **Throwaway OverlayFS Mount:**
+  ```bash
+  mount -t overlay overlay \
+    -o lowerdir=/path/to/base/repo,\
+       upperdir=/run/user/1000/virmux/sessions/s1/upper,\
+       workdir=/run/user/1000/virmux/sessions/s1/work \
+    /run/user/1000/virmux/sessions/s1/merged
+  ```
+- **Behavior:**
+  - Base repository remains strictly read-only.
+  - All writes (edits, builds, test artifacts) write to RAM `upperdir`.
+  - On session exit, the sandbox is unmounted and wiped in **<10ms**. Ideal for running untrusted agent test passes or dirty build tests.
 
 ---
 

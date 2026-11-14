@@ -104,7 +104,9 @@ Each session managed by `virmux` transitions through a deterministic state machi
 
 ---
 
-### 4. Session Checkpoint & Hibernation Engine (CRIU Integration)
+### 4. Experimental Session Checkpoint & Hibernation Engine (CRIU)
+
+> **Note:** CRIU checkpoint/restore is an experimental feature enabled via `virmux checkpoint --experimental <session-id>`. It requires root capabilities (`CAP_SYS_ADMIN`) and kernel support. Standard `virmux` operation does not depend on CRIU.
 
 #### The Problem
 A user is running a multi-hour model training task or large simulation in Session 1, but urgently needs to run an intensive full-suite test in Session 2 that requires maximum physical RAM.

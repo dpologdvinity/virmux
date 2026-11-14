@@ -85,38 +85,26 @@ typedef struct {
 2. **Queueing & Bursts:**
    - If `active_heavy_count < max_concurrent_heavy` (default: 2), the command is granted a ticket and allowed to burst across all available worker cores at full speed.
    - If the limit is reached, the subsequent heavy command is paused in the `virmux` FIFO queue before execution begins.
-3. **Throughput Paradox:**
-   Running two builds sequentially with 100% cache locality finishes in **4 seconds total** (2 seconds each). Running both simultaneously with cache contention takes **9 seconds**. Sequential admission increases total machine throughput.
+3. **Deadlock Prevention & Timeout Fallback:**
+   When child tools execute nested commands (e.g., `ninja` executing `gcc` or `cargo` invoking rustc while holding lockfiles), the admission ticket acquisition includes a **10-second timeout fallback**. If the admission gate is full for >10 seconds, the task is admitted with a lower `cpu.weight = 20` rather than blocking indefinitely, preventing deadlocks.
 
 ---
 
-### 4. Zero-Cost State Preservation via `cgroup.freeze`
-
-#### The Problem
-Agents or terminals waiting on user keystrokes, timers, or remote API network responses periodically wake up to poll, check sockets, or process signals, generating spurious context switches and preventing CPU cores from entering low-power C-states.
+### 4. Zero-Cost State Preservation: PTY Freezing vs. Network Yielding
 
 #### The Implementation
-`virmux` monitors session I/O states via epoll and `/proc/<pid>/wchan`:
+`virmux` distinguishes between terminal idle and network wait to protect active network connections:
 
-1. **State Transition to Idle:**
-   When a session's root process enters a blocking `read(0, ...)` (waiting for terminal input) or is waiting on an external network connection for >500ms, `virmux` writes to the session's cgroup freeze interface:
-   ```c
-   int virmux_session_freeze(const char *session_cgroup_path) {
-       char freeze_path[512];
-       snprintf(freeze_path, sizeof(freeze_path), "%s/cgroup.freeze", session_cgroup_path);
-       int fd = open(freeze_path, O_WRONLY);
-       if (fd >= 0) {
-           write(fd, "1\n", 2);
-           close(fd);
-           return 0;
-       }
-       return -1;
-   }
-   ```
-2. **In-Kernel Freezing:**
-   The Linux kernel instantly suspends all threads in the cgroup subtree. Unlike `SIGSTOP`, `cgroup.freeze` is completely transparent to the processes, does not trigger signal handlers, and cannot be caught or ignored.
-3. **Thawing:**
-   When stdin input arrives on the session's pseudo-terminal (PTY) or incoming network packets trigger an epoll event on the session's socket, `virmux` writes `"0\n"` to `cgroup.freeze`, resuming all threads with sub-millisecond latency.
+1. **Terminal / PTY Idle (Hard Freeze):**
+   When a session's root process is blocked on `read(0, ...)` (waiting for terminal input from a user or agent controller) for >500ms:
+   - `virmux` writes `"1\n"` to `cgroup.freeze`.
+   - CPU usage drops to strictly **0.00%**.
+   - Thaws instantly on incoming PTY keystroke or command data.
+2. **Network I/O Wait (Soft Yield — No TCP Reset):**
+   When a session is waiting on an external network connection (e.g. streaming LLM responses or downloading packages):
+   - **Do NOT freeze cgroup:** Freezing stops TCP window updates and keep-alive packets, causing remote servers to abort with `ECONNRESET`.
+   - **Soft Yield:** `virmux` sets process scheduling to `SCHED_IDLE` and dispatches `process_madvise(MADV_COLD)`.
+   - Result: Minimal CPU consumption and cold heap compression without breaking TCP sockets.
 
 ---
 
