@@ -27,6 +27,7 @@ virmux_core_lib = static_library(
     'src/memory/telemetry.cpp',
     'src/memory/memory_manager.cpp',
     'src/cli/cli_stats.cpp',
+    'src/cli/cli_cas.cpp',
     'src/storage/sha256.cpp',
     'src/storage/cas.cpp',
     'src/storage/scratch.cpp',
@@ -201,6 +202,14 @@ test_cli_stats_exe = executable(
 
 test('test_cli_stats', test_cli_stats_exe)
 
+test_cli_cas_exe = executable(
+  'test_cli_cas',
+  'tests/unit/test_cli_cas.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_cli_cas', test_cli_cas_exe)
+
 test_cas_exe = executable(
   'test_cas',
   'tests/unit/test_cas.cpp',
@@ -275,6 +284,12 @@ test(
   'test_cli_pack_help',
   virmux_exe,
   args: ['pack', '--help'],
+)
+
+test(
+  'test_cli_cas_help',
+  virmux_exe,
+  args: ['cas', '--help'],
 )
 
 test(

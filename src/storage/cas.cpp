@@ -24,6 +24,10 @@ std::atomic<uint64_t> g_cas_seq{0};
 
 std::string resolve_cache_root(std::string path) {
   if (path.empty()) {
+    const char* env_cas = std::getenv("VIRMUX_CAS_DIR");
+    if (env_cas != nullptr && *env_cas != '\0') {
+      return std::string(env_cas);
+    }
     const char* home = std::getenv("HOME");
     if (home != nullptr && *home != '\0') {
       return std::string(home) + "/.cache/virmux/cas";

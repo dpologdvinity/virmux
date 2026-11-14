@@ -18,6 +18,10 @@ class CasStore {
  public:
   explicit CasStore(std::string cache_root = "");
 
+  [[nodiscard]] const std::string& cache_root() const noexcept {
+    return cache_root_;
+  }
+
   [[nodiscard]] bool contains(const std::string& key) const;
   bool put(const std::string& key, const std::string& source_file);
   bool put_bytes(const std::string& key, std::span<const uint8_t> data);
