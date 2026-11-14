@@ -1,11 +1,12 @@
 # virmux
 
-> **Virtual Resource Multiplexer in C++20/C for Linux & WSL.**  
+> **Virtual Resource Multiplexer in C++20/C for Linux & WSL2.**  
 > High-Density Memory Deduplication, CPU Slicing, Workspace Isolation, and Admission Scheduling for Heavy Concurrent Workloads.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Standard: C++20 / C17](https://img.shields.io/badge/Standard-C%2B%2B20%20%7C%20C17-blue.svg)](https://en.wikipedia.org/wiki/C%2B%2B20)
 [![Platform: Linux / WSL2](https://img.shields.io/badge/Platform-Linux%20%7C%20WSL2-orange.svg)](https://learn.microsoft.com/en-us/windows/wsl/)
+[![Build: Meson + Ninja](https://img.shields.io/badge/Build-Meson%20%7C%20Ninja-green.svg)](https://mesonbuild.com/)
 
 ---
 
@@ -14,7 +15,7 @@
 Running multiple terminal sessions or autonomous AI agent swarms simultaneously (e.g. running Playwright tests, compiling C++/Rust, training neural models in PyTorch, building Docker images) quickly brings even high-end laptops and workstations to a crawl:
 - Test frameworks and compilers greedily spawn 12+ worker threads each, invalidating CPU caches and starving the host OS.
 - Dozens of Chromium or Python runtimes duplicate gigabytes of identical memory pages in RAM, rapidly overflowing physical memory into swap thrashing.
-- In WSL2, host memory saturation (`vmmem`) locks up the entire Windows desktop.
+- In WSL2, host memory saturation (`vmmem`) locks up the entire Windows desktop and triggers harsh Linux OOM kills.
 
 ### The Solution: `virmux`
 
@@ -22,9 +23,11 @@ Running multiple terminal sessions or autonomous AI agent swarms simultaneously 
 
 1. **Memory Multiplexing:** Deduplicates identical memory pages across processes via **KSM (Kernel Samepage Merging)**, compresses inactive heaps into RAM with **`zram`**, and actively reclaims memory using **`process_madvise(MADV_PAGEOUT)`**.
 2. **CPU Shielding & Admission Gate:** Pins Cores 0–1 strictly for your interactive shell and editor (`cpuset.cpus`), while queuing heavy bursts (compilers, test runners) through an admission token-bucket to eliminate CPU cache thrashing.
-3. **Copy-on-Write Workspaces:** Provisions ephemeral **OverlayFS** workspaces with in-memory `tmpfs` scratch directories—12 isolated agent workspaces share a single repository on disk with zero duplication.
-4. **Transparent Hardware Spoofing:** Intercepts `nproc` and `/proc/meminfo` via `LD_PRELOAD`, tricking greedy runtimes into behaving politely without changing a single line of project code.
-5. **Interactive TUI Dashboard:** Real-time ncurses dashboard (`virmux top`) showing active sessions, memory saved, queued tasks, and instant pause/resume controls.
+3. **Copy-on-Write Ephemeral Workspaces:** Provisions unprivileged **OverlayFS** workspaces with in-memory `tmpfs` scratch directories—dozens of agent workspaces share a single repository on disk with zero write leakage.
+4. **Content-Addressable Storage (CAS):** 2-level directory-sharded artifact cache (`objects/ab/cd/<hash>`) with atomic staging, RFC 6234 SHA-256 validation, and true LRU eviction.
+5. **Transparent Hardware Spoofing:** Intercepts `nproc` and `/proc/meminfo` via `LD_PRELOAD`, tricking greedy runtimes into behaving politely without changing a single line of project code.
+6. **Supervisor Daemon & IPC:** Lightweight Unix domain socket server with binary TLV framing (`VMUX`), background telemetry, process tree signaling, and lifecycle state management.
+7. **Interactive TUI Dashboard:** Real-time ncurses dashboard (`virmux top`) showing active sessions, memory saved, CPU topology, and hotkey lifecycle controls (`Space` freeze/thaw, `K` kill, `q` quit).
 
 ---
 
@@ -32,8 +35,8 @@ Running multiple terminal sessions or autonomous AI agent swarms simultaneously 
 
 #### Prerequisites
 - Linux kernel 5.10+ (standard in Ubuntu 22.04+, WSL2, Debian 12+)
-- `meson`, `ninja`, `gcc` or `clang`
-- `libncurses-dev`
+- `meson`, `ninja`, `gcc` (>= 13) or `clang`
+- `libncursesw5-dev`
 
 ```bash
 # Clone the repository
@@ -44,36 +47,93 @@ cd virmux
 meson setup build
 ninja -C build
 
-# Run test suite
+# Run unit and integration test suite (34 tests)
 ninja -C build test
 ```
 
 ---
 
-### Usage
+### Usage & Subcommands
 
-#### 1. Run a Command in a Managed Sandbox
+#### 1. Execute Command in Managed Sandbox (`virmux run`)
 ```bash
-# Runs Playwright inside a 2-virtual-core, 2GB soft-ceiling sandbox
-virmux run --cores 2 --mem 2G -- npx playwright test
+# Runs command in 2-core, 2GB memory ceiling sandbox with hardware virtualization
+virmux run --cores 2 --mem 2G -- npm test
+
+# Runs command inside a throwaway Copy-on-Write ephemeral workspace (OverlayFS)
+virmux run --ephemeral --workspace ~/git/my-repo -- npx playwright test
+
+# Enqueue as heavy compute burst through admission gate
+virmux run --heavy --cores 4 --mem 4G -- cargo build --release
 ```
 
-#### 2. Spawn a High-Density Interactive Shell
+#### 2. Start Supervisor Daemon (`virmux daemon`)
 ```bash
-# Opens an interactive shell where all spawned commands inherit virmux protections
-virmux sh --workspace ~/git/daydaze
+# Start background daemon (uses readiness pipe for instant synchronization)
+virmux daemon
+
+# Run daemon in foreground for debugging
+virmux daemon --foreground
 ```
 
-#### 3. Monitor All Sessions via TUI
+#### 3. Real-Time Interactive TUI Dashboard (`virmux top`)
 ```bash
+# Launch interactive ncurses dashboard (sub-0.5% CPU budget)
 virmux top
+
+# Render one-shot headless snapshot to stdout
+virmux top --headless
+```
+
+**TUI Hotkeys:**
+- `j` / `k` or `Up` / `Down`: Navigate active session table
+- `Space`: Freeze or thaw selected session
+- `K`: Kill selected session process tree
+- `q`: Exit dashboard
+
+#### 4. Manage Session Lifecycles (`virmux list`, `freeze`, `thaw`, `kill`)
+```bash
+# List all active managed sessions in formatted table
+virmux list
+
+# Output session state as machine-readable JSON
+virmux list --json
+
+# Freeze and thaw sessions via cgroups v2 / SIGSTOP fallback
+virmux freeze 1
+virmux thaw 1
+
+# Terminate session process tree and child tasks
+virmux kill 1
+```
+
+#### 5. Telemetry & Compaction (`virmux stats`, `virmux pack`)
+```bash
+# Inspect host memory, KSM deduplication, and zram compression telemetry
+virmux stats
+
+# Output telemetry as JSON
+virmux stats --json
+
+# Proactively compact anonymous memory into swap/zram via process_madvise
+virmux pack
+virmux pack 1234 5678
+```
+
+#### 6. Content-Addressable Storage (`virmux cas`)
+```bash
+# Inspect CAS cache size, hit/miss ratios, and entry counts
+virmux cas stats
+
+# Prune CAS cache down to a maximum byte threshold via LRU
+virmux cas clean --max-bytes 500M
 ```
 
 ---
 
 ### Architecture & Detailed Specs
 
-Comprehensive technical design specifications are available in the [`docs/specs/`](docs/specs/) directory:
+Comprehensive technical design specifications are available in [`docs/specs/`](docs/specs/):
 - [00. Overview & Core Architecture](docs/specs/00-OVERVIEW.md)
 - [01. Memory Multiplexing Subsystem](docs/specs/01-MEMORY-SUBSYSTEM.md)
 - [02. CPU & Concurrency Scheduling Subsystem](docs/specs/02-CPU-SCHEDULING-SUBSYSTEM.md)
