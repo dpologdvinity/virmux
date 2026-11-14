@@ -29,6 +29,7 @@ virmux_core_lib = static_library(
     'src/cli/cli_stats.cpp',
     'src/storage/sha256.cpp',
     'src/storage/cas.cpp',
+    'src/storage/scratch.cpp',
   ],
   include_directories: inc,
   dependencies: [threads_dep],
@@ -206,6 +207,14 @@ test_cas_exe = executable(
 )
 
 test('test_cas', test_cas_exe)
+
+test_scratch_exe = executable(
+  'test_scratch',
+  'tests/unit/test_scratch.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_scratch', test_scratch_exe)
 
 virmux_exe = executable(
   'virmux',
