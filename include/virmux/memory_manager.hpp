@@ -25,6 +25,7 @@ struct VmaRange {
   uintptr_t end{0};
   bool is_anonymous{false};
   bool is_writable{false};
+  bool is_stack{false};
 };
 
 /**

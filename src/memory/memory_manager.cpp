@@ -15,6 +15,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -55,6 +56,11 @@ std::vector<VmaRange> MemoryManager::scan_process_vmas(
 
   std::vector<VmaRange> vmas;
   std::string line;
+
+  long page_sz = ::sysconf(_SC_PAGESIZE);
+  if (page_sz <= 0) {
+    page_sz = 4096;
+  }
 
   while (std::getline(maps_file, line)) {
     if (line.empty()) {
@@ -109,8 +115,9 @@ std::vector<VmaRange> MemoryManager::scan_process_vmas(
       continue;
     }
 
-    // Page alignment check: ensures start % 4096 == 0 and end % 4096 == 0
-    if ((start % 4096 != 0) || (end % 4096 != 0)) {
+    // Page alignment check: ensures start and end align to host page size
+    if ((start % static_cast<uintptr_t>(page_sz) != 0) ||
+        (end % static_cast<uintptr_t>(page_sz) != 0)) {
       continue;
     }
 
@@ -122,6 +129,8 @@ std::vector<VmaRange> MemoryManager::scan_process_vmas(
     bool is_special_kernel =
         (pathname == "[vdso]" || pathname == "[vvar]" ||
          pathname == "[vvar_vclock]" || pathname == "[vsyscall]");
+
+    bool is_stack = (pathname == "[stack]" || pathname.starts_with("[stack:"));
 
     if (!is_special_kernel) {
       if ((dev == "00:00" || dev == "0:0") && inode_num == 0) {
@@ -141,6 +150,7 @@ std::vector<VmaRange> MemoryManager::scan_process_vmas(
     range.end = end;
     range.is_anonymous = is_anon;
     range.is_writable = is_writable;
+    range.is_stack = is_stack;
     vmas.push_back(range);
   }
 
@@ -157,6 +167,10 @@ ReclaimResult MemoryManager::compact_process(pid_t pid, ReclaimAdvice advice) {
   ranges.reserve(vmas.size());
 
   for (const auto& vma : vmas) {
+    // Exclude thread stack from proactive compaction to prevent immediate minor faults
+    if (vma.is_stack) {
+      continue;
+    }
     if (vma.end > vma.start) {
       ranges.emplace_back(vma.start, vma.end - vma.start);
     }

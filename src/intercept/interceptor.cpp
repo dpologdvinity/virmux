@@ -215,7 +215,8 @@ static void* do_mmap(void* addr, size_t length, int prot, int flags, int fd,
     }
   }
 
-  if (res != MAP_FAILED && ((flags & MAP_ANONYMOUS) || (flags & MAP_ANON)) &&
+  if (res != MAP_FAILED && (flags & MAP_PRIVATE) &&
+      ((flags & MAP_ANONYMOUS) || (flags & MAP_ANON)) &&
       is_ksm_auto_merge_enabled()) {
     int saved_errno = errno;
     (void)::madvise(res, length, MADV_MERGEABLE);

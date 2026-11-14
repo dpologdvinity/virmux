@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <charconv>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
@@ -20,6 +21,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "virmux/raii.hpp"
@@ -139,19 +141,21 @@ ReclaimResult ProcessCompactor::reclaim_ranges(
 
     long ret = ::syscall(__NR_process_madvise, pidfd.get(), batch_ptr,
                          batch_size, advice_flag, 0);
+    int orig_err = errno;
 
     // Unprivileged fallback: if MADV_PAGEOUT fails with EPERM or EACCES, retry
     // with MADV_COLD
     if (ret < 0 && advice == ReclaimAdvice::Pageout &&
-        (errno == EPERM || errno == EACCES)) {
+        (orig_err == EPERM || orig_err == EACCES)) {
       ret = ::syscall(__NR_process_madvise, pidfd.get(), batch_ptr, batch_size,
                       MADV_COLD, 0);
+      orig_err = errno;
     }
 
     // Unprivileged fallback: if process_madvise is not permitted without
     // CAP_SYS_NICE (Linux 5.12+), fall back to procfs clear_refs to reset
     // working set and advise kernel reclaim.
-    if (ret < 0 && (errno == EPERM || errno == EACCES)) {
+    if (ret < 0 && (orig_err == EPERM || orig_err == EACCES)) {
       std::string clear_refs_path =
           "/proc/" + std::to_string(target_pid) + "/clear_refs";
       ScopedFd cr_fd(::open(clear_refs_path.c_str(), O_WRONLY | O_CLOEXEC));
@@ -168,7 +172,7 @@ ReclaimResult ProcessCompactor::reclaim_ranges(
     }
 
     if (ret < 0) {
-      return ReclaimResult{false, total_bytes, total_ranges, errno};
+      return ReclaimResult{false, total_bytes, total_ranges, orig_err};
     }
 
     total_bytes += static_cast<size_t>(ret);
@@ -217,26 +221,34 @@ ReclaimResult ProcessCompactor::reclaim_memory(pid_t target_pid,
     iss >> path;  // Optional pathname
 
     // Anonymous or writable ranges: lines containing rw-p or r--p where path is
-    // empty or [heap] or [anon]
+    // empty or [heap] or [anon], explicitly excluding [stack]
     bool perms_match = (perms == "rw-p" || perms == "r--p");
-    bool path_match = path.empty() || path == "[heap]" ||
-                      path.find("[anon") != std::string::npos;
+    bool path_match = (path.empty() || path == "[heap]" || path.starts_with("[anon"));
+    if (path == "[stack]" || path.starts_with("[stack:")) {
+      path_match = false;
+    }
 
     if (!perms_match || !path_match) {
       continue;
     }
 
     auto dash = addr_range.find('-');
-    if (dash == std::string::npos) {
+    if (dash == std::string::npos || dash == 0 || dash == addr_range.size() - 1) {
       continue;
     }
 
-    uintptr_t start =
-        std::strtoull(addr_range.substr(0, dash).c_str(), nullptr, 16);
-    uintptr_t end =
-        std::strtoull(addr_range.substr(dash + 1).c_str(), nullptr, 16);
+    std::string_view start_str(addr_range.data(), dash);
+    std::string_view end_str(addr_range.data() + dash + 1,
+                             addr_range.size() - dash - 1);
 
-    if (end > start) {
+    uintptr_t start = 0;
+    auto [p1, ec1] = std::from_chars(
+        start_str.data(), start_str.data() + start_str.size(), start, 16);
+    uintptr_t end = 0;
+    auto [p2, ec2] = std::from_chars(
+        end_str.data(), end_str.data() + end_str.size(), end, 16);
+
+    if (ec1 == std::errc{} && ec2 == std::errc{} && end > start) {
       ranges.emplace_back(start, end - start);
     }
   }
