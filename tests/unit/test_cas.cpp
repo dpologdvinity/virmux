@@ -259,6 +259,40 @@ void test_cas_prune_lru(void) {
   cleanup_test_dir(temp_dir);
 }
 
+void test_cas_overwrite_atomic(void) {
+  std::string temp_dir = create_test_temp_dir();
+  virmux::CasStore cas(temp_dir);
+
+  std::string key = "test_key_overwrite_123456";
+  std::string payload1 = "original content";
+  std::string payload2 = "updated content with different length";
+
+  TEST_ASSERT_TRUE(cas.put_bytes(
+      key, std::span<const uint8_t>(
+               reinterpret_cast<const uint8_t*>(payload1.data()), payload1.size())));
+
+  std::string dest1 = temp_dir + "/dest1.txt";
+  TEST_ASSERT_TRUE(cas.get(key, dest1));
+  std::ifstream ifs1(dest1);
+  std::string read1((std::istreambuf_iterator<char>(ifs1)),
+                    std::istreambuf_iterator<char>());
+  TEST_ASSERT_EQUAL_STRING(payload1.c_str(), read1.c_str());
+
+  // Overwrite existing key
+  TEST_ASSERT_TRUE(cas.put_bytes(
+      key, std::span<const uint8_t>(
+               reinterpret_cast<const uint8_t*>(payload2.data()), payload2.size())));
+
+  std::string dest2 = temp_dir + "/dest2.txt";
+  TEST_ASSERT_TRUE(cas.get(key, dest2));
+  std::ifstream ifs2(dest2);
+  std::string read2((std::istreambuf_iterator<char>(ifs2)),
+                    std::istreambuf_iterator<char>());
+  TEST_ASSERT_EQUAL_STRING(payload2.c_str(), read2.c_str());
+
+  cleanup_test_dir(temp_dir);
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_sha256_nist_vectors);
@@ -268,5 +302,6 @@ int main(void) {
   RUN_TEST(test_cas_put_file_and_atomic_staging);
   RUN_TEST(test_cas_stats_and_reset);
   RUN_TEST(test_cas_prune_lru);
+  RUN_TEST(test_cas_overwrite_atomic);
   return UNITY_END();
 }

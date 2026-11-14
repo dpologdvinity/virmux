@@ -61,6 +61,11 @@ CasStore::CasStore(std::string cache_root)
 }
 
 std::string CasStore::get_path(const std::string& key) const {
+  if (key.empty() || key.find('/') != std::string::npos ||
+      key.find('\\') != std::string::npos ||
+      key.find("..") != std::string::npos) {
+    return {};
+  }
   if (key.size() >= 2) {
     return (fs::path(cache_root_) / "objects" / key.substr(0, 2) / key)
         .string();
@@ -69,15 +74,17 @@ std::string CasStore::get_path(const std::string& key) const {
 }
 
 bool CasStore::contains(const std::string& key) const {
-  if (key.empty()) {
+  std::string p = get_path(key);
+  if (p.empty()) {
     return false;
   }
   std::error_code ec;
-  return fs::is_regular_file(get_path(key), ec);
+  return fs::is_regular_file(p, ec);
 }
 
 bool CasStore::put(const std::string& key, const std::string& source_file) {
-  if (key.empty()) {
+  std::string target_path = get_path(key);
+  if (target_path.empty()) {
     return false;
   }
 
@@ -99,7 +106,6 @@ bool CasStore::put(const std::string& key, const std::string& source_file) {
     return false;
   }
 
-  std::string target_path = get_path(key);
   fs::path parent_dir = fs::path(target_path).parent_path();
   fs::create_directories(parent_dir, ec);
   if (ec) {
@@ -118,7 +124,8 @@ bool CasStore::put(const std::string& key, const std::string& source_file) {
 
 bool CasStore::put_bytes(const std::string& key,
                          std::span<const uint8_t> data) {
-  if (key.empty()) {
+  std::string target_path = get_path(key);
+  if (target_path.empty()) {
     return false;
   }
 
@@ -145,7 +152,6 @@ bool CasStore::put_bytes(const std::string& key,
     }
   }
 
-  std::string target_path = get_path(key);
   fs::path parent_dir = fs::path(target_path).parent_path();
   fs::create_directories(parent_dir, ec);
   if (ec) {

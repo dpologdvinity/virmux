@@ -73,6 +73,9 @@ class Sha256Context {
   }
 
   void update(const uint8_t* data, size_t len) noexcept {
+    if (len == 0 || data == nullptr) {
+      return;
+    }
     count_ += len;
     size_t offset = 0;
 
