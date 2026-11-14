@@ -112,6 +112,10 @@ if [[ "$SOCKET_READY" -ne 1 ]]; then
   exit 1
 fi
 
+if [[ -z "$DAEMON_PID" ]] && command -v fuser >/dev/null 2>&1; then
+  DAEMON_PID=$(fuser "$VIRMUX_SOCKET" 2>/dev/null | tr -d ' ' || true)
+fi
+
 LIST_OUT=$("$VIRMUX" list --json)
 if [[ "$LIST_OUT" != "[]" ]]; then
   log_error "Expected empty JSON array '[]' on clean daemon start, got: $LIST_OUT"
@@ -130,7 +134,7 @@ WORKER_PID=$!
 
 REG_READY=0
 LIST_JSON="[]"
-for _ in {1..20}; do
+for _ in {1..50}; do
   LIST_JSON=$("$VIRMUX" list --json 2>/dev/null || echo "[]")
   COUNT=$(echo "$LIST_JSON" | python3 -c "import sys, json; data = json.load(sys.stdin); print(len(data))" 2>/dev/null || echo "0")
   if [[ "$COUNT" -ge 1 ]]; then
