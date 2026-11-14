@@ -4,6 +4,7 @@
  */
 
 #include "virmux/daemon.hpp"
+#include "virmux/sandbox.hpp"
 
 #include <fcntl.h>
 #include <poll.h>
@@ -377,6 +378,9 @@ bool SupervisorDaemon::init() {
   if (server_fd_ >= 0) {
     return true;
   }
+
+  // Protect supervisor daemon from kernel OOM killer if permissions permit (-900)
+  set_process_oom_score(0, -900);
 
   stop_requested_.store(false);
   running_.store(false);

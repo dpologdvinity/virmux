@@ -66,6 +66,13 @@ public:
     bool set_cpuset(const std::string& cores_str);
 
     /**
+     * @brief Configure pids.max limit for fork-bomb containment.
+     * @param max_pids Maximum process count ceiling (0 writes "max").
+     * @return true on success, false on error.
+     */
+    bool set_pids_max(uint64_t max_pids);
+
+    /**
      * @brief Attach a process to this cgroup slice (writes to cgroup.procs).
      * @param pid Process ID to attach.
      * @return true on success, false on error.

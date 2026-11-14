@@ -288,6 +288,14 @@ test_tui_exe = executable(
 
 test('test_tui', test_tui_exe)
 
+test_fault_isolation_exe = executable(
+  'test_fault_isolation',
+  'tests/unit/test_fault_isolation.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_fault_isolation', test_fault_isolation_exe)
+
 virmux_exe = executable(
   'virmux',
   'cli/main.cpp',

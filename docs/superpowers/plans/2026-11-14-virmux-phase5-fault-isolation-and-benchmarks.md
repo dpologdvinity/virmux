@@ -38,7 +38,7 @@
 
 ## Task Breakdown
 
-- [ ] **Task 1: Deterministic OOM Score Adjuster & Fork-Bomb Protection**
+- [x] **Task 1: Deterministic OOM Score Adjuster & Fork-Bomb Protection**
   - Implement `/proc/self/oom_score_adj` writing with safe fallback in daemon (`-900`) and worker child (`+800`).
   - Implement `CgroupSlice::set_pids_max()` and `RLIMIT_NPROC` fallback in `sandbox.cpp`.
   - Add unit tests in `tests/unit/test_fault_isolation.cpp`.

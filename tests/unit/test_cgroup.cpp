@@ -190,6 +190,7 @@ void test_cgroup_uninitialized_slice_operations(void) {
     // Operations on uninitialized slice must safely return false
     TEST_ASSERT_FALSE(uninit_slice.set_memory_high(1024 * 1024 * 100));
     TEST_ASSERT_FALSE(uninit_slice.set_cpuset("0-1"));
+    TEST_ASSERT_FALSE(uninit_slice.set_pids_max(128));
     TEST_ASSERT_FALSE(uninit_slice.attach_pid(getpid()));
     TEST_ASSERT_FALSE(uninit_slice.freeze());
     TEST_ASSERT_FALSE(uninit_slice.thaw());
