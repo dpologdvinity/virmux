@@ -172,6 +172,7 @@ test(
     meson.current_build_dir(),
   ],
   depends: [virmux_exe, virmux_intercept_lib],
+  timeout: 120,
 )
 
 

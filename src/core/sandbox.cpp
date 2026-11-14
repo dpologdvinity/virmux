@@ -174,7 +174,7 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
   std::string meminfo_path = "/tmp/virmux_" + std::to_string(::getpid()) + "_" +
                              std::to_string(seq) + "_meminfo";
   int mem_fd = ::open(meminfo_path.c_str(),
-                      O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+                      O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
   if (mem_fd >= 0) {
     std::string mem_content =
         generate_synthetic_meminfo(cfg.memory_limit_bytes);
@@ -189,17 +189,28 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
   std::string intercept_lib = resolve_interceptor_path();
   std::string preload_val;
   if (!intercept_lib.empty()) {
-    preload_val = intercept_lib;
     const char* existing_preload = std::getenv("LD_PRELOAD");
     if (existing_preload && existing_preload[0] != '\0') {
-      preload_val = preload_val + ":" + existing_preload;
+      std::string_view existing_view(existing_preload);
+      // If running under AddressSanitizer or ThreadSanitizer, ASan runtime must come first
+      if (existing_view.find("libasan") != std::string_view::npos ||
+          existing_view.find("libtsan") != std::string_view::npos ||
+          existing_view.find("libubsan") != std::string_view::npos) {
+        preload_val = std::string(existing_preload) + ":" + intercept_lib;
+      } else {
+        preload_val = intercept_lib + ":" + std::string(existing_preload);
+      }
+    } else {
+      preload_val = intercept_lib;
     }
   }
 
   std::string vcores_str = std::to_string(cfg.virtual_cores);
 
-  // Set up cgroups v2 slice (gracefully falls back if unprivileged)
-  CgroupSlice slice;
+  // Set up cgroups v2 slice with unique sub-slice per run (gracefully falls back if unprivileged)
+  std::string slice_name = "virmux-run-" + std::to_string(::getpid()) + "-" +
+                           std::to_string(seq) + ".slice";
+  CgroupSlice slice(slice_name);
   slice.setup("", cfg.memory_limit_bytes, cfg.cpuset_cores);
 
   pid_t pid = ::fork();

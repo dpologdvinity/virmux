@@ -1,0 +1,17 @@
+CompileFlags:
+  CompilationDatabase: "build"
+  Add:
+    - "-Wall"
+    - "-Wextra"
+    - "-Wpedantic"
+    - "-std=c17"
+    - "-D_GNU_SOURCE"
+
+Diagnostics:
+  UnusedIncludes: Strict
+  ClangTidy:
+    Add:
+      - "readability-*"
+      - "bugprone-*"
+      - "cert-*"
+

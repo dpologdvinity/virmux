@@ -13,6 +13,8 @@ npm-debug.log*
 # System & Tooling
 .superpowers/
 .cache/
+.agents/
+.claude/
 compile_commands.json
 .clangd/
 vgcore.*
