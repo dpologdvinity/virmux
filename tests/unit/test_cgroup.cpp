@@ -76,6 +76,11 @@ void test_scoped_fd_reset(void) {
     virmux::ScopedFd fd(pipe_fds[0]);
     TEST_ASSERT_TRUE(fd.valid());
 
+    // Self-reset with same fd should NOT close descriptor
+    fd.reset(fd.get());
+    TEST_ASSERT_TRUE(fd.valid());
+    TEST_ASSERT_EQUAL_INT(pipe_fds[0], fd.get());
+
     // Reset with new fd should close pipe_fds[0]
     fd.reset(pipe_fds[1]);
     TEST_ASSERT_EQUAL_INT(-1, close(pipe_fds[0]));
@@ -177,6 +182,19 @@ void test_cgroup_move_semantics(void) {
     TEST_ASSERT_FALSE(slice2.is_valid());
 }
 
+void test_cgroup_uninitialized_slice_operations(void) {
+    virmux::CgroupSlice uninit_slice;
+    TEST_ASSERT_TRUE(uninit_slice.path().empty());
+    TEST_ASSERT_FALSE(uninit_slice.is_valid());
+
+    // Operations on uninitialized slice must safely return false
+    TEST_ASSERT_FALSE(uninit_slice.set_memory_high(1024 * 1024 * 100));
+    TEST_ASSERT_FALSE(uninit_slice.set_cpuset("0-1"));
+    TEST_ASSERT_FALSE(uninit_slice.attach_pid(getpid()));
+    TEST_ASSERT_FALSE(uninit_slice.freeze());
+    TEST_ASSERT_FALSE(uninit_slice.thaw());
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_scoped_fd_closes_descriptor);
@@ -185,5 +203,6 @@ int main(void) {
     RUN_TEST(test_cgroup_unprivileged_fallback_logs_warning);
     RUN_TEST(test_cgroup_mock_directory_operations);
     RUN_TEST(test_cgroup_move_semantics);
+    RUN_TEST(test_cgroup_uninitialized_slice_operations);
     return UNITY_END();
 }

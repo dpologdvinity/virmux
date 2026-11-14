@@ -19,7 +19,7 @@ namespace virmux {
 CgroupSlice::CgroupSlice(std::string name) : name_(std::move(name)) {}
 
 CgroupSlice::~CgroupSlice() {
-    if (created_ && valid_ && !path_.empty()) {
+    if (created_ && !path_.empty()) {
         std::error_code ec;
         std::filesystem::remove(path_, ec);
         // Error on removal (e.g. active child processes or EBUSY) is safely swallowed
@@ -37,7 +37,7 @@ CgroupSlice::CgroupSlice(CgroupSlice&& other) noexcept
 
 CgroupSlice& CgroupSlice::operator=(CgroupSlice&& other) noexcept {
     if (this != &other) {
-        if (created_ && valid_ && !path_.empty()) {
+        if (created_ && !path_.empty()) {
             std::error_code ec;
             std::filesystem::remove(path_, ec);
         }
@@ -126,6 +126,10 @@ bool CgroupSlice::setup(const std::string& base_cgroup_path,
 }
 
 bool CgroupSlice::write_file(const std::string& filename, const std::string& value) {
+    if (path_.empty()) {
+        return false;
+    }
+
     std::filesystem::path p(path_);
     p /= filename;
     std::string full_path = p.string();
@@ -151,6 +155,9 @@ bool CgroupSlice::write_file(const std::string& filename, const std::string& val
 }
 
 bool CgroupSlice::set_memory_high(uint64_t bytes) {
+    if (path_.empty()) {
+        return false;
+    }
     std::string val = std::to_string(bytes) + "\n";
     if (!write_file("memory.high", val)) {
         return false;
@@ -159,6 +166,9 @@ bool CgroupSlice::set_memory_high(uint64_t bytes) {
 }
 
 bool CgroupSlice::set_cpuset(const std::string& cores_str) {
+    if (path_.empty()) {
+        return false;
+    }
     std::string val = cores_str + "\n";
     if (!write_file("cpuset.cpus", val)) {
         return false;
@@ -167,7 +177,7 @@ bool CgroupSlice::set_cpuset(const std::string& cores_str) {
 }
 
 bool CgroupSlice::attach_pid(pid_t pid) {
-    if (!valid_) {
+    if (!valid_ || path_.empty()) {
         return false;
     }
     std::string val = std::to_string(pid) + "\n";
@@ -175,14 +185,14 @@ bool CgroupSlice::attach_pid(pid_t pid) {
 }
 
 bool CgroupSlice::freeze() {
-    if (!valid_) {
+    if (!valid_ || path_.empty()) {
         return false;
     }
     return write_file("cgroup.freeze", "1\n");
 }
 
 bool CgroupSlice::thaw() {
-    if (!valid_) {
+    if (!valid_ || path_.empty()) {
         return false;
     }
     return write_file("cgroup.freeze", "0\n");

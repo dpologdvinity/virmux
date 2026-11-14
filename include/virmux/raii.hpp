@@ -72,7 +72,7 @@ public:
      * @brief Release ownership of the managed descriptor.
      * @return Previous descriptor value (caller takes ownership of closing it).
      */
-    int release() noexcept {
+    [[nodiscard]] int release() noexcept {
         int old = fd_;
         fd_ = -1;
         return old;
@@ -83,6 +83,9 @@ public:
      * @param new_fd Replacement descriptor, defaults to -1.
      */
     void reset(int new_fd = -1) noexcept {
+        if (fd_ == new_fd) {
+            return;
+        }
         if (fd_ >= 0) {
             ::close(fd_);
         }
