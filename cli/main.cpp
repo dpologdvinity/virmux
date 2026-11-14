@@ -5,6 +5,7 @@
 
 #include <cctype>
 #include <cerrno>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -81,7 +82,8 @@ bool parse_memory_limit(std::string_view str, uint64_t& out_bytes) {
   char* end_ptr = nullptr;
   errno = 0;
   double val = std::strtod(s.c_str(), &end_ptr);
-  if (end_ptr == s.c_str() || errno == ERANGE || val <= 0.0) {
+  if (end_ptr == s.c_str() || errno == ERANGE || !std::isfinite(val) ||
+      std::isnan(val) || val <= 0.0) {
     return false;
   }
 
@@ -113,7 +115,8 @@ bool parse_memory_limit(std::string_view str, uint64_t& out_bytes) {
   }
 
   double total = val * static_cast<double>(multiplier);
-  if (total < 1.0 || total > static_cast<double>(UINT64_MAX)) {
+  if (!std::isfinite(total) || std::isnan(total) || total < 1.0 ||
+      total > static_cast<double>(UINT64_MAX)) {
     return false;
   }
 
