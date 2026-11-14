@@ -6,6 +6,7 @@
 #include "virmux/memory_manager.hpp"
 
 #include <cerrno>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -13,6 +14,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -85,17 +87,21 @@ std::vector<VmaRange> MemoryManager::scan_process_vmas(
       continue;
     }
 
-    char* end_ptr = nullptr;
-    errno = 0;
-    uintptr_t start =
-        std::strtoull(addr_range.substr(0, dash).c_str(), &end_ptr, 16);
-    if (errno != 0 || end_ptr == addr_range.substr(0, dash).c_str()) {
+    std::string_view start_str(addr_range.data(), dash);
+    std::string_view end_str(addr_range.data() + dash + 1,
+                             addr_range.size() - dash - 1);
+
+    uintptr_t start = 0;
+    auto [p1, ec1] = std::from_chars(
+        start_str.data(), start_str.data() + start_str.size(), start, 16);
+    if (ec1 != std::errc{} || p1 != start_str.data() + start_str.size()) {
       continue;
     }
 
-    uintptr_t end =
-        std::strtoull(addr_range.substr(dash + 1).c_str(), &end_ptr, 16);
-    if (errno != 0 || end_ptr == addr_range.substr(dash + 1).c_str()) {
+    uintptr_t end = 0;
+    auto [p2, ec2] = std::from_chars(
+        end_str.data(), end_str.data() + end_str.size(), end, 16);
+    if (ec2 != std::errc{} || p2 != end_str.data() + end_str.size()) {
       continue;
     }
 
@@ -121,7 +127,7 @@ std::vector<VmaRange> MemoryManager::scan_process_vmas(
       if ((dev == "00:00" || dev == "0:0") && inode_num == 0) {
         is_anon = true;
       } else if (pathname.empty() || pathname == "[heap]" ||
-                 pathname == "[stack]" || pathname.rfind("[anon", 0) == 0) {
+                 pathname == "[stack]" || pathname.starts_with("[anon")) {
         is_anon = true;
       }
     }
