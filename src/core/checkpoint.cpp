@@ -181,8 +181,8 @@ bool CheckpointManager::checkpoint_session(const SessionInfo& session,
   if (criu_avail) {
     std::string criu_bin = find_criu_binary();
     std::string cmd = criu_bin + " dump -t " + std::to_string(session.pid) +
-                      " -D " + session_dir.string() +
-                      " --shell-job >/dev/null 2>&1";
+                      " -D \"" + session_dir.string() +
+                      "\" --shell-job >/dev/null 2>&1";
     int res = std::system(cmd.c_str());
     if (res != -1 && WIFEXITED(res) && WEXITSTATUS(res) == 0) {
       success = true;
@@ -326,8 +326,8 @@ bool CheckpointManager::restore_session(const SessionInfo& session,
       }
       return false;
     }
-    std::string cmd = criu_bin + " restore -d -D " + session_dir.string() +
-                      " --shell-job >/dev/null 2>&1";
+    std::string cmd = criu_bin + " restore -d -D \"" + session_dir.string() +
+                      "\" --shell-job >/dev/null 2>&1";
     int res = std::system(cmd.c_str());
     if (res == -1 || !WIFEXITED(res) || WEXITSTATUS(res) != 0) {
       if (status_msg != nullptr) {
