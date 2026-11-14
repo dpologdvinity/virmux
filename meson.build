@@ -26,6 +26,7 @@ virmux_core_lib = static_library(
     'src/memory/compactor.cpp',
     'src/memory/telemetry.cpp',
     'src/memory/memory_manager.cpp',
+    'src/cli/cli_stats.cpp',
   ],
   include_directories: inc,
   dependencies: [threads_dep],
@@ -188,6 +189,14 @@ test_memory_manager_exe = executable(
 
 test('test_memory_manager', test_memory_manager_exe)
 
+test_cli_stats_exe = executable(
+  'test_cli_stats',
+  'tests/unit/test_cli_stats.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_cli_stats', test_cli_stats_exe)
+
 virmux_exe = executable(
   'virmux',
   'cli/main.cpp',
@@ -218,6 +227,18 @@ test(
   'test_cli_run_help',
   virmux_exe,
   args: ['run', '--help'],
+)
+
+test(
+  'test_cli_stats_help',
+  virmux_exe,
+  args: ['stats', '--help'],
+)
+
+test(
+  'test_cli_pack_help',
+  virmux_exe,
+  args: ['pack', '--help'],
 )
 
 test(
