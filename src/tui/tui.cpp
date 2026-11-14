@@ -495,11 +495,12 @@ int VirmuxTui::run() {
   }
 
   g_tui_stop_requested.store(false);
-  struct sigaction sa{}, old_int{}, old_term{};
+  struct sigaction sa{}, old_int{}, old_term{}, old_hup{};
   sa.sa_handler = tui_signal_handler;
   sigemptyset(&sa.sa_mask);
   sigaction(SIGINT, &sa, &old_int);
   sigaction(SIGTERM, &sa, &old_term);
+  sigaction(SIGHUP, &sa, &old_hup);
 
   initscr();
   curses_initialized_ = true;
@@ -562,6 +563,7 @@ int VirmuxTui::run() {
 
   sigaction(SIGINT, &old_int, nullptr);
   sigaction(SIGTERM, &old_term, nullptr);
+  sigaction(SIGHUP, &old_hup, nullptr);
 
   return 0;
 }
