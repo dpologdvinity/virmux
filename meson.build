@@ -12,16 +12,20 @@ project(
 inc = include_directories('include')
 tests_inc = include_directories('tests', 'tests/unity')
 
+threads_dep = dependency('threads')
+
 virmux_core_lib = static_library(
   'virmux_core',
-  ['src/core/version.cpp', 'src/core/cgroup.cpp'],
+  ['src/core/version.cpp', 'src/core/cgroup.cpp', 'src/sched/gate.cpp'],
   include_directories: inc,
+  dependencies: [threads_dep],
   install: false,
 )
 
 virmux_core_dep = declare_dependency(
   include_directories: inc,
   link_with: virmux_core_lib,
+  dependencies: [threads_dep],
 )
 
 unity_lib = static_library(
@@ -99,4 +103,12 @@ test_cgroup_exe = executable(
 )
 
 test('test_cgroup', test_cgroup_exe)
+
+test_gate_exe = executable(
+  'test_gate',
+  'tests/unit/test_gate.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_gate', test_gate_exe)
 
