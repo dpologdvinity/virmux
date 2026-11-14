@@ -11,6 +11,7 @@ extern "C" {
 
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -187,10 +188,30 @@ void test_sandbox_c_wrapper_and_oom_score(void) {
   TEST_ASSERT_EQUAL_INT(19, exit_code);
 }
 
-void test_sandbox_meminfo_cleaned_up(void) {
-  std::string expected_meminfo =
-      "/tmp/virmux_" + std::to_string(getpid()) + "_meminfo";
+void test_sandbox_permission_denied_returns_126(void) {
+  std::string non_exec_file = "/tmp/virmux_non_exec_test.bin";
+  {
+    std::ofstream ofs(non_exec_file);
+    ofs << "#!/bin/sh\nexit 0\n";
+  }
+  std::filesystem::permissions(
+      non_exec_file,
+      std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+      std::filesystem::perm_options::replace);
 
+  virmux::SandboxConfig cfg{};
+  char arg0[128];
+  std::strncpy(arg0, non_exec_file.c_str(), sizeof(arg0) - 1);
+  arg0[sizeof(arg0) - 1] = '\0';
+  char* argv[] = {arg0, nullptr};
+
+  int exit_code = virmux::spawn_command(cfg, argv);
+  std::filesystem::remove(non_exec_file);
+
+  TEST_ASSERT_EQUAL_INT(126, exit_code);
+}
+
+void test_sandbox_meminfo_cleaned_up(void) {
   virmux::SandboxConfig cfg{};
   char arg0[] = "/bin/sh";
   char arg1[] = "-c";
@@ -200,14 +221,25 @@ void test_sandbox_meminfo_cleaned_up(void) {
   int exit_code = virmux::spawn_command(cfg, argv);
   TEST_ASSERT_EQUAL_INT(0, exit_code);
 
-  // Verify the synthetic file was unlinked and does not remain on disk
-  TEST_ASSERT_FALSE(std::filesystem::exists(expected_meminfo));
+  // Verify no temporary meminfo file for this PID remains in /tmp
+  std::string prefix = "virmux_" + std::to_string(getpid()) + "_";
+  bool found_leftover = false;
+  for (const auto& entry : std::filesystem::directory_iterator("/tmp")) {
+    std::string fname = entry.path().filename().string();
+    if (fname.rfind(prefix, 0) == 0 &&
+        fname.find("_meminfo") != std::string::npos) {
+      found_leftover = true;
+      break;
+    }
+  }
+  TEST_ASSERT_FALSE(found_leftover);
 }
 
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_sandbox_exit_code_propagation);
   RUN_TEST(test_sandbox_missing_binary_returns_127);
+  RUN_TEST(test_sandbox_permission_denied_returns_126);
   RUN_TEST(test_sandbox_success_exit_zero);
   RUN_TEST(test_sandbox_signal_propagation);
   RUN_TEST(test_sandbox_null_argv_returns_error);

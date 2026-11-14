@@ -15,6 +15,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -128,6 +129,8 @@ std::string resolve_interceptor_path() {
   return "";
 }
 
+static std::atomic<uint64_t> s_sandbox_counter{0};
+
 }  // anonymous namespace
 
 AdmissionGate& get_default_admission_gate() {
@@ -166,9 +169,10 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
     }
   }
 
-  // Generate synthetic /proc/meminfo file
-  std::string meminfo_path =
-      "/tmp/virmux_" + std::to_string(::getpid()) + "_meminfo";
+  // Generate synthetic /proc/meminfo file with unique atomic sequence per call
+  uint64_t seq = s_sandbox_counter.fetch_add(1, std::memory_order_relaxed);
+  std::string meminfo_path = "/tmp/virmux_" + std::to_string(::getpid()) + "_" +
+                             std::to_string(seq) + "_meminfo";
   int mem_fd = ::open(meminfo_path.c_str(),
                       O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
   if (mem_fd >= 0) {
@@ -178,6 +182,21 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
     ::close(mem_fd);
   }
   MeminfoGuard meminfo_guard{meminfo_path};
+
+  // Pre-fork hygiene: resolve interceptor path and prepare environment strings
+  // before fork to avoid dynamic allocations or path lookup failures after
+  // chdir
+  std::string intercept_lib = resolve_interceptor_path();
+  std::string preload_val;
+  if (!intercept_lib.empty()) {
+    preload_val = intercept_lib;
+    const char* existing_preload = std::getenv("LD_PRELOAD");
+    if (existing_preload && existing_preload[0] != '\0') {
+      preload_val = preload_val + ":" + existing_preload;
+    }
+  }
+
+  std::string vcores_str = std::to_string(cfg.virtual_cores);
 
   // Set up cgroups v2 slice (gracefully falls back if unprivileged)
   CgroupSlice slice;
@@ -198,33 +217,25 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
     // 2. Set oom_score_adj to sacrificial priority (+800)
     set_worker_oom_score(0);
 
-    // 3. Switch to configured workspace directory if provided
+    // 3. Inject runtime virtualization and interceptor environment
+    // (pre-allocated)
+    if (!preload_val.empty()) {
+      ::setenv("LD_PRELOAD", preload_val.c_str(), 1);
+    }
+
+    ::setenv(VIRMUX_ENV_VIRTUAL_CORES, vcores_str.c_str(), 1);
+    ::setenv(VIRMUX_ENV_SPOOFED_MEMINFO, meminfo_path.c_str(), 1);
+    ::setenv("OMP_NUM_THREADS", vcores_str.c_str(), 1);
+    ::setenv("OPENBLAS_NUM_THREADS", vcores_str.c_str(), 1);
+    ::setenv("MKL_NUM_THREADS", vcores_str.c_str(), 1);
+    ::setenv("NUMEXPR_NUM_THREADS", vcores_str.c_str(), 1);
+
+    // 4. Switch to configured workspace directory if provided
     if (!cfg.workspace_path.empty()) {
       if (::chdir(cfg.workspace_path.c_str()) != 0) {
         ::_exit(127);
       }
     }
-
-    // 4. Inject runtime virtualization and interceptor environment
-    std::string intercept_lib = resolve_interceptor_path();
-    if (!intercept_lib.empty()) {
-      const char* existing_preload = std::getenv("LD_PRELOAD");
-      std::string preload_val = intercept_lib;
-      if (existing_preload && existing_preload[0] != '\0') {
-        preload_val = preload_val + ":" + existing_preload;
-      }
-      ::setenv("LD_PRELOAD", preload_val.c_str(), 1);
-    }
-
-    ::setenv(VIRMUX_ENV_VIRTUAL_CORES,
-             std::to_string(cfg.virtual_cores).c_str(), 1);
-    ::setenv(VIRMUX_ENV_SPOOFED_MEMINFO, meminfo_path.c_str(), 1);
-    ::setenv("OMP_NUM_THREADS", std::to_string(cfg.virtual_cores).c_str(), 1);
-    ::setenv("OPENBLAS_NUM_THREADS", std::to_string(cfg.virtual_cores).c_str(),
-             1);
-    ::setenv("MKL_NUM_THREADS", std::to_string(cfg.virtual_cores).c_str(), 1);
-    ::setenv("NUMEXPR_NUM_THREADS", std::to_string(cfg.virtual_cores).c_str(),
-             1);
 
     // 5. Execute target command
     ::execvp(argv[0], argv);
