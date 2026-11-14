@@ -16,7 +16,7 @@ threads_dep = dependency('threads')
 
 virmux_core_lib = static_library(
   'virmux_core',
-  ['src/core/version.cpp', 'src/core/cgroup.cpp', 'src/sched/gate.cpp', 'src/core/sandbox.cpp', 'src/memory/cleanse.cpp'],
+  ['src/core/version.cpp', 'src/core/cgroup.cpp', 'src/sched/gate.cpp', 'src/core/sandbox.cpp', 'src/memory/cleanse.cpp', 'src/memory/ksm.cpp'],
   include_directories: inc,
   dependencies: [threads_dep],
   install: false,
@@ -131,6 +131,14 @@ test_cleanse_exe = executable(
 )
 
 test('test_cleanse', test_cleanse_exe)
+
+test_ksm_exe = executable(
+  'test_ksm',
+  'tests/unit/test_ksm.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_ksm', test_ksm_exe)
 
 virmux_exe = executable(
   'virmux',
