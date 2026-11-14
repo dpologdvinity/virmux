@@ -1,0 +1,117 @@
+# Virmux — System Design Specification
+## 08. Tooling, Diagnostics & Developer Environment
+
+### 1. Architectural Purpose
+
+Developing a low-level Linux systems multiplexer in C that manipulates kernel primitives (`cgroups v2`, `process_madvise`, `KSM`, `epoll`, `OverlayFS`, `seccomp`, `LD_PRELOAD`) requires specialized toolchains for compilation, memory validation, dynamic tracing, static analysis, and stress benchmarking.
+
+This document details the exact toolchain matrix, setup commands, diagnostic configurations, and commands for the developer and CI/CD environments.
+
+---
+
+### 2. Comprehensive Toolchain Matrix
+
+| Category | Tool | Binary / Package | Purpose in `virmux` | Status on Host |
+|---|---|---|---|---|
+| **Compilers** | GCC | `/usr/bin/gcc` | Primary C17 compiler with `-Wall -Wextra -Wpedantic` | Installed |
+| | Clang | `/usr/bin/clang` | Secondary compiler & static analyzer | Installed |
+| **Build Systems** | Meson | `~/.local/bin/meson` | Fast dependency resolution & build configuration | Installed |
+| | Ninja | `/usr/bin/ninja` | High-speed parallel build executor | Installed |
+| **Memory Validation** | Valgrind | `/usr/bin/valgrind` | Heap leak detection (`memcheck`) & cache profiling | Installed |
+| | AddressSanitizer | Built into GCC/Clang | In-process runtime memory error detection (`-fsanitize=address`) | Available |
+| | UndefinedSanitizer| Built into GCC/Clang | Undefined behavior detection (`-fsanitize=undefined`) | Available |
+| **Debuggers & Tracers**| GDB | `/usr/bin/gdb` | Interactive C execution inspection & core dump analysis | Installed |
+| | `strace` | `strace` | Tracing syscalls (`process_madvise`, `mount`, `epoll`, `clone3`) | To Install |
+| | `ltrace` | `ltrace` | Intercepted dynamic library call tracing | To Install |
+| **Static Analysis & LSP**| `clangd` | `/usr/bin/clangd` | C Language Server Protocol for editor auto-completion | Installed |
+| | `clang-format` | `~/.local/bin/clang-format` | Deterministic C17 code formatting | Installed |
+| | `clang-tidy` | `~/.local/bin/clang-tidy` | Modern static linting & code smell detection | Installed |
+| | `cppcheck` | `/usr/bin/cppcheck` | Static analysis for memory leaks & null dereferences | Installed |
+| **Kernel & Sandboxing**| `zramctl` | `/usr/sbin/zramctl` | Querying & configuring in-RAM compressed swap devices | Installed |
+| | `libncurses-dev` | `libncurses-dev` | Header and libraries for `virmux top` TUI dashboard | To Install |
+| | `libseccomp-dev` | `libseccomp-dev` | Kernel BPF syscall filtering headers | To Install |
+| | `criu` | `criu` | Checkpoint/Restore In Userspace engine | To Install |
+| **Stress Benchmarks** | `stress-ng` | `stress-ng` | Generating CPU, memory, and I/O pressure for benchmarks | To Install |
+
+---
+
+### 3. Quick Installation Command for Missing Host Tools
+
+Run the following one-line command to install all recommended development and diagnostic packages:
+
+```bash
+sudo apt-get update && sudo apt-get install -y \
+    strace \
+    ltrace \
+    stress-ng \
+    libncurses-dev \
+    libseccomp-dev \
+    criu
+```
+
+---
+
+### 4. How Tools Are Used in `virmux` Workflows
+
+#### A. Memory Leak & Pointer Bug Detection (ASan & Valgrind)
+
+1. **AddressSanitizer (Preferred during development):**
+   Compiled directly with Meson:
+   ```bash
+   meson setup build-asan -Db_sanitize=address,undefined
+   ninja -C build-asan test
+   ```
+   *Detects:* Use-after-free, buffer overflows, memory leaks, and stack misalignment with zero false positives at near-native speed.
+
+2. **Valgrind Memcheck (Deep auditing):**
+   ```bash
+   valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes \
+       ./build/virmux run -- /bin/echo "test"
+   ```
+
+#### B. Syscall Tracing (`strace`)
+Essential for verifying kernel interactions:
+```bash
+# Verify process_madvise(MADV_PAGEOUT) syscall execution
+strace -e process_madvise,madvise,mount,pivot_root ./build/virmux run -- sleep 1
+
+# Trace cgroup v2 file write events
+strace -e openat,write -P /sys/fs/cgroup ./build/virmux run -- ls
+```
+
+#### C. Language Server & Compilation Database (`clangd`)
+Meson automatically outputs `compile_commands.json` in the build directory. Symlink it to the repository root for instantaneous IDE completions:
+```bash
+ln -sf build/compile_commands.json compile_commands.json
+```
+
+#### D. Stress-Testing the Multiplexer (`stress-ng`)
+Used in `bench/` to verify that `virmux` prevents system collapse under aggressive loads:
+```bash
+# Simulates 8 memory-thrashing workers and 8 CPU spinners inside virmux
+virmux run -- stress-ng --vm 8 --vm-bytes 1G --cpu 8 --timeout 30s
+```
+
+---
+
+### 5. VS Code / Clangd Recommended Settings
+
+Create `.clangd` in repository root:
+```yaml
+CompileFlags:
+  CompilationDatabase: "build"
+  Add:
+    - "-Wall"
+    - "-Wextra"
+    - "-Wpedantic"
+    - "-std=c17"
+    - "-D_GNU_SOURCE"
+
+Diagnostics:
+  UnusedIncludes: Strict
+  ClangTidy:
+    Add:
+      - "readability-*"
+      - "bugprone-*"
+      - "cert-*"
+```

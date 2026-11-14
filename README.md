@@ -82,6 +82,7 @@ Comprehensive technical design specifications are available in the [`docs/specs/
 - [05. Fault Isolation & Lifecycle Management](docs/specs/05-FAULT-ISOLATION-LIFECYCLE.md)
 - [06. CLI & Interactive TUI Specification](docs/specs/06-CLI-AND-TUI-SPEC.md)
 - [07. Testing, Verification & Benchmark Strategy](docs/specs/07-TESTING-AND-BENCHMARKS.md)
+- [08. Tooling, Diagnostics & Dev Environment](docs/specs/08-TOOLING-AND-DEV-ENVIRONMENT.md)
 
 ---
 
