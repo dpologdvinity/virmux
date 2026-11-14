@@ -164,4 +164,14 @@ test(
   args: ['run', '--help'],
 )
 
+test(
+  'integration_virmux_run',
+  find_program('bash'),
+  args: [
+    meson.current_source_dir() / 'tests/integration/test_virmux_run.sh',
+    meson.current_build_dir(),
+  ],
+  depends: [virmux_exe, virmux_intercept_lib],
+)
+
 
