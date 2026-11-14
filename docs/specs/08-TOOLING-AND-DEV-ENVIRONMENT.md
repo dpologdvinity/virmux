@@ -94,7 +94,24 @@ virmux run -- stress-ng --vm 8 --vm-bytes 1G --cpu 8 --timeout 30s
 
 ---
 
-### 5. VS Code / Clangd Recommended Settings
+### 5. Shell Automation & Utility Scripts (`scripts/`)
+
+Low-level kernel configurations and automated testing harnesses are codified into reproducible Bash scripts:
+
+1. **`scripts/setup-host.sh`:**
+   - Detects cgroup v2 mount and enables delegation controllers (`cpu memory io cpuset`).
+   - Enables and tunes KSM (`/sys/kernel/mm/ksm/run`).
+   - Provisions `/dev/zram0` compressed RAM swap if unconfigured.
+2. **`scripts/cleanup-sandboxes.sh`:**
+   - Safety emergency script: unmounts any dangling OverlayFS mount points and wipes stale tmpfs directories in `/run/user/<UID>/virmux/`.
+3. **`scripts/run-12-terminal-gauntlet.sh`:**
+   - Spawns 12 concurrent background tasks (Playwright, CMake, model training, Docker) and measures host responsiveness and memory savings.
+4. **`scripts/doctor.sh`:**
+   - Health check script verifying kernel version (>=5.10), cgroups v2, KSM support, compiler versions, and user namespace permissions.
+
+---
+
+### 6. VS Code / Clangd Recommended Settings
 
 Create `.clangd` in repository root:
 ```yaml
