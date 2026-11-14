@@ -265,7 +265,7 @@ int cmd_pack(int argc, char* const argv[]) {
       std::string s(arg);
       long val = std::strtol(s.c_str(), &end_ptr, 10);
       if (end_ptr == s.c_str() || *end_ptr != '\0' || errno == ERANGE ||
-          val <= 0) {
+          val <= 0 || val > std::numeric_limits<pid_t>::max()) {
         std::cerr << "Error: invalid PID '" << arg
                   << "' (must be a positive integer)\n";
         return 1;
@@ -283,34 +283,36 @@ int cmd_pack(int argc, char* const argv[]) {
     std::filesystem::path cgroup_root = "/sys/fs/cgroup";
     if (std::filesystem::exists(cgroup_root, ec) &&
         std::filesystem::is_directory(cgroup_root, ec)) {
-      for (const auto& entry :
-           std::filesystem::directory_iterator(cgroup_root, ec)) {
-        if (ec) {
-          break;
-        }
-        if (entry.is_directory(ec)) {
-          std::string dir_name = entry.path().filename().string();
+      std::filesystem::directory_iterator dir_it(
+          cgroup_root,
+          std::filesystem::directory_options::skip_permission_denied, ec);
+      std::filesystem::directory_iterator dir_end;
+      while (!ec && dir_it != dir_end) {
+        if (dir_it->is_directory(ec)) {
+          std::string dir_name = dir_it->path().filename().string();
           if (dir_name.starts_with("virmux")) {
-            std::filesystem::path procs_file = entry.path() / "cgroup.procs";
+            std::filesystem::path procs_file = dir_it->path() / "cgroup.procs";
             if (std::filesystem::exists(procs_file, ec)) {
               total_compacted += mgr.compact_cgroup_procs(procs_file.string());
             }
-            for (const auto& sub_entry :
-                 std::filesystem::recursive_directory_iterator(entry.path(),
-                                                               ec)) {
-              if (ec) {
-                break;
-              }
-              if (sub_entry.is_regular_file(ec) &&
-                  sub_entry.path().filename() == "cgroup.procs") {
-                if (sub_entry.path() != procs_file) {
+            std::filesystem::recursive_directory_iterator sub_it(
+                dir_it->path(),
+                std::filesystem::directory_options::skip_permission_denied, ec);
+            std::filesystem::recursive_directory_iterator sub_end;
+            while (!ec && sub_it != sub_end) {
+              if (sub_it->is_regular_file(ec) &&
+                  sub_it->path().filename() == "cgroup.procs") {
+                if (sub_it->path() != procs_file) {
                   total_compacted +=
-                      mgr.compact_cgroup_procs(sub_entry.path().string());
+                      mgr.compact_cgroup_procs(sub_it->path().string());
                 }
               }
+              sub_it.increment(ec);
             }
+            ec.clear();
           }
         }
+        dir_it.increment(ec);
       }
     }
   }
