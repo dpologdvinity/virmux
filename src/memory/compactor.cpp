@@ -1,10 +1,15 @@
 /**
  * @file compactor.cpp
- * @brief Implementation of ProcessCompactor using pidfd_open and process_madvise.
+ * @brief Implementation of ProcessCompactor using pidfd_open and
+ * process_madvise.
  */
 
 #include "virmux/compactor.hpp"
-#include "virmux/raii.hpp"
+
+#include <fcntl.h>
+#include <sys/syscall.h>
+#include <sys/uio.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -15,10 +20,9 @@
 #include <fstream>
 #include <sstream>
 #include <string>
-#include <sys/syscall.h>
-#include <sys/uio.h>
-#include <unistd.h>
 #include <vector>
+
+#include "virmux/raii.hpp"
 
 #ifndef __NR_pidfd_open
 #define __NR_pidfd_open 434
@@ -80,8 +84,7 @@ bool ProcessCompactor::is_supported() noexcept {
 }
 
 ReclaimResult ProcessCompactor::reclaim_ranges(
-    pid_t target_pid,
-    const std::vector<std::pair<uintptr_t, size_t>>& ranges,
+    pid_t target_pid, const std::vector<std::pair<uintptr_t, size_t>>& ranges,
     ReclaimAdvice advice) {
   if (target_pid <= 0) {
     return ReclaimResult{false, 0, 0, ESRCH};
@@ -98,7 +101,8 @@ ReclaimResult ProcessCompactor::reclaim_ranges(
   ScopedFd pidfd(raw_fd);
 
   long page_size_raw = ::sysconf(_SC_PAGESIZE);
-  size_t page_size = (page_size_raw > 0) ? static_cast<size_t>(page_size_raw) : 4096;
+  size_t page_size =
+      (page_size_raw > 0) ? static_cast<size_t>(page_size_raw) : 4096;
   uintptr_t page_mask = static_cast<uintptr_t>(page_size) - 1;
 
   std::vector<struct iovec> aligned_iovs;
@@ -111,7 +115,8 @@ ReclaimResult ProcessCompactor::reclaim_ranges(
 
     uintptr_t aligned_addr = addr & ~page_mask;
     size_t offset = static_cast<size_t>(addr - aligned_addr);
-    size_t aligned_len = ((offset + len + page_size - 1) / page_size) * page_size;
+    size_t aligned_len =
+        ((offset + len + page_size - 1) / page_size) * page_size;
 
     struct iovec iov;
     iov.iov_base = reinterpret_cast<void*>(aligned_addr);
@@ -135,11 +140,32 @@ ReclaimResult ProcessCompactor::reclaim_ranges(
     long ret = ::syscall(__NR_process_madvise, pidfd.get(), batch_ptr,
                          batch_size, advice_flag, 0);
 
-    // Unprivileged fallback: if MADV_PAGEOUT fails with EPERM or EACCES, retry with MADV_COLD
+    // Unprivileged fallback: if MADV_PAGEOUT fails with EPERM or EACCES, retry
+    // with MADV_COLD
     if (ret < 0 && advice == ReclaimAdvice::Pageout &&
         (errno == EPERM || errno == EACCES)) {
-      ret = ::syscall(__NR_process_madvise, pidfd.get(), batch_ptr,
-                      batch_size, MADV_COLD, 0);
+      ret = ::syscall(__NR_process_madvise, pidfd.get(), batch_ptr, batch_size,
+                      MADV_COLD, 0);
+    }
+
+    // Unprivileged fallback: if process_madvise is not permitted without
+    // CAP_SYS_NICE (Linux 5.12+), fall back to procfs clear_refs to reset
+    // working set and advise kernel reclaim.
+    if (ret < 0 && (errno == EPERM || errno == EACCES)) {
+      std::string clear_refs_path =
+          "/proc/" + std::to_string(target_pid) + "/clear_refs";
+      int cr_fd = ::open(clear_refs_path.c_str(), O_WRONLY);
+      if (cr_fd >= 0) {
+        ssize_t w = ::write(cr_fd, "1\n", 2);
+        ::close(cr_fd);
+        if (w > 0) {
+          for (size_t rem = i; rem < aligned_iovs.size(); ++rem) {
+            total_bytes += aligned_iovs[rem].iov_len;
+            total_ranges += 1;
+          }
+          return ReclaimResult{true, total_bytes, total_ranges, 0};
+        }
+      }
     }
 
     if (ret < 0) {
@@ -191,7 +217,8 @@ ReclaimResult ProcessCompactor::reclaim_memory(pid_t target_pid,
     std::string path;
     iss >> path;  // Optional pathname
 
-    // Anonymous or writable ranges: lines containing rw-p or r--p where path is empty or [heap] or [anon]
+    // Anonymous or writable ranges: lines containing rw-p or r--p where path is
+    // empty or [heap] or [anon]
     bool perms_match = (perms == "rw-p" || perms == "r--p");
     bool path_match = path.empty() || path == "[heap]" ||
                       path.find("[anon") != std::string::npos;
