@@ -7,6 +7,8 @@
 #define _GNU_SOURCE
 #endif
 
+#undef _FILE_OFFSET_BITS
+
 #include "virmux/intercept.h"
 
 #include <cstdarg>
@@ -61,6 +63,55 @@ inline long get_spoofed_core_count() noexcept {
         return vcores;
     }
     return 0;
+}
+
+/**
+ * @brief Internal open helper shared by explicit open and open64 exports.
+ * @param pathname Path to open or redirect.
+ * @param flags Access and creation flags.
+ * @param mode Creation permissions when O_CREAT or O_TMPFILE is set.
+ * @return File descriptor on success, -1 on error.
+ */
+static int do_open(const char *pathname, int flags, mode_t mode) {
+    if (in_intercept) {
+        if (real_open) {
+            return real_open(pathname, flags, mode);
+        }
+        return static_cast<int>(syscall(SYS_openat, AT_FDCWD, pathname, flags, mode));
+    }
+
+    ReentrancyGuard guard;
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunknown-warning-option"
+#pragma clang diagnostic ignored "-Wtautological-pointer-compare"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wnonnull-compare"
+#endif
+    if (pathname != nullptr && std::strcmp(pathname, "/proc/meminfo") == 0) {
+        const char *spoofed_path = std::getenv(VIRMUX_ENV_SPOOFED_MEMINFO);
+        if (spoofed_path && spoofed_path[0] != '\0') {
+            pathname = spoofed_path;
+        }
+    }
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+
+    if (!real_open) {
+        real_open = reinterpret_cast<open_fn_t>(dlsym(RTLD_NEXT, "open64"));
+        if (!real_open) {
+            real_open = reinterpret_cast<open_fn_t>(dlsym(RTLD_NEXT, "open"));
+        }
+    }
+    if (real_open) {
+        return real_open(pathname, flags, mode);
+    }
+    return static_cast<int>(syscall(SYS_openat, AT_FDCWD, pathname, flags, mode));
 }
 
 /**
@@ -172,38 +223,20 @@ extern "C" __attribute__((visibility("default"))) int open(const char *pathname,
         mode = va_arg(args, mode_t);
         va_end(args);
     }
-
-    if (in_intercept) {
-        if (real_open) {
-            return real_open(pathname, flags, mode);
-        }
-        return static_cast<int>(syscall(SYS_openat, AT_FDCWD, pathname, flags, mode));
-    }
-
-    ReentrancyGuard guard;
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wnonnull-compare"
-    if (pathname != nullptr && std::strcmp(pathname, "/proc/meminfo") == 0) {
-        const char *spoofed_path = std::getenv(VIRMUX_ENV_SPOOFED_MEMINFO);
-        if (spoofed_path && spoofed_path[0] != '\0') {
-            pathname = spoofed_path;
-        }
-    }
-#pragma GCC diagnostic pop
-
-    if (!real_open) {
-        real_open = reinterpret_cast<open_fn_t>(dlsym(RTLD_NEXT, "open64"));
-        if (!real_open) {
-            real_open = reinterpret_cast<open_fn_t>(dlsym(RTLD_NEXT, "open"));
-        }
-    }
-    if (real_open) {
-        return real_open(pathname, flags, mode);
-    }
-    return static_cast<int>(syscall(SYS_openat, AT_FDCWD, pathname, flags, mode));
+    return do_open(pathname, flags, mode);
 }
 
-// Export open symbol alias matching open64 for 64-bit glibc redirections
-extern "C" __attribute__((visibility("default"), nonnull(1), alias("open64"))) int virmux_open(
-    const char *pathname, int flags, ...) __asm__("open");
+extern "C" __attribute__((visibility("default"))) int open64(const char *pathname, int flags, ...) {
+    mode_t mode = 0;
+    if ((flags & O_CREAT)
+#ifdef O_TMPFILE
+        || ((flags & O_TMPFILE) == O_TMPFILE)
+#endif
+    ) {
+        va_list args;
+        va_start(args, flags);
+        mode = va_arg(args, mode_t);
+        va_end(args);
+    }
+    return do_open(pathname, flags, mode);
+}

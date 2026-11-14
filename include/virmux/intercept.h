@@ -6,9 +6,15 @@
 #ifndef VIRMUX_INTERCEPT_H
 #define VIRMUX_INTERCEPT_H
 
+#undef _FILE_OFFSET_BITS
+
 #include <fcntl.h>
 #include <sys/sysinfo.h>
 #include <unistd.h>
+
+#ifndef __THROW
+#define __THROW
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -35,6 +41,7 @@ long sysconf(int name) __THROW;
 int get_nprocs(void) __THROW;
 int get_nprocs_conf(void) __THROW;
 int open(const char *pathname, int flags, ...);
+int open64(const char *pathname, int flags, ...);
 
 #ifdef __cplusplus
 }
