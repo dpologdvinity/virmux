@@ -14,9 +14,34 @@ bool is_browser_binary(const char *path) noexcept {
         return false;
     }
     std::string_view p(path);
-    return p.find("chrome") != std::string_view::npos ||
-           p.find("chromium") != std::string_view::npos ||
-           p.find("headless_shell") != std::string_view::npos;
+    auto slash = p.rfind('/');
+    std::string_view name = (slash != std::string_view::npos) ? p.substr(slash + 1) : p;
+
+    if (name.empty()) {
+        return false;
+    }
+
+    // Explicitly exclude browser helper processes and dev tools
+    if (name.starts_with("chromedriver") ||
+        name.starts_with("chrome-sandbox")) {
+        return false;
+    }
+
+    // Exact matches for standard headless browser binaries
+    if (name == "chrome" || name == "chromium" || name == "headless_shell") {
+        return true;
+    }
+
+    // Common distribution package binary names and prefixes
+    if (name == "google-chrome" ||
+        name.starts_with("google-chrome-") ||
+        name == "chromium-browser" ||
+        name.starts_with("chromium-") ||
+        name.starts_with("chrome-")) {
+        return true;
+    }
+
+    return false;
 }
 
 std::vector<std::string> inject_slim_flags(char *const argv[]) {

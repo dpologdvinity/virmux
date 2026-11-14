@@ -22,12 +22,29 @@ void setUp(void) {}
 void tearDown(void) {}
 
 void test_browser_binary_detection(void) {
+    // Valid browser binary paths
     TEST_ASSERT_TRUE(virmux::is_browser_binary("/usr/bin/chromium"));
+    TEST_ASSERT_TRUE(virmux::is_browser_binary("/usr/bin/chrome"));
+    TEST_ASSERT_TRUE(virmux::is_browser_binary("/cache/chromium-1155/chrome-linux/chrome"));
     TEST_ASSERT_TRUE(virmux::is_browser_binary("/home/user/.cache/ms-playwright/chromium-1155/chrome-linux/chrome"));
-    TEST_ASSERT_FALSE(virmux::is_browser_binary("/usr/bin/gcc"));
     TEST_ASSERT_TRUE(virmux::is_browser_binary("chrome"));
     TEST_ASSERT_TRUE(virmux::is_browser_binary("chromium"));
     TEST_ASSERT_TRUE(virmux::is_browser_binary("/usr/local/bin/headless_shell"));
+    TEST_ASSERT_TRUE(virmux::is_browser_binary("/usr/bin/google-chrome"));
+    TEST_ASSERT_TRUE(virmux::is_browser_binary("/usr/bin/google-chrome-stable"));
+    TEST_ASSERT_TRUE(virmux::is_browser_binary("/usr/bin/chromium-browser"));
+
+    // Non-browser paths containing chrome/chromium in directory names (must return false)
+    TEST_ASSERT_FALSE(virmux::is_browser_binary("/home/user/chrome-project/build.sh"));
+    TEST_ASSERT_FALSE(virmux::is_browser_binary("/opt/chromium-tools/make"));
+    TEST_ASSERT_FALSE(virmux::is_browser_binary("/opt/chromium-tools/clang"));
+    TEST_ASSERT_FALSE(virmux::is_browser_binary("/usr/bin/gcc"));
+
+    // Browser helper tools and sandboxes (must be excluded)
+    TEST_ASSERT_FALSE(virmux::is_browser_binary("/usr/bin/chromedriver"));
+    TEST_ASSERT_FALSE(virmux::is_browser_binary("/usr/lib/chromium/chrome-sandbox"));
+
+    // Null and empty strings
     TEST_ASSERT_FALSE(virmux::is_browser_binary(nullptr));
     TEST_ASSERT_FALSE(virmux::is_browser_binary(""));
 }
@@ -57,7 +74,7 @@ void test_browser_flag_injection_null_or_empty(void) {
 }
 
 void test_execve_intercepts_browser_and_injects_flags(void) {
-    const char *script_path = "/tmp/virmux_test_chromium_mock.sh";
+    const char *script_path = "/tmp/chromium";
     const char *out_path = "/tmp/virmux_test_chromium_mock.out";
     unlink(script_path);
     unlink(out_path);
@@ -72,7 +89,7 @@ void test_execve_intercepts_browser_and_injects_flags(void) {
     pid_t pid = fork();
     TEST_ASSERT_TRUE(pid >= 0);
     if (pid == 0) {
-        char arg0[] = "/tmp/virmux_test_chromium_mock.sh";
+        char arg0[] = "/tmp/chromium";
         char arg1[] = "http://localhost:3000";
         char *child_argv[] = {arg0, arg1, nullptr};
         execve(script_path, child_argv, environ);
@@ -103,7 +120,7 @@ void test_execve_intercepts_browser_and_injects_flags(void) {
 }
 
 void test_execve_passthrough_for_non_browser(void) {
-    const char *script_path = "/tmp/virmux_test_tool_mock.sh";
+    const char *script_path = "/tmp/make";
     const char *out_path = "/tmp/virmux_test_tool_mock.out";
     unlink(script_path);
     unlink(out_path);
@@ -118,7 +135,7 @@ void test_execve_passthrough_for_non_browser(void) {
     pid_t pid = fork();
     TEST_ASSERT_TRUE(pid >= 0);
     if (pid == 0) {
-        char arg0[] = "/tmp/virmux_test_tool_mock.sh";
+        char arg0[] = "/tmp/make";
         char arg1[] = "--verbose";
         char *child_argv[] = {arg0, arg1, nullptr};
         execve(script_path, child_argv, environ);
