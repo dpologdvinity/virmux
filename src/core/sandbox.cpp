@@ -455,7 +455,9 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
   }
 
   if (session_id > 0) {
-    client.unregister_session(session_id, 200);
+    if (WIFEXITED(status)) {
+      client.unregister_session(session_id, 200);
+    }
   }
 
   // Cleanup scratch space and ephemeral overlay workspace

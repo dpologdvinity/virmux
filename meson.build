@@ -419,3 +419,14 @@ test(
   timeout: 120,
 )
 
+test(
+  'integration_fault_isolation',
+  find_program('bash'),
+  args: [
+    meson.current_source_dir() / 'tests/integration/test_fault_isolation.sh',
+    meson.current_build_dir(),
+  ],
+  depends: [virmux_exe, virmux_intercept_lib],
+  timeout: 120,
+)
+

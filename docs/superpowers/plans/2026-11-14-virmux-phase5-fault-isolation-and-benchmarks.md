@@ -54,7 +54,7 @@
   - Add CLI subcommands `virmux checkpoint <ID>` and `virmux restore <ID>`.
   - Add unit tests in `tests/unit/test_checkpoint.cpp`.
 
-- [ ] **Task 4: Fault Isolation & Blast-Radius Integration Test Suite**
+- [x] **Task 4: Fault Isolation & Blast-Radius Integration Test Suite**
   - Implement `tests/integration/test_fault_isolation.sh`.
   - Register integration test in `meson.build`.
   - Verify worker sacrificial OOM kill, fork-bomb containment, and auto-freeze pageout.

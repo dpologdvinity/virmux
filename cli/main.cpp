@@ -5,6 +5,7 @@
 
 #include <cctype>
 #include <cerrno>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -69,6 +70,7 @@ void print_run_usage(std::ostream& out) {
       << "  --cores <N>          Virtual CPU core count (default: 2)\n"
       << "  --mem <LIMIT>        Memory ceiling in bytes or with suffix (e.g., "
          "2G, 512M, 1024K; default: 2G)\n"
+      << "  --max-pids <N>       Process allocation ceiling (default: 256)\n"
       << "  --workspace <PATH>   Path to base workspace directory (OverlayFS "
          "lowerdir in ephemeral mode)\n"
       << "  --scratch <PATH>     Path to custom scratch directory (defaults to "
@@ -240,6 +242,32 @@ int handle_run(int argc, char* argv[]) {
         std::cerr << "Error: invalid memory limit: '" << val << "'\n";
         return 1;
       }
+    } else if (arg == "--max-pids") {
+      if (i + 1 >= argc) {
+        std::cerr << "Error: --max-pids requires an argument\n";
+        return 1;
+      }
+      std::string_view val_sv = argv[++i];
+      uint64_t val = 0;
+      auto [p, ec] =
+          std::from_chars(val_sv.data(), val_sv.data() + val_sv.size(), val);
+      if (ec != std::errc() || val == 0) {
+        std::cerr << "Error: invalid value for --max-pids: '" << val_sv
+                  << "' (must be a positive integer)\n";
+        return 1;
+      }
+      cfg.max_pids = val;
+    } else if (arg.starts_with("--max-pids=")) {
+      std::string_view val_sv = arg.substr(11);
+      uint64_t val = 0;
+      auto [p, ec] =
+          std::from_chars(val_sv.data(), val_sv.data() + val_sv.size(), val);
+      if (ec != std::errc() || val == 0) {
+        std::cerr << "Error: invalid value for --max-pids: '" << val_sv
+                  << "' (must be a positive integer)\n";
+        return 1;
+      }
+      cfg.max_pids = val;
     } else if (arg == "--workspace") {
       if (i + 1 >= argc) {
         std::cerr << "Error: --workspace requires an argument\n";
