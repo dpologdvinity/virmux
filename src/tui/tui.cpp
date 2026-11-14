@@ -283,8 +283,9 @@ std::string VirmuxTui::render_snapshot(const std::vector<SessionInfo>& sessions,
 
       char row_buf[512];
       std::snprintf(row_buf, sizeof(row_buf),
-                    "%c%2llu | %-12.12s| %-8.8s| %-8d| %-10.10s| %-6.6s| %s",
-                    prefix, static_cast<unsigned long long>(s.id % 100),
+                    "%c%-3llu| %-12.12s| %-8.8s| %-8d| %-10.10s| %-6.6s| %s",
+                    prefix,
+                    static_cast<unsigned long long>(s.id <= 999 ? s.id : 999),
                     s.name.c_str(), state_str.c_str(), s.virtual_cores,
                     rss_str.c_str(), dedup_str.c_str(), s.command.c_str());
       out << format_box_line(row_buf, width) << "\n";
@@ -439,8 +440,9 @@ void VirmuxTui::render_curses(const std::vector<SessionInfo>& sessions,
 
       char row_buf[512];
       std::snprintf(row_buf, sizeof(row_buf),
-                    "%c%2llu | %-12.12s| %-8.8s| %-8d| %-10.10s| %-6.6s| %s",
-                    prefix, static_cast<unsigned long long>(s.id % 100),
+                    "%c%-3llu| %-12.12s| %-8.8s| %-8d| %-10.10s| %-6.6s| %s",
+                    prefix,
+                    static_cast<unsigned long long>(s.id <= 999 ? s.id : 999),
                     s.name.c_str(), state_str.c_str(), s.virtual_cores,
                     rss_str.c_str(), dedup_str.c_str(), s.command.c_str());
       std::string formatted_row = format_box_line(row_buf, width);

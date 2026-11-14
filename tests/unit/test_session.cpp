@@ -371,6 +371,40 @@ void test_session_concurrent_access(void) {
   TEST_ASSERT_EQUAL_UINT32(NUM_THREADS * SESSIONS_PER_THREAD, list.size());
 }
 
+/**
+ * @brief Test 9: Pruning dead sessions after retention window.
+ */
+void test_session_dead_pruning(void) {
+  virmux::SessionRegistry reg;
+
+  virmux::SessionRegistration r1;
+  r1.name = "dead-session";
+  r1.pid = -1;  // Registered as dead
+  r1.command = "exit";
+  uint64_t id1 = reg.register_session(r1);
+
+  virmux::SessionRegistration r2;
+  r2.name = "live-session";
+  r2.pid = ::getpid();
+  r2.command = "live-process";
+  uint64_t id2 = reg.register_session(r2);
+
+  // Before prune, both sessions exist
+  TEST_ASSERT_EQUAL_UINT32(2, reg.list_sessions().size());
+
+  // Pruning with high age threshold (1 hour) does not prune anything yet
+  TEST_ASSERT_EQUAL_UINT32(
+      0, reg.prune_dead_sessions(std::chrono::milliseconds(3600000)));
+  TEST_ASSERT_EQUAL_UINT32(2, reg.list_sessions().size());
+
+  // Immediate prune with 0ms age threshold prunes DEAD session id1
+  size_t pruned = reg.prune_dead_sessions(std::chrono::milliseconds(0));
+  TEST_ASSERT_EQUAL_UINT32(1, pruned);
+  TEST_ASSERT_EQUAL_UINT32(1, reg.list_sessions().size());
+  TEST_ASSERT_FALSE(reg.get_session(id1).has_value());
+  TEST_ASSERT_TRUE(reg.get_session(id2).has_value());
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_session_registration_and_lookup);
@@ -381,5 +415,6 @@ int main(void) {
   RUN_TEST(test_session_state_strings);
   RUN_TEST(test_session_error_handling);
   RUN_TEST(test_session_concurrent_access);
+  RUN_TEST(test_session_dead_pruning);
   return UNITY_END();
 }

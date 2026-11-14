@@ -403,19 +403,31 @@ bool SupervisorDaemon::init() {
   std::strncpy(addr.sun_path, socket_path_.c_str(), sizeof(addr.sun_path) - 1);
 
   // Stale socket detection: attempt connect with non-blocking probe
-  int test_fd =
-      ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
-  if (test_fd >= 0) {
-    if (::connect(test_fd, reinterpret_cast<struct sockaddr*>(&addr),
-                  sizeof(addr)) == 0) {
-      ::close(test_fd);
+  ec.clear();
+  if (std::filesystem::exists(socket_path_, ec)) {
+    int test_fd =
+        ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+    if (test_fd < 0) {
+      return false;
+    }
+    int conn_res = ::connect(test_fd, reinterpret_cast<struct sockaddr*>(&addr),
+                             sizeof(addr));
+    int saved_errno = errno;
+    ::close(test_fd);
+
+    if (conn_res == 0) {
       return false;  // Another daemon is active and responding
     }
-    ::close(test_fd);
-  }
 
-  // Stale socket or not running: unlink
-  ::unlink(socket_path_.c_str());
+    if (saved_errno == ECONNREFUSED || saved_errno == ENOENT) {
+      // Stale socket from dead daemon: safe to unlink
+      ::unlink(socket_path_.c_str());
+    } else {
+      // Socket exists but connect failed with transient error (e.g. EAGAIN, EINPROGRESS)
+      // Do not unlink active socket
+      return false;
+    }
+  }
 
   server_fd_ = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
   if (server_fd_ < 0) {

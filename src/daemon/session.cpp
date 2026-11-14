@@ -108,6 +108,35 @@ std::string derive_session_name(const std::string& name, const std::string& cmd,
   return "session-" + std::to_string(fallback_id);
 }
 
+/**
+ * @brief Recursively terminate a process and all its children.
+ */
+void kill_process_tree(pid_t pid, int signal, const std::string& procfs_root) {
+  if (pid <= 0) return;
+
+  // 1. Recurse over children from procfs
+  const std::filesystem::path children_path =
+      std::filesystem::path(procfs_root) / std::to_string(pid) / "task" /
+      std::to_string(pid) / "children";
+  std::ifstream children_file(children_path);
+  if (children_file.is_open()) {
+    pid_t child_pid = 0;
+    while (children_file >> child_pid) {
+      if (child_pid > 0 && child_pid != pid) {
+        kill_process_tree(child_pid, signal, procfs_root);
+      }
+    }
+  }
+
+  // 2. Signal target process
+  ::kill(pid, signal);
+
+  // 3. Signal process group if pid > 1
+  if (pid > 1) {
+    ::kill(-pid, signal);
+  }
+}
+
 }  // namespace
 
 std::string_view session_state_to_string(SessionState s) {
@@ -176,6 +205,7 @@ uint64_t SessionRegistry::register_session(const SessionRegistration& req) {
 
 bool SessionRegistry::unregister_session(uint64_t id) {
   std::lock_guard<std::mutex> lock(mutex_);
+  dead_since_.erase(id);
   auto it = std::find_if(sessions_.begin(), sessions_.end(),
                          [id](const SessionInfo& s) { return s.id == id; });
   if (it != sessions_.end()) {
@@ -224,6 +254,9 @@ void SessionRegistry::refresh_telemetry() {
       s.state = SessionState::DEAD;
       s.memory_rss_bytes = 0;
       s.ksm_dedup_bytes = 0;
+      if (dead_since_.find(s.id) == dead_since_.end()) {
+        dead_since_[s.id] = std::chrono::steady_clock::now();
+      }
       continue;
     }
 
@@ -234,6 +267,9 @@ void SessionRegistry::refresh_telemetry() {
         s.state = SessionState::DEAD;
         s.memory_rss_bytes = 0;
         s.ksm_dedup_bytes = 0;
+        if (dead_since_.find(s.id) == dead_since_.end()) {
+          dead_since_[s.id] = std::chrono::steady_clock::now();
+        }
         continue;
       }
     }
@@ -282,6 +318,9 @@ void SessionRegistry::refresh_telemetry() {
       s.state = SessionState::DEAD;
       s.memory_rss_bytes = 0;
       s.ksm_dedup_bytes = 0;
+      if (dead_since_.find(s.id) == dead_since_.end()) {
+        dead_since_[s.id] = std::chrono::steady_clock::now();
+      }
       continue;
     }
 
@@ -355,6 +394,69 @@ void SessionRegistry::refresh_telemetry() {
       }
     }
   }
+
+  // Automatically prune DEAD sessions that exceeded 5s retention
+  auto now = std::chrono::steady_clock::now();
+  sessions_.erase(
+      std::remove_if(
+          sessions_.begin(), sessions_.end(),
+          [this, now](const SessionInfo& s) {
+            if (s.state != SessionState::DEAD) {
+              dead_since_.erase(s.id);
+              return false;
+            }
+            auto it = dead_since_.find(s.id);
+            if (it == dead_since_.end()) {
+              dead_since_[s.id] = now;
+              return false;
+            }
+            auto elapsed =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - it->second);
+            if (elapsed >= std::chrono::milliseconds(5000)) {
+              dead_since_.erase(it);
+              return true;
+            }
+            return false;
+          }),
+      sessions_.end());
+}
+
+size_t SessionRegistry::prune_dead_sessions(
+    std::chrono::milliseconds max_age) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto now = std::chrono::steady_clock::now();
+  size_t count_before = sessions_.size();
+
+  sessions_.erase(
+      std::remove_if(
+          sessions_.begin(), sessions_.end(),
+          [this, now, max_age](const SessionInfo& s) {
+            if (s.state != SessionState::DEAD) {
+              dead_since_.erase(s.id);
+              return false;
+            }
+            auto it = dead_since_.find(s.id);
+            if (it == dead_since_.end()) {
+              dead_since_[s.id] = now;
+              it = dead_since_.find(s.id);
+            }
+            if (max_age.count() <= 0) {
+              dead_since_.erase(it);
+              return true;
+            }
+            auto elapsed =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - it->second);
+            if (elapsed >= max_age) {
+              dead_since_.erase(it);
+              return true;
+            }
+            return false;
+          }),
+      sessions_.end());
+
+  return count_before - sessions_.size();
 }
 
 bool SessionRegistry::freeze_session(uint64_t id) {
@@ -458,31 +560,39 @@ bool SessionRegistry::kill_session(uint64_t id, int signal) {
   if (it->pid <= 0) {
     it->state = SessionState::DEAD;
     it->memory_rss_bytes = 0;
-    return true;
-  }
-
-  if (::kill(it->pid, signal) == 0) {
-    if (signal == SIGKILL) {
-      it->state = SessionState::DEAD;
-      it->memory_rss_bytes = 0;
-    } else {
-      int status = 0;
-      pid_t w = ::waitpid(it->pid, &status, WNOHANG);
-      if (w == it->pid || (::kill(it->pid, 0) == -1 && errno == ESRCH)) {
-        it->state = SessionState::DEAD;
-        it->memory_rss_bytes = 0;
-      }
+    if (dead_since_.find(it->id) == dead_since_.end()) {
+      dead_since_[it->id] = std::chrono::steady_clock::now();
     }
     return true;
   }
 
-  if (errno == ESRCH) {
-    it->state = SessionState::DEAD;
-    it->memory_rss_bytes = 0;
-    return true;
+  // 1. Terminate entire cgroup subtree atomically if cgroup.kill exists
+  if (!it->cgroup_path.empty()) {
+    const std::filesystem::path cg_kill =
+        std::filesystem::path(it->cgroup_path) / "cgroup.kill";
+    std::error_code ec;
+    if (std::filesystem::exists(cg_kill, ec)) {
+      std::ofstream ofs(cg_kill);
+      if (ofs.is_open()) {
+        ofs << "1\n";
+        ofs.flush();
+      }
+    }
   }
 
-  return false;
+  // 2. Terminate target process and all child processes
+  kill_process_tree(it->pid, signal, procfs_root_);
+
+  // 3. Mark session dead if killed or departed
+  if (signal == SIGKILL || (::kill(it->pid, 0) == -1 && errno == ESRCH)) {
+    it->state = SessionState::DEAD;
+    it->memory_rss_bytes = 0;
+    if (dead_since_.find(it->id) == dead_since_.end()) {
+      dead_since_[it->id] = std::chrono::steady_clock::now();
+    }
+  }
+
+  return true;
 }
 
 std::string SessionRegistry::to_json() const {

@@ -377,7 +377,7 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
       .pid = pid,
       .virtual_cores = cfg.virtual_cores,
       .memory_limit_bytes = cfg.memory_limit_bytes,
-      .cgroup_path = slice_name,
+      .cgroup_path = slice.valid() ? slice.path() : "",
       .command = cmd_str,
   };
   session_id = client.register_session(reg, 200);

@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace virmux {
@@ -122,6 +123,14 @@ class SessionRegistry {
   void refresh_telemetry();
 
   /**
+   * @brief Prune sessions in DEAD state that have exceeded retention duration.
+   * @param max_age Retention duration threshold (0 to prune all DEAD sessions immediately).
+   * @return Number of pruned sessions.
+   */
+  size_t prune_dead_sessions(
+      std::chrono::milliseconds max_age = std::chrono::milliseconds(5000));
+
+  /**
    * @brief Freeze session via cgroup.freeze or SIGSTOP fallback.
    * @param id Session ID.
    * @return true if frozen, false on failure or session dead/missing.
@@ -161,6 +170,7 @@ class SessionRegistry {
   std::string procfs_root_;
   uint64_t next_id_{1};
   std::vector<SessionInfo> sessions_;
+  std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> dead_since_;
 };
 
 }  // namespace virmux

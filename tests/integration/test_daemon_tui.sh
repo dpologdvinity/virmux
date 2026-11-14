@@ -208,13 +208,15 @@ log_success "Session thaw verified: state transitioned back to RUNNING"
 echo -e "\n${BOLD}Test 4: Session Kill${RESET}"
 
 "$VIRMUX" kill "$SESSION_ID"
-if [[ -n "$CHILD_WORKERS" ]]; then
-  kill -KILL $CHILD_WORKERS 2>/dev/null || true
-fi
 wait "$WORKER_PID" 2>/dev/null || true
 
 if kill -0 "$WORKER_PID" 2>/dev/null; then
   log_error "Worker process $WORKER_PID still running after kill"
+  exit 1
+fi
+
+if [[ -n "$CHILD_WORKERS" ]] && kill -0 $CHILD_WORKERS 2>/dev/null; then
+  log_error "Child worker process $CHILD_WORKERS still running after session kill"
   exit 1
 fi
 WORKER_PID=""
