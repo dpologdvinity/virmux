@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "virmux/cleanse.hpp"
+#include "virmux/cli_cas.hpp"
 #include "virmux/cli_stats.hpp"
 #include "virmux/sandbox.hpp"
 #include "virmux/version.hpp"
@@ -36,7 +37,9 @@ void print_general_usage(std::ostream& out) {
       << "  stats [OPTIONS]                 Display host memory, KSM, and zram "
          "telemetry\n"
       << "  pack [PID ... | --all]          Proactively compact anonymous "
-         "memory into swap/zram\n\n"
+         "memory into swap/zram\n"
+      << "  cas <SUBCOMMAND> [OPTIONS]      Inspect and manage "
+         "content-addressable storage cache\n\n"
       << "Options:\n"
       << "  -h, --help                      Show this help message\n"
       << "  -v, --version                   Show version information\n";
@@ -54,8 +57,12 @@ void print_run_usage(std::ostream& out) {
       << "  --cores <N>          Virtual CPU core count (default: 2)\n"
       << "  --mem <LIMIT>        Memory ceiling in bytes or with suffix (e.g., "
          "2G, 512M, 1024K; default: 2G)\n"
-      << "  --workspace <PATH>   Path to workspace directory (evicts page "
-         "cache on exit)\n"
+      << "  --workspace <PATH>   Path to base workspace directory (OverlayFS "
+         "lowerdir in ephemeral mode)\n"
+      << "  --scratch <PATH>     Path to custom scratch directory (defaults to "
+         "RAM tmpfs)\n"
+      << "  --ephemeral          Execute command inside throwaway "
+         "Copy-on-Write OverlayFS sandbox\n"
       << "  --heavy              Register as heavy compute task with admission "
          "gate\n"
       << "  -h, --help           Show this help message\n";
@@ -88,7 +95,7 @@ bool parse_memory_limit(std::string_view str, uint64_t& out_bytes) {
   errno = 0;
   double val = std::strtod(s.c_str(), &end_ptr);
   if (end_ptr == s.c_str() || errno == ERANGE || !std::isfinite(val) ||
-      std::isnan(val) || val <= 0.0) {
+      val <= 0.0) {
     return false;
   }
 
@@ -120,8 +127,8 @@ bool parse_memory_limit(std::string_view str, uint64_t& out_bytes) {
   }
 
   double total = val * static_cast<double>(multiplier);
-  if (!std::isfinite(total) || std::isnan(total) || total < 1.0 ||
-      total > static_cast<double>(UINT64_MAX)) {
+  if (!std::isfinite(total) || total < 1.0 ||
+      total >= static_cast<double>(UINT64_MAX)) {
     return false;
   }
 
@@ -227,8 +234,20 @@ int handle_run(int argc, char* argv[]) {
         return 1;
       }
       cfg.workspace_path = argv[++i];
+      cfg.workspace_dir = cfg.workspace_path;
     } else if (arg.starts_with("--workspace=")) {
       cfg.workspace_path = std::string(arg.substr(12));
+      cfg.workspace_dir = cfg.workspace_path;
+    } else if (arg == "--scratch") {
+      if (i + 1 >= argc) {
+        std::cerr << "Error: --scratch requires an argument\n";
+        return 1;
+      }
+      cfg.scratch_dir = argv[++i];
+    } else if (arg.starts_with("--scratch=")) {
+      cfg.scratch_dir = std::string(arg.substr(10));
+    } else if (arg == "--ephemeral") {
+      cfg.ephemeral = true;
     } else if (arg == "--heavy") {
       cfg.is_heavy = true;
     } else {
@@ -293,6 +312,10 @@ int main(int argc, char* argv[]) {
       char* help_argv[] = {argv[0], const_cast<char*>("pack"),
                            const_cast<char*>("--help")};
       return virmux::cmd_pack(3, help_argv);
+    } else if (argc > 2 && std::string_view(argv[2]) == "cas") {
+      char* help_argv[] = {argv[0], const_cast<char*>("cas"),
+                           const_cast<char*>("--help")};
+      return virmux::cmd_cas(3, help_argv);
     } else {
       print_general_usage(std::cout);
     }
@@ -309,6 +332,10 @@ int main(int argc, char* argv[]) {
 
   if (first_arg == "pack") {
     return virmux::cmd_pack(argc, argv);
+  }
+
+  if (first_arg == "cas") {
+    return virmux::cmd_cas(argc, argv);
   }
 
   std::cerr << "Error: unrecognized command '" << first_arg << "'\n";

@@ -28,6 +28,8 @@
 #include "virmux/cgroup.hpp"
 #include "virmux/gate.hpp"
 #include "virmux/intercept.h"
+#include "virmux/overlay.hpp"
+#include "virmux/scratch.hpp"
 
 namespace virmux {
 
@@ -129,6 +131,21 @@ std::string resolve_interceptor_path() {
   return "";
 }
 
+std::string expand_home_path(const std::string& path) {
+  if (path == "~") {
+    const char* home = std::getenv("HOME");
+    if (home != nullptr && *home != '\0') {
+      return home;
+    }
+  } else if (path.starts_with("~/")) {
+    const char* home = std::getenv("HOME");
+    if (home != nullptr && *home != '\0') {
+      return std::string(home) + path.substr(1);
+    }
+  }
+  return path;
+}
+
 static std::atomic<uint64_t> s_sandbox_counter{0};
 
 }  // anonymous namespace
@@ -160,14 +177,63 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
   }
 
   // Acquire admission token if configured as heavy compute task
+  bool is_heavy_task = cfg.is_heavy || cfg.heavy;
   std::unique_ptr<ScopedToken> token;
-  if (cfg.is_heavy) {
+  if (is_heavy_task) {
     AdmissionGate& gate = cfg.gate ? *cfg.gate : get_default_admission_gate();
     token = std::make_unique<ScopedToken>(gate);
     if (!token->acquired()) {
       return -1;
     }
   }
+
+  // Pre-fork workspace resolution:
+  // If cfg.workspace_dir (or cfg.workspace_path) is non-empty, expand ~ and
+  // resolve canonical path. If empty, use current working directory.
+  std::string raw_ws =
+      !cfg.workspace_dir.empty() ? cfg.workspace_dir : cfg.workspace_path;
+  bool explicit_workspace = !raw_ws.empty();
+  if (raw_ws.empty()) {
+    std::error_code ec;
+    raw_ws = std::filesystem::current_path(ec).string();
+  }
+
+  std::string expanded_ws = expand_home_path(raw_ws);
+  std::error_code ws_ec;
+  std::filesystem::path canonical_ws =
+      std::filesystem::canonical(expanded_ws, ws_ec);
+  std::string resolved_workspace =
+      (!ws_ec) ? canonical_ws.string() : expanded_ws;
+
+  // Ephemeral workspace setup (OverlayFS)
+  bool is_ephemeral = cfg.ephemeral;
+  std::unique_ptr<OverlayWorkspace> overlay;
+  if (is_ephemeral) {
+    OverlayConfig ovl_cfg{
+        .lower_dir = resolved_workspace,
+        .runtime_dir = "",
+    };
+    overlay = std::make_unique<OverlayWorkspace>(ovl_cfg);
+    if (!overlay->setup()) {
+      std::fprintf(
+          stderr,
+          "error: [overlay] failed to setup ephemeral workspace layout\n");
+      return -1;
+    }
+  }
+
+  // In-memory scratch space setup
+  std::unique_ptr<ScratchWorkspace> scratch;
+  if (is_ephemeral || !cfg.scratch_dir.empty()) {
+    scratch = std::make_unique<ScratchWorkspace>(cfg.scratch_dir);
+    if (!scratch->init()) {
+      scratch.reset();
+    }
+  }
+
+  // Capture user / group IDs before unshare
+  uid_t orig_uid = ::getuid();
+  gid_t orig_gid = ::getgid();
 
   // Generate synthetic /proc/meminfo file with unique atomic sequence per call
   uint64_t seq = s_sandbox_counter.fetch_add(1, std::memory_order_relaxed);
@@ -192,7 +258,8 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
     const char* existing_preload = std::getenv("LD_PRELOAD");
     if (existing_preload && existing_preload[0] != '\0') {
       std::string_view existing_view(existing_preload);
-      // If running under AddressSanitizer or ThreadSanitizer, ASan runtime must come first
+      // If running under AddressSanitizer or ThreadSanitizer, ASan runtime must
+      // come first
       if (existing_view.find("libasan") != std::string_view::npos ||
           existing_view.find("libtsan") != std::string_view::npos ||
           existing_view.find("libubsan") != std::string_view::npos) {
@@ -207,7 +274,8 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
 
   std::string vcores_str = std::to_string(cfg.virtual_cores);
 
-  // Set up cgroups v2 slice with unique sub-slice per run (gracefully falls back if unprivileged)
+  // Set up cgroups v2 slice with unique sub-slice per run (gracefully falls
+  // back if unprivileged)
   std::string slice_name = "virmux-run-" + std::to_string(::getpid()) + "-" +
                            std::to_string(seq) + ".slice";
   CgroupSlice slice(slice_name);
@@ -215,20 +283,60 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
 
   pid_t pid = ::fork();
   if (pid < 0) {
+    if (scratch) {
+      scratch->cleanup();
+    }
+    if (overlay) {
+      overlay->teardown();
+    }
     return -1;
   }
 
   if (pid == 0) {
     // --- In child process ---
-    // 1. Attach process to cgroup
+    // 1. If ephemeral, enter unprivileged user and mount namespace, then mount
+    // overlay
+    if (is_ephemeral && overlay && !overlay->is_mounted()) {
+      if (!OverlayWorkspace::enter_user_mount_namespace(orig_uid, orig_gid)) {
+        std::fprintf(stderr,
+                     "error: [overlay] failed to enter user/mount namespace\n");
+        ::_exit(126);
+      }
+      if (!overlay->mount_in_current_namespace()) {
+        std::fprintf(
+            stderr,
+            "error: [overlay] failed to mount overlayfs in namespace\n");
+        ::_exit(126);
+      }
+      if (::chdir(resolved_workspace.c_str()) != 0 &&
+          ::chdir(overlay->merged_dir().c_str()) != 0) {
+        std::fprintf(stderr,
+                     "error: [overlay] failed to chdir to workspace '%s'\n",
+                     resolved_workspace.c_str());
+        ::_exit(127);
+      }
+    } else if (explicit_workspace) {
+      if (::chdir(resolved_workspace.c_str()) != 0) {
+        ::_exit(127);
+      }
+    }
+
+    // 2. Attach process to cgroup
     if (slice.is_valid()) {
       slice.attach_pid(0);
     }
 
-    // 2. Set oom_score_adj to sacrificial priority (+800)
+    // 3. Set oom_score_adj to sacrificial priority (+800)
     set_worker_oom_score(0);
 
-    // 3. Inject runtime virtualization and interceptor environment
+    // 4. Scratch environment variables (TMPDIR, TEMP, TMP)
+    if (scratch && scratch->is_valid()) {
+      ::setenv("TMPDIR", scratch->path().c_str(), 1);
+      ::setenv("TEMP", scratch->path().c_str(), 1);
+      ::setenv("TMP", scratch->path().c_str(), 1);
+    }
+
+    // 5. Inject runtime virtualization and interceptor environment
     // (pre-allocated)
     if (!preload_val.empty()) {
       ::setenv("LD_PRELOAD", preload_val.c_str(), 1);
@@ -241,14 +349,7 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
     ::setenv("MKL_NUM_THREADS", vcores_str.c_str(), 1);
     ::setenv("NUMEXPR_NUM_THREADS", vcores_str.c_str(), 1);
 
-    // 4. Switch to configured workspace directory if provided
-    if (!cfg.workspace_path.empty()) {
-      if (::chdir(cfg.workspace_path.c_str()) != 0) {
-        ::_exit(127);
-      }
-    }
-
-    // 5. Execute target command
+    // 6. Execute target command
     ::execvp(argv[0], argv);
     int err = errno;
     ::_exit(err == ENOENT ? 127 : 126);
@@ -264,9 +365,21 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
     if (errno == EINTR) {
       continue;
     }
-    return -1;
+    status = -1;
+    break;
   }
 
+  // Cleanup scratch space and ephemeral overlay workspace
+  if (scratch) {
+    scratch->cleanup();
+  }
+  if (overlay) {
+    overlay->teardown();
+  }
+
+  if (status == -1) {
+    return -1;
+  }
   if (WIFEXITED(status)) {
     return WEXITSTATUS(status);
   }

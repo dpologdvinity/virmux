@@ -27,6 +27,11 @@ virmux_core_lib = static_library(
     'src/memory/telemetry.cpp',
     'src/memory/memory_manager.cpp',
     'src/cli/cli_stats.cpp',
+    'src/cli/cli_cas.cpp',
+    'src/storage/sha256.cpp',
+    'src/storage/cas.cpp',
+    'src/storage/scratch.cpp',
+    'src/storage/overlay.cpp',
   ],
   include_directories: inc,
   dependencies: [threads_dep],
@@ -197,6 +202,46 @@ test_cli_stats_exe = executable(
 
 test('test_cli_stats', test_cli_stats_exe)
 
+test_cli_cas_exe = executable(
+  'test_cli_cas',
+  'tests/unit/test_cli_cas.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_cli_cas', test_cli_cas_exe)
+
+test_cas_exe = executable(
+  'test_cas',
+  'tests/unit/test_cas.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_cas', test_cas_exe)
+
+test_scratch_exe = executable(
+  'test_scratch',
+  'tests/unit/test_scratch.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_scratch', test_scratch_exe)
+
+test_overlay_exe = executable(
+  'test_overlay',
+  'tests/unit/test_overlay.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_overlay', test_overlay_exe)
+
+test_sandbox_overlay_exe = executable(
+  'test_sandbox_overlay',
+  'tests/unit/test_sandbox_overlay.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_sandbox_overlay', test_sandbox_overlay_exe)
+
 virmux_exe = executable(
   'virmux',
   'cli/main.cpp',
@@ -242,6 +287,12 @@ test(
 )
 
 test(
+  'test_cli_cas_help',
+  virmux_exe,
+  args: ['cas', '--help'],
+)
+
+test(
   'integration_virmux_run',
   find_program('bash'),
   args: [
@@ -257,6 +308,17 @@ test(
   find_program('bash'),
   args: [
     meson.current_source_dir() / 'tests/integration/test_memory_pack.sh',
+    meson.current_build_dir(),
+  ],
+  depends: [virmux_exe, virmux_intercept_lib],
+  timeout: 120,
+)
+
+test(
+  'integration_ephemeral_workspaces',
+  find_program('bash'),
+  args: [
+    meson.current_source_dir() / 'tests/integration/test_ephemeral_workspaces.sh',
     meson.current_build_dir(),
   ],
   depends: [virmux_exe, virmux_intercept_lib],

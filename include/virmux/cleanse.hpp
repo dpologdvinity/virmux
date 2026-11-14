@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <filesystem>
 #include <string_view>
 
 namespace virmux {
@@ -23,5 +24,17 @@ namespace virmux {
  * @param path Path to file or directory to cleanse.
  */
 void cleanse_path(std::string_view path);
+
+/**
+ * @brief Recursively ensure owner read, write, and execute permissions on a path.
+ *
+ * Designed for sandbox/scratch directory teardown where child processes may have
+ * created read-only or restricted subdirectories. Explicitly never follows symlinks
+ * (uses fs::perm_options::nofollow and skips symlinks during directory traversal)
+ * to prevent host escape vulnerabilities.
+ *
+ * @param path Path to file or directory whose permissions should be fixed.
+ */
+void fix_permissions_recursive(const std::filesystem::path& path) noexcept;
 
 }  // namespace virmux

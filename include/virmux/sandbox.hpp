@@ -22,6 +22,10 @@ struct SandboxConfig {
   uint64_t memory_limit_bytes{2ULL * 1024 * 1024 * 1024};
   std::string cpuset_cores{"2-11"};
   bool is_heavy{false};
+  bool heavy{false};
+  bool ephemeral{false};
+  std::string workspace_dir{""};
+  std::string scratch_dir{""};
   std::string workspace_path{""};
   AdmissionGate* gate{nullptr};
 };
