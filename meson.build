@@ -16,7 +16,15 @@ threads_dep = dependency('threads')
 
 virmux_core_lib = static_library(
   'virmux_core',
-  ['src/core/version.cpp', 'src/core/cgroup.cpp', 'src/sched/gate.cpp', 'src/core/sandbox.cpp', 'src/memory/cleanse.cpp', 'src/memory/ksm.cpp'],
+  [
+    'src/core/version.cpp',
+    'src/core/cgroup.cpp',
+    'src/sched/gate.cpp',
+    'src/core/sandbox.cpp',
+    'src/memory/cleanse.cpp',
+    'src/memory/ksm.cpp',
+    'src/memory/compactor.cpp',
+  ],
   include_directories: inc,
   dependencies: [threads_dep],
   install: false,
@@ -139,6 +147,14 @@ test_ksm_exe = executable(
 )
 
 test('test_ksm', test_ksm_exe)
+
+test_compactor_exe = executable(
+  'test_compactor',
+  'tests/unit/test_compactor.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_compactor', test_compactor_exe)
 
 virmux_exe = executable(
   'virmux',
