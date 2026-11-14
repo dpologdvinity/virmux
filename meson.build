@@ -314,5 +314,16 @@ test(
   timeout: 120,
 )
 
+test(
+  'integration_ephemeral_workspaces',
+  find_program('bash'),
+  args: [
+    meson.current_source_dir() / 'tests/integration/test_ephemeral_workspaces.sh',
+    meson.current_build_dir(),
+  ],
+  depends: [virmux_exe, virmux_intercept_lib],
+  timeout: 120,
+)
+
 
 

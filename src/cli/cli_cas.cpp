@@ -175,6 +175,11 @@ std::string format_cas_stats_json(const std::string& cache_root,
   std::ostringstream oss;
   std::string display_root = collapse_home_path(cache_root);
   oss << "{\n"
+      << "  \"cache_root\": \"" << escape_json_string(display_root) << "\",\n"
+      << "  \"object_count\": " << stats.object_count << ",\n"
+      << "  \"total_bytes\": " << stats.total_bytes << ",\n"
+      << "  \"hits\": " << stats.hits << ",\n"
+      << "  \"misses\": " << stats.misses << ",\n"
       << "  \"cas\": {\n"
       << "    \"cache_root\": \"" << escape_json_string(display_root) << "\",\n"
       << "    \"object_count\": " << stats.object_count << ",\n"

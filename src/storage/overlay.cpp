@@ -210,6 +210,8 @@ bool OverlayWorkspace::mount_in_current_namespace() {
   int res = ::mount("overlay", merged_dir_.c_str(), "overlay", 0, opts.c_str());
   if (res == 0) {
     mounted_ = true;
+    ::mount(merged_dir_.c_str(), config_.lower_dir.c_str(), nullptr,
+            MS_BIND | MS_REC, nullptr);
     return true;
   }
 
@@ -218,6 +220,9 @@ bool OverlayWorkspace::mount_in_current_namespace() {
 
 void OverlayWorkspace::teardown() noexcept {
   if (mounted_) {
+    if (!config_.lower_dir.empty()) {
+      ::umount2(config_.lower_dir.c_str(), MNT_DETACH);
+    }
     ::umount2(merged_dir_.c_str(), MNT_DETACH);
     mounted_ = false;
   }

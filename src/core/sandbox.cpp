@@ -188,9 +188,10 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
   }
 
   // Pre-fork workspace resolution:
-  // If cfg.workspace_dir (or cfg.workspace_path) is non-empty, expand ~ and resolve canonical path.
-  // If empty, use current working directory.
-  std::string raw_ws = !cfg.workspace_dir.empty() ? cfg.workspace_dir : cfg.workspace_path;
+  // If cfg.workspace_dir (or cfg.workspace_path) is non-empty, expand ~ and
+  // resolve canonical path. If empty, use current working directory.
+  std::string raw_ws =
+      !cfg.workspace_dir.empty() ? cfg.workspace_dir : cfg.workspace_path;
   bool explicit_workspace = !raw_ws.empty();
   if (raw_ws.empty()) {
     std::error_code ec;
@@ -199,8 +200,10 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
 
   std::string expanded_ws = expand_home_path(raw_ws);
   std::error_code ws_ec;
-  std::filesystem::path canonical_ws = std::filesystem::canonical(expanded_ws, ws_ec);
-  std::string resolved_workspace = (!ws_ec) ? canonical_ws.string() : expanded_ws;
+  std::filesystem::path canonical_ws =
+      std::filesystem::canonical(expanded_ws, ws_ec);
+  std::string resolved_workspace =
+      (!ws_ec) ? canonical_ws.string() : expanded_ws;
 
   // Ephemeral workspace setup (OverlayFS)
   bool is_ephemeral = cfg.ephemeral;
@@ -212,9 +215,10 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
     };
     overlay = std::make_unique<OverlayWorkspace>(ovl_cfg);
     if (!overlay->setup()) {
-      std::fprintf(stderr,
-                   "warning: [overlay] failed to setup ephemeral workspace layout; "
-                   "falling back to non-ephemeral\n");
+      std::fprintf(
+          stderr,
+          "warning: [overlay] failed to setup ephemeral workspace layout; "
+          "falling back to non-ephemeral\n");
       overlay.reset();
       is_ephemeral = false;
     }
@@ -256,7 +260,8 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
     const char* existing_preload = std::getenv("LD_PRELOAD");
     if (existing_preload && existing_preload[0] != '\0') {
       std::string_view existing_view(existing_preload);
-      // If running under AddressSanitizer or ThreadSanitizer, ASan runtime must come first
+      // If running under AddressSanitizer or ThreadSanitizer, ASan runtime must
+      // come first
       if (existing_view.find("libasan") != std::string_view::npos ||
           existing_view.find("libtsan") != std::string_view::npos ||
           existing_view.find("libubsan") != std::string_view::npos) {
@@ -271,7 +276,8 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
 
   std::string vcores_str = std::to_string(cfg.virtual_cores);
 
-  // Set up cgroups v2 slice with unique sub-slice per run (gracefully falls back if unprivileged)
+  // Set up cgroups v2 slice with unique sub-slice per run (gracefully falls
+  // back if unprivileged)
   std::string slice_name = "virmux-run-" + std::to_string(::getpid()) + "-" +
                            std::to_string(seq) + ".slice";
   CgroupSlice slice(slice_name);
@@ -290,19 +296,25 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
 
   if (pid == 0) {
     // --- In child process ---
-    // 1. If ephemeral, enter unprivileged user and mount namespace, then mount overlay
+    // 1. If ephemeral, enter unprivileged user and mount namespace, then mount
+    // overlay
     if (is_ephemeral && overlay && !overlay->is_mounted()) {
       if (!OverlayWorkspace::enter_user_mount_namespace(orig_uid, orig_gid)) {
-        std::fprintf(stderr, "error: [overlay] failed to enter user/mount namespace\n");
+        std::fprintf(stderr,
+                     "error: [overlay] failed to enter user/mount namespace\n");
         ::_exit(126);
       }
       if (!overlay->mount_in_current_namespace()) {
-        std::fprintf(stderr, "error: [overlay] failed to mount overlayfs in namespace\n");
+        std::fprintf(
+            stderr,
+            "error: [overlay] failed to mount overlayfs in namespace\n");
         ::_exit(126);
       }
-      if (::chdir(overlay->merged_dir().c_str()) != 0) {
-        std::fprintf(stderr, "error: [overlay] failed to chdir to merged directory '%s'\n",
-                     overlay->merged_dir().c_str());
+      if (::chdir(resolved_workspace.c_str()) != 0 &&
+          ::chdir(overlay->merged_dir().c_str()) != 0) {
+        std::fprintf(stderr,
+                     "error: [overlay] failed to chdir to workspace '%s'\n",
+                     resolved_workspace.c_str());
         ::_exit(127);
       }
     } else if (explicit_workspace) {
