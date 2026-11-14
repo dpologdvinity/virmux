@@ -73,6 +73,10 @@ void test_parse_size_bytes(void) {
   TEST_ASSERT_FALSE(virmux::parse_size_bytes("-10M", bytes));
   TEST_ASSERT_FALSE(virmux::parse_size_bytes("abc", bytes));
   TEST_ASSERT_FALSE(virmux::parse_size_bytes("500XYZ", bytes));
+  TEST_ASSERT_FALSE(virmux::parse_size_bytes("18446744073709551616", bytes));
+  TEST_ASSERT_FALSE(virmux::parse_size_bytes("99999999999999999999G", bytes));
+  TEST_ASSERT_FALSE(virmux::parse_size_bytes("nan", bytes));
+  TEST_ASSERT_FALSE(virmux::parse_size_bytes("inf", bytes));
 }
 
 void test_format_cas_bytes(void) {
@@ -270,6 +274,10 @@ void test_cmd_cas_invalid_subcommand(void) {
   char cas_cmd[] = "cas";
   char bogus_cmd[] = "invalid_subcommand";
 
+  // Null argv pointers
+  TEST_ASSERT_NOT_EQUAL(0, virmux::cmd_cas(0, nullptr));
+  TEST_ASSERT_NOT_EQUAL(0, virmux::cmd_cas(1, nullptr));
+
   // No subcommand: "virmux cas"
   char* argv_no_sub[] = {prog, cas_cmd};
   TEST_ASSERT_NOT_EQUAL(0, virmux::cmd_cas(2, argv_no_sub));
@@ -277,6 +285,10 @@ void test_cmd_cas_invalid_subcommand(void) {
   // Invalid subcommand: "virmux cas invalid_subcommand"
   char* argv_invalid[] = {prog, cas_cmd, bogus_cmd};
   TEST_ASSERT_NOT_EQUAL(0, virmux::cmd_cas(3, argv_invalid));
+
+  // Null element in argv
+  char* argv_null_elem[] = {prog, cas_cmd, nullptr};
+  TEST_ASSERT_NOT_EQUAL(0, virmux::cmd_cas(3, argv_null_elem));
 }
 
 int main(void) {

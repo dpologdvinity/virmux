@@ -83,7 +83,7 @@ bool parse_size_bytes(std::string_view str, uint64_t& out_bytes) {
   errno = 0;
   double val = std::strtod(s.c_str(), &end_ptr);
   if (end_ptr == s.c_str() || errno == ERANGE || !std::isfinite(val) ||
-      std::isnan(val) || val < 0.0) {
+      val < 0.0) {
     return false;
   }
 
@@ -115,8 +115,8 @@ bool parse_size_bytes(std::string_view str, uint64_t& out_bytes) {
   }
 
   double total = val * static_cast<double>(multiplier);
-  if (!std::isfinite(total) || std::isnan(total) || total < 0.0 ||
-      total > static_cast<double>(UINT64_MAX)) {
+  if (!std::isfinite(total) || total < 0.0 ||
+      total >= static_cast<double>(UINT64_MAX)) {
     return false;
   }
 
@@ -218,11 +218,14 @@ void print_cas_clean_usage(std::ostream& os) {
 }
 
 int cmd_cas(int argc, char* const argv[]) {
+  if (argv == nullptr || argc <= 0) {
+    return 1;
+  }
+
   int start_idx = 0;
-  if (argc > 1 && argv != nullptr && argv[1] != nullptr &&
-      std::string_view(argv[1]) == "cas") {
+  if (argc > 1 && argv[1] != nullptr && std::string_view(argv[1]) == "cas") {
     start_idx = 2;
-  } else if (argc > 0 && argv != nullptr && argv[0] != nullptr) {
+  } else if (argc > 0 && argv[0] != nullptr) {
     std::string_view a0(argv[0]);
     if (a0 == "cas" || a0.ends_with("/cas") || a0 == "virmux" ||
         a0.ends_with("/virmux")) {
@@ -230,7 +233,7 @@ int cmd_cas(int argc, char* const argv[]) {
     }
   }
 
-  if (start_idx >= argc) {
+  if (start_idx >= argc || argv[start_idx] == nullptr) {
     std::cerr << "Error: no subcommand specified for 'cas'\n";
     print_cas_usage(std::cerr);
     return 1;
@@ -245,6 +248,9 @@ int cmd_cas(int argc, char* const argv[]) {
   if (subcmd == "stats") {
     bool json_mode = false;
     for (int i = start_idx + 1; i < argc; ++i) {
+      if (argv[i] == nullptr) {
+        continue;
+      }
       std::string_view arg = argv[i];
       if (arg == "-h" || arg == "--help") {
         print_cas_stats_usage(std::cout);
@@ -273,13 +279,16 @@ int cmd_cas(int argc, char* const argv[]) {
   if (subcmd == "clean") {
     uint64_t max_bytes = 0ULL;
     for (int i = start_idx + 1; i < argc; ++i) {
+      if (argv[i] == nullptr) {
+        continue;
+      }
       std::string_view arg = argv[i];
       if (arg == "-h" || arg == "--help") {
         print_cas_clean_usage(std::cout);
         return 0;
       }
       if (arg == "--max-bytes") {
-        if (i + 1 >= argc) {
+        if (i + 1 >= argc || argv[i + 1] == nullptr) {
           std::cerr << "Error: --max-bytes requires an argument\n";
           print_cas_clean_usage(std::cerr);
           return 1;
