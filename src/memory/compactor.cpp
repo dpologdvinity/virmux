@@ -154,10 +154,9 @@ ReclaimResult ProcessCompactor::reclaim_ranges(
     if (ret < 0 && (errno == EPERM || errno == EACCES)) {
       std::string clear_refs_path =
           "/proc/" + std::to_string(target_pid) + "/clear_refs";
-      int cr_fd = ::open(clear_refs_path.c_str(), O_WRONLY);
-      if (cr_fd >= 0) {
-        ssize_t w = ::write(cr_fd, "1\n", 2);
-        ::close(cr_fd);
+      ScopedFd cr_fd(::open(clear_refs_path.c_str(), O_WRONLY | O_CLOEXEC));
+      if (cr_fd.valid()) {
+        ssize_t w = ::write(cr_fd.get(), "1\n", 2);
         if (w > 0) {
           for (size_t rem = i; rem < aligned_iovs.size(); ++rem) {
             total_bytes += aligned_iovs[rem].iov_len;

@@ -58,14 +58,18 @@ if [[ -f "$INTERCEPT_LIB" ]]; then
   export VIRMUX_INTERCEPT_LIB="$INTERCEPT_LIB"
 fi
 
-WORKER_PID_FILE="/tmp/virmux_worker.pid"
+WORKER_PID_FILE="/tmp/virmux_worker_$$.pid"
 WORKER_PID=""
+WORKER_BG_PID=""
 
 cleanup() {
   if [[ -n "${WORKER_PID:-}" ]]; then
     kill -9 "$WORKER_PID" 2>/dev/null || true
   fi
-  if [[ -f "$WORKER_PID_FILE" ]]; then
+  if [[ -n "${WORKER_BG_PID:-}" ]]; then
+    kill -9 "$WORKER_BG_PID" 2>/dev/null || true
+  fi
+  if [[ -f "${WORKER_PID_FILE:-}" ]]; then
     rm -f "$WORKER_PID_FILE"
   fi
 }
