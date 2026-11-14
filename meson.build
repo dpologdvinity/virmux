@@ -225,6 +225,14 @@ test_overlay_exe = executable(
 
 test('test_overlay', test_overlay_exe)
 
+test_sandbox_overlay_exe = executable(
+  'test_sandbox_overlay',
+  'tests/unit/test_sandbox_overlay.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_sandbox_overlay', test_sandbox_overlay_exe)
+
 virmux_exe = executable(
   'virmux',
   'cli/main.cpp',
