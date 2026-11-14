@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "virmux/cleanse.hpp"
+#include "virmux/cli_stats.hpp"
 #include "virmux/sandbox.hpp"
 #include "virmux/version.hpp"
 
@@ -31,7 +32,11 @@ void print_general_usage(std::ostream& out) {
       << "  virmux [OPTIONS] <COMMAND> [COMMAND OPTIONS]\n\n"
       << "Commands:\n"
       << "  run [OPTIONS] -- <COMMAND...>   Execute a command inside a "
-         "resource-isolated sandbox\n\n"
+         "resource-isolated sandbox\n"
+      << "  stats [OPTIONS]                 Display host memory, KSM, and zram "
+         "telemetry\n"
+      << "  pack [PID ... | --all]          Proactively compact anonymous "
+         "memory into swap/zram\n\n"
       << "Options:\n"
       << "  -h, --help                      Show this help message\n"
       << "  -v, --version                   Show version information\n";
@@ -280,6 +285,14 @@ int main(int argc, char* argv[]) {
   if (first_arg == "help") {
     if (argc > 2 && std::string_view(argv[2]) == "run") {
       print_run_usage(std::cout);
+    } else if (argc > 2 && std::string_view(argv[2]) == "stats") {
+      char* help_argv[] = {argv[0], const_cast<char*>("stats"),
+                           const_cast<char*>("--help")};
+      return virmux::cmd_stats(3, help_argv);
+    } else if (argc > 2 && std::string_view(argv[2]) == "pack") {
+      char* help_argv[] = {argv[0], const_cast<char*>("pack"),
+                           const_cast<char*>("--help")};
+      return virmux::cmd_pack(3, help_argv);
     } else {
       print_general_usage(std::cout);
     }
@@ -288,6 +301,14 @@ int main(int argc, char* argv[]) {
 
   if (first_arg == "run") {
     return handle_run(argc, argv);
+  }
+
+  if (first_arg == "stats") {
+    return virmux::cmd_stats(argc, argv);
+  }
+
+  if (first_arg == "pack") {
+    return virmux::cmd_pack(argc, argv);
   }
 
   std::cerr << "Error: unrecognized command '" << first_arg << "'\n";

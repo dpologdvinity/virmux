@@ -16,7 +16,18 @@ threads_dep = dependency('threads')
 
 virmux_core_lib = static_library(
   'virmux_core',
-  ['src/core/version.cpp', 'src/core/cgroup.cpp', 'src/sched/gate.cpp', 'src/core/sandbox.cpp', 'src/memory/cleanse.cpp'],
+  [
+    'src/core/version.cpp',
+    'src/core/cgroup.cpp',
+    'src/sched/gate.cpp',
+    'src/core/sandbox.cpp',
+    'src/memory/cleanse.cpp',
+    'src/memory/ksm.cpp',
+    'src/memory/compactor.cpp',
+    'src/memory/telemetry.cpp',
+    'src/memory/memory_manager.cpp',
+    'src/cli/cli_stats.cpp',
+  ],
   include_directories: inc,
   dependencies: [threads_dep],
   install: false,
@@ -83,6 +94,20 @@ test(
   depends: [virmux_intercept_lib],
 )
 
+test_interceptor_mem_exe = executable(
+  'test_interceptor_mem',
+  'tests/unit/test_interceptor_mem.cpp',
+  include_directories: inc,
+  dependencies: [unity_dep],
+)
+
+test(
+  'test_interceptor_mem',
+  test_interceptor_mem_exe,
+  env: ['LD_PRELOAD=' + virmux_intercept_lib.full_path(), 'VIRMUX_KSM_AUTO_MERGE=1'],
+  depends: [virmux_intercept_lib],
+)
+
 test_browser_trim_exe = executable(
   'test_browser_trim',
   'tests/unit/test_browser_trim.cpp',
@@ -132,6 +157,46 @@ test_cleanse_exe = executable(
 
 test('test_cleanse', test_cleanse_exe)
 
+test_ksm_exe = executable(
+  'test_ksm',
+  'tests/unit/test_ksm.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_ksm', test_ksm_exe)
+
+test_compactor_exe = executable(
+  'test_compactor',
+  'tests/unit/test_compactor.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_compactor', test_compactor_exe)
+
+test_telemetry_exe = executable(
+  'test_telemetry',
+  'tests/unit/test_telemetry.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_telemetry', test_telemetry_exe)
+
+test_memory_manager_exe = executable(
+  'test_memory_manager',
+  'tests/unit/test_memory_manager.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_memory_manager', test_memory_manager_exe)
+
+test_cli_stats_exe = executable(
+  'test_cli_stats',
+  'tests/unit/test_cli_stats.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_cli_stats', test_cli_stats_exe)
+
 virmux_exe = executable(
   'virmux',
   'cli/main.cpp',
@@ -165,6 +230,18 @@ test(
 )
 
 test(
+  'test_cli_stats_help',
+  virmux_exe,
+  args: ['stats', '--help'],
+)
+
+test(
+  'test_cli_pack_help',
+  virmux_exe,
+  args: ['pack', '--help'],
+)
+
+test(
   'integration_virmux_run',
   find_program('bash'),
   args: [
@@ -174,5 +251,17 @@ test(
   depends: [virmux_exe, virmux_intercept_lib],
   timeout: 120,
 )
+
+test(
+  'integration_memory_pack',
+  find_program('bash'),
+  args: [
+    meson.current_source_dir() / 'tests/integration/test_memory_pack.sh',
+    meson.current_build_dir(),
+  ],
+  depends: [virmux_exe, virmux_intercept_lib],
+  timeout: 120,
+)
+
 
 
