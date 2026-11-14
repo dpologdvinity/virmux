@@ -330,9 +330,10 @@ int handle_top(int argc, char* argv[]) {
         std::cerr << "Error: --refresh requires an argument\n";
         return 1;
       }
-      cfg.refresh_interval_ms = std::atoi(argv[++i]);
+      cfg.refresh_interval_ms = std::max(50, std::atoi(argv[++i]));
     } else if (arg.starts_with("--refresh=")) {
-      cfg.refresh_interval_ms = std::atoi(std::string(arg.substr(10)).c_str());
+      cfg.refresh_interval_ms =
+          std::max(50, std::atoi(std::string(arg.substr(10)).c_str()));
     } else if (arg == "--socket") {
       if (i + 1 >= argc) {
         std::cerr << "Error: --socket requires an argument\n";

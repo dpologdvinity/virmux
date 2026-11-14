@@ -42,7 +42,7 @@ void test_tui_render_snapshot_header_and_footer(void) {
   // 4. Verify Footer hotkeys
   TEST_ASSERT_NOT_NULL(strstr(snap.c_str(), "[j/k] Navigate"));
   TEST_ASSERT_NOT_NULL(strstr(snap.c_str(), "[Space] Freeze/Thaw"));
-  TEST_ASSERT_NOT_NULL(strstr(snap.c_str(), "[k] Kill"));
+  TEST_ASSERT_NOT_NULL(strstr(snap.c_str(), "[K] Kill"));
   TEST_ASSERT_NOT_NULL(strstr(snap.c_str(), "[q] Quit"));
 }
 
@@ -208,6 +208,29 @@ void test_tui_empty_sessions(void) {
   TEST_ASSERT_NULL(strstr(snap_pop.c_str(), "No active sessions"));
 }
 
+void test_tui_handle_key_actions(void) {
+  virmux::VirmuxTui tui;
+  std::vector<virmux::SessionInfo> sessions;
+  virmux::SessionInfo s;
+  s.id = 10;
+  s.name = "test-job";
+  s.state = virmux::SessionState::RUNNING_NORMAL;
+  sessions.push_back(s);
+  tui.update_sessions(sessions);
+
+  // 'q' and 'Q' signal exit
+  TEST_ASSERT_FALSE(tui.handle_key('q'));
+  TEST_ASSERT_FALSE(tui.handle_key('Q'));
+
+  // Navigation returns true
+  TEST_ASSERT_TRUE(tui.handle_key('j'));
+  TEST_ASSERT_TRUE(tui.handle_key('k'));
+
+  // Space and K return true without crashing when daemon is offline
+  TEST_ASSERT_TRUE(tui.handle_key(' '));
+  TEST_ASSERT_TRUE(tui.handle_key('K'));
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_tui_render_snapshot_header_and_footer);
@@ -215,5 +238,6 @@ int main(void) {
   RUN_TEST(test_tui_render_snapshot_offline_daemon);
   RUN_TEST(test_tui_navigation_bounds);
   RUN_TEST(test_tui_empty_sessions);
+  RUN_TEST(test_tui_handle_key_actions);
   return UNITY_END();
 }

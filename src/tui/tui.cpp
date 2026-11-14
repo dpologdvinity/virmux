@@ -33,6 +33,13 @@ namespace virmux {
 
 namespace {
 
+std::atomic<bool> g_tui_stop_requested{false};
+
+void tui_signal_handler(int sig) {
+  (void)sig;
+  g_tui_stop_requested.store(true);
+}
+
 std::string format_state_label(SessionState state) {
   switch (state) {
     case SessionState::INITIALIZING:
@@ -53,22 +60,22 @@ std::string format_state_label(SessionState state) {
 
 std::string format_box_line(const std::string& inner, int width) {
   if (width < 2) {
-    return "|\n";
+    return "|";
   }
   int inner_width = width - 2;
   if (static_cast<int>(inner.size()) >= inner_width) {
-    return "|" + inner.substr(0, static_cast<size_t>(inner_width)) + "|\n";
+    return "|" + inner.substr(0, static_cast<size_t>(inner_width)) + "|";
   }
   return "|" + inner +
          std::string(static_cast<size_t>(inner_width) - inner.size(), ' ') +
-         "|\n";
+         "|";
 }
 
 std::string format_border_line(int width) {
   if (width < 2) {
-    return "+\n";
+    return "+";
   }
-  return "+" + std::string(static_cast<size_t>(width - 2), '-') + "+\n";
+  return "+" + std::string(static_cast<size_t>(width - 2), '-') + "+";
 }
 
 }  // namespace
@@ -248,23 +255,24 @@ std::string VirmuxTui::render_snapshot(const std::vector<SessionInfo>& sessions,
       " | Sessions: " + std::to_string(sessions.size());
 
   std::ostringstream out;
-  out << format_border_line(width);
-  out << format_box_line(line1, width);
+  out << format_border_line(width) << "\n";
+  out << format_box_line(line1, width) << "\n";
   if (!daemon_online) {
     out << format_box_line(" [Supervisor Daemon Offline (Standalone Mode)]",
-                           width);
+                           width)
+        << "\n";
   }
-  out << format_box_line(shield_worker, width);
-  out << format_box_line(telemetry_line, width);
-  out << format_border_line(width);
+  out << format_box_line(shield_worker, width) << "\n";
+  out << format_box_line(telemetry_line, width) << "\n";
+  out << format_border_line(width) << "\n";
 
   std::string table_hdr_inner =
       " S# | NAME        | STATE   | V-CORES | RAM (RSS) | DEDUP | COMMAND";
-  out << format_box_line(table_hdr_inner, width);
-  out << format_border_line(width);
+  out << format_box_line(table_hdr_inner, width) << "\n";
+  out << format_border_line(width) << "\n";
 
   if (sessions.empty()) {
-    out << format_box_line("  No active sessions registered", width);
+    out << format_box_line("  No active sessions registered", width) << "\n";
   } else {
     for (size_t i = 0; i < sessions.size(); ++i) {
       const auto& s = sessions[i];
@@ -279,15 +287,15 @@ std::string VirmuxTui::render_snapshot(const std::vector<SessionInfo>& sessions,
                     prefix, static_cast<unsigned long long>(s.id % 100),
                     s.name.c_str(), state_str.c_str(), s.virtual_cores,
                     rss_str.c_str(), dedup_str.c_str(), s.command.c_str());
-      out << format_box_line(row_buf, width);
+      out << format_box_line(row_buf, width) << "\n";
     }
   }
-  out << format_border_line(width);
+  out << format_border_line(width) << "\n";
 
   std::string footer_inner =
-      " [j/k] Navigate  [Space] Freeze/Thaw  [k] Kill  [q] Quit";
-  out << format_box_line(footer_inner, width);
-  out << format_border_line(width);
+      " [j/k] Navigate  [Space] Freeze/Thaw  [K] Kill  [q] Quit";
+  out << format_box_line(footer_inner, width) << "\n";
+  out << format_border_line(width) << "\n";
 
   return out.str();
 }
@@ -307,6 +315,16 @@ void VirmuxTui::render_curses(const std::vector<SessionInfo>& sessions,
   auto host_mem = mem_telemetry.read_host_stats();
   double ram_gb = static_cast<double>(host_mem.mem_total_bytes) /
                   (1024.0 * 1024.0 * 1024.0);
+  if (ram_gb <= 0.0) {
+    long pages = sysconf(_SC_PHYS_PAGES);
+    long page_size = sysconf(_SC_PAGE_SIZE);
+    if (pages > 0 && page_size > 0) {
+      ram_gb = (static_cast<double>(pages) * static_cast<double>(page_size)) /
+               (1024.0 * 1024.0 * 1024.0);
+    } else {
+      ram_gb = 16.0;
+    }
+  }
   char ram_buf[32];
   std::snprintf(ram_buf, sizeof(ram_buf), "%.1fG RAM", ram_gb);
   double loads[3] = {0.0, 0.0, 0.0};
@@ -453,7 +471,7 @@ void VirmuxTui::render_curses(const std::vector<SessionInfo>& sessions,
     mvprintw(
         y++, 0, "%s",
         format_box_line(
-            " [j/k] Navigate  [Space] Freeze/Thaw  [k] Kill  [q] Quit", width)
+            " [j/k] Navigate  [Space] Freeze/Thaw  [K] Kill  [q] Quit", width)
             .c_str());
     if (has_colors()) attroff(COLOR_PAIR(1) | A_BOLD);
   }
@@ -474,13 +492,22 @@ int VirmuxTui::run() {
     return 0;
   }
 
+  g_tui_stop_requested.store(false);
+  struct sigaction sa{}, old_int{}, old_term{};
+  sa.sa_handler = tui_signal_handler;
+  sigemptyset(&sa.sa_mask);
+  sigaction(SIGINT, &sa, &old_int);
+  sigaction(SIGTERM, &sa, &old_term);
+
   initscr();
   curses_initialized_ = true;
   cbreak();
   noecho();
   keypad(stdscr, TRUE);
   curs_set(0);
-  timeout(config_.refresh_interval_ms);
+
+  int refresh_ms = std::max(50, config_.refresh_interval_ms);
+  timeout(refresh_ms);
 
   if (has_colors()) {
     start_color();
@@ -495,7 +522,7 @@ int VirmuxTui::run() {
   DaemonClient client(config_.socket_path);
   bool running = true;
 
-  while (running) {
+  while (running && !g_tui_stop_requested.load()) {
     bool online = client.is_alive(100);
     std::vector<SessionInfo> sessions;
     if (online) {
@@ -516,42 +543,24 @@ int VirmuxTui::run() {
       continue;
     }
 
-    if (ch == 'q' || ch == 'Q') {
-      running = false;
-      break;
-    }
-
     if (ch == KEY_RESIZE) {
       erase();
       refresh();
       continue;
     }
 
-    if (ch == KEY_UP || ch == 'k') {
-      move_up();
-    } else if (ch == KEY_DOWN || ch == 'j') {
-      move_down();
-    } else if (ch == ' ') {
-      if (online && !cached_sessions_.empty() &&
-          selected_idx_ < cached_sessions_.size()) {
-        uint64_t target_id = cached_sessions_[selected_idx_].id;
-        if (cached_sessions_[selected_idx_].state == SessionState::FROZEN) {
-          client.thaw_session(target_id);
-        } else {
-          client.freeze_session(target_id);
-        }
-      }
-    } else if (ch == 'K') {
-      if (online && !cached_sessions_.empty() &&
-          selected_idx_ < cached_sessions_.size()) {
-        uint64_t target_id = cached_sessions_[selected_idx_].id;
-        client.kill_session(target_id, SIGTERM);
-      }
+    if (!handle_key(ch, online ? &client : nullptr)) {
+      running = false;
+      break;
     }
   }
 
   endwin();
   curses_initialized_ = false;
+
+  sigaction(SIGINT, &old_int, nullptr);
+  sigaction(SIGTERM, &old_term, nullptr);
+
   return 0;
 }
 
