@@ -19,6 +19,7 @@
 #include "virmux/cli_daemon.hpp"
 #include "virmux/cli_stats.hpp"
 #include "virmux/sandbox.hpp"
+#include "virmux/tui.hpp"
 #include "virmux/version.hpp"
 
 namespace {
@@ -37,6 +38,8 @@ void print_general_usage(std::ostream& out) {
          "resource-isolated sandbox\n"
       << "  daemon [OPTIONS]                Run the background supervisor "
          "daemon\n"
+      << "  top [OPTIONS]                   Interactive ncurses monitoring "
+         "dashboard\n"
       << "  list [OPTIONS]                  List active virtualized sessions\n"
       << "  freeze <SESSION_ID | PID>       Freeze an active session\n"
       << "  thaw <SESSION_ID | PID>         Thaw a frozen session\n"
@@ -288,6 +291,69 @@ int handle_run(int argc, char* argv[]) {
   return exit_code;
 }
 
+/**
+ * @brief Print usage information for the `virmux top` subcommand.
+ * @param out Output stream to write help text to.
+ */
+void print_top_usage(std::ostream& out) {
+  out << "Usage:\n"
+      << "  virmux top [OPTIONS]\n\n"
+      << "Interactive real-time terminal dashboard for monitoring and managing "
+         "sessions.\n\n"
+      << "Options:\n"
+      << "  --refresh <MS>    Telemetry refresh interval in milliseconds "
+         "(default: 500)\n"
+      << "  --socket <PATH>   Path to supervisor daemon Unix domain socket\n"
+      << "  --headless        Run single frame render without interactive TTY\n"
+      << "  -h, --help        Show this help message\n";
+}
+
+/**
+ * @brief Dispatcher for the `virmux top` command.
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return 0 on success, non-zero on parsing or runtime error.
+ */
+int handle_top(int argc, char* argv[]) {
+  virmux::TuiConfig cfg;
+
+  for (int i = 2; i < argc; ++i) {
+    std::string_view arg = argv[i];
+
+    if (arg == "-h" || arg == "--help") {
+      print_top_usage(std::cout);
+      return 0;
+    }
+
+    if (arg == "--refresh") {
+      if (i + 1 >= argc) {
+        std::cerr << "Error: --refresh requires an argument\n";
+        return 1;
+      }
+      cfg.refresh_interval_ms = std::atoi(argv[++i]);
+    } else if (arg.starts_with("--refresh=")) {
+      cfg.refresh_interval_ms = std::atoi(std::string(arg.substr(10)).c_str());
+    } else if (arg == "--socket") {
+      if (i + 1 >= argc) {
+        std::cerr << "Error: --socket requires an argument\n";
+        return 1;
+      }
+      cfg.socket_path = argv[++i];
+    } else if (arg.starts_with("--socket=")) {
+      cfg.socket_path = std::string(arg.substr(9));
+    } else if (arg == "--headless") {
+      cfg.headless = true;
+    } else {
+      std::cerr << "Error: unrecognized option for top: '" << arg << "'\n";
+      print_top_usage(std::cerr);
+      return 1;
+    }
+  }
+
+  virmux::VirmuxTui tui(cfg);
+  return tui.run();
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -327,6 +393,9 @@ int main(int argc, char* argv[]) {
       char* help_argv[] = {argv[0], const_cast<char*>("daemon"),
                            const_cast<char*>("--help")};
       return virmux::cmd_daemon(3, help_argv);
+    } else if (argc > 2 && std::string_view(argv[2]) == "top") {
+      print_top_usage(std::cout);
+      return 0;
     } else if (argc > 2 && std::string_view(argv[2]) == "list") {
       char* help_argv[] = {argv[0], const_cast<char*>("list"),
                            const_cast<char*>("--help")};
@@ -367,6 +436,10 @@ int main(int argc, char* argv[]) {
 
   if (first_arg == "daemon") {
     return virmux::cmd_daemon(argc, argv);
+  }
+
+  if (first_arg == "top") {
+    return handle_top(argc, argv);
   }
 
   if (first_arg == "list") {
