@@ -24,6 +24,7 @@ virmux_core_lib = static_library(
     'src/memory/cleanse.cpp',
     'src/memory/ksm.cpp',
     'src/memory/compactor.cpp',
+    'src/memory/telemetry.cpp',
   ],
   include_directories: inc,
   dependencies: [threads_dep],
@@ -155,6 +156,14 @@ test_compactor_exe = executable(
 )
 
 test('test_compactor', test_compactor_exe)
+
+test_telemetry_exe = executable(
+  'test_telemetry',
+  'tests/unit/test_telemetry.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_telemetry', test_telemetry_exe)
 
 virmux_exe = executable(
   'virmux',
