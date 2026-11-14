@@ -30,6 +30,7 @@ virmux_core_lib = static_library(
     'src/storage/sha256.cpp',
     'src/storage/cas.cpp',
     'src/storage/scratch.cpp',
+    'src/storage/overlay.cpp',
   ],
   include_directories: inc,
   dependencies: [threads_dep],
@@ -215,6 +216,14 @@ test_scratch_exe = executable(
 )
 
 test('test_scratch', test_scratch_exe)
+
+test_overlay_exe = executable(
+  'test_overlay',
+  'tests/unit/test_overlay.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_overlay', test_overlay_exe)
 
 virmux_exe = executable(
   'virmux',
