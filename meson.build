@@ -93,6 +93,20 @@ test(
   depends: [virmux_intercept_lib],
 )
 
+test_interceptor_mem_exe = executable(
+  'test_interceptor_mem',
+  'tests/unit/test_interceptor_mem.cpp',
+  include_directories: inc,
+  dependencies: [unity_dep],
+)
+
+test(
+  'test_interceptor_mem',
+  test_interceptor_mem_exe,
+  env: ['LD_PRELOAD=' + virmux_intercept_lib.full_path(), 'VIRMUX_KSM_AUTO_MERGE=1'],
+  depends: [virmux_intercept_lib],
+)
+
 test_browser_trim_exe = executable(
   'test_browser_trim',
   'tests/unit/test_browser_trim.cpp',

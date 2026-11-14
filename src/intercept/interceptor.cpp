@@ -12,10 +12,13 @@
 
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <sys/mman.h>
 #include <sys/syscall.h>
 #include <sys/sysinfo.h>
+#include <sys/types.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <cstdarg>
 #include <cstdlib>
 #include <cstring>
@@ -32,6 +35,8 @@ using get_nprocs_fn_t = int (*)(void) noexcept;
 using open_fn_t = int (*)(const char*, int, ...);
 using openat_fn_t = int (*)(int, const char*, int, ...);
 using execve_fn_t = int (*)(const char*, char* const[], char* const[]) noexcept;
+using mmap_fn_t = void* (*)(void*, size_t, int, int, int, off_t) noexcept;
+using mmap64_fn_t = void* (*)(void*, size_t, int, int, int, off64_t) noexcept;
 
 static sysconf_fn_t real_sysconf = nullptr;
 static get_nprocs_fn_t real_get_nprocs = nullptr;
@@ -39,6 +44,26 @@ static get_nprocs_fn_t real_get_nprocs_conf = nullptr;
 static open_fn_t real_open = nullptr;
 static openat_fn_t real_openat = nullptr;
 static execve_fn_t real_execve = nullptr;
+static mmap_fn_t real_mmap = nullptr;
+static mmap64_fn_t real_mmap64 = nullptr;
+
+#ifndef MADV_MERGEABLE
+#define MADV_MERGEABLE 12
+#endif
+
+#ifndef MAP_ANONYMOUS
+#define MAP_ANONYMOUS 0x20
+#endif
+
+#ifndef MAP_ANON
+#define MAP_ANON MAP_ANONYMOUS
+#endif
+
+#ifndef SYS_mmap
+#if defined(__NR_mmap)
+#define SYS_mmap __NR_mmap
+#endif
+#endif
 
 static thread_local bool in_intercept = false;
 
@@ -130,10 +155,82 @@ static int do_open(const char* pathname, int flags, mode_t mode) {
 }
 
 /**
+ * @brief Check whether proactive KSM auto-merge is enabled.
+ * @return true if VIRMUX_KSM_AUTO_MERGE is set to "1", false otherwise.
+ */
+inline bool is_ksm_auto_merge_enabled() noexcept {
+  const char* env_ksm = std::getenv(VIRMUX_ENV_KSM_AUTO_MERGE);
+  if (!env_ksm || env_ksm[0] == '\0') {
+    return false;
+  }
+  return std::strcmp(env_ksm, "1") == 0;
+}
+
+/**
+ * @brief Internal mmap helper shared by mmap and mmap64 exports.
+ */
+template <typename OffT>
+static void* do_mmap(void* addr, size_t length, int prot, int flags, int fd,
+                     OffT offset, bool is_64) {
+  if (in_intercept) {
+    if (is_64 && real_mmap64) {
+      return real_mmap64(addr, length, prot, flags, fd,
+                         static_cast<off64_t>(offset));
+    }
+    if (!is_64 && real_mmap) {
+      return real_mmap(addr, length, prot, flags, fd,
+                       static_cast<off_t>(offset));
+    }
+    return reinterpret_cast<void*>(
+        syscall(SYS_mmap, addr, length, prot, flags, fd, offset));
+  }
+
+  ReentrancyGuard guard;
+
+  void* res = MAP_FAILED;
+  if (is_64) {
+    if (!real_mmap64) {
+      real_mmap64 = reinterpret_cast<mmap64_fn_t>(dlsym(RTLD_NEXT, "mmap64"));
+      if (!real_mmap64) {
+        real_mmap64 = reinterpret_cast<mmap64_fn_t>(dlsym(RTLD_NEXT, "mmap"));
+      }
+    }
+    if (real_mmap64) {
+      res = real_mmap64(addr, length, prot, flags, fd,
+                        static_cast<off64_t>(offset));
+    } else {
+      res = reinterpret_cast<void*>(
+          syscall(SYS_mmap, addr, length, prot, flags, fd, offset));
+    }
+  } else {
+    if (!real_mmap) {
+      real_mmap = reinterpret_cast<mmap_fn_t>(dlsym(RTLD_NEXT, "mmap"));
+    }
+    if (real_mmap) {
+      res =
+          real_mmap(addr, length, prot, flags, fd, static_cast<off_t>(offset));
+    } else {
+      res = reinterpret_cast<void*>(
+          syscall(SYS_mmap, addr, length, prot, flags, fd, offset));
+    }
+  }
+
+  if (res != MAP_FAILED && ((flags & MAP_ANONYMOUS) || (flags & MAP_ANON)) &&
+      is_ksm_auto_merge_enabled()) {
+    int saved_errno = errno;
+    (void)::madvise(res, length, MADV_MERGEABLE);
+    errno = saved_errno;
+  }
+
+  return res;
+}
+
+/**
  * @brief Eagerly resolve real glibc symbols using RTLD_NEXT upon library
  * initialization.
  */
 __attribute__((constructor)) void init_interceptor() noexcept {
+  ReentrancyGuard guard;
   if (!real_sysconf) {
     real_sysconf = reinterpret_cast<sysconf_fn_t>(dlsym(RTLD_NEXT, "sysconf"));
   }
@@ -159,6 +256,15 @@ __attribute__((constructor)) void init_interceptor() noexcept {
   }
   if (!real_execve) {
     real_execve = reinterpret_cast<execve_fn_t>(dlsym(RTLD_NEXT, "execve"));
+  }
+  if (!real_mmap) {
+    real_mmap = reinterpret_cast<mmap_fn_t>(dlsym(RTLD_NEXT, "mmap"));
+  }
+  if (!real_mmap64) {
+    real_mmap64 = reinterpret_cast<mmap64_fn_t>(dlsym(RTLD_NEXT, "mmap64"));
+    if (!real_mmap64) {
+      real_mmap64 = reinterpret_cast<mmap64_fn_t>(dlsym(RTLD_NEXT, "mmap"));
+    }
   }
 }
 
@@ -363,4 +469,16 @@ extern "C" __attribute__((visibility("default"))) int execve(
     return real_execve(pathname, argv, envp);
   }
   return static_cast<int>(syscall(SYS_execve, pathname, argv, envp));
+}
+
+extern "C" __attribute__((visibility("default"))) void* mmap(
+    void* addr, size_t length, int prot, int flags, int fd,
+    off_t offset) noexcept {
+  return do_mmap(addr, length, prot, flags, fd, offset, false);
+}
+
+extern "C" __attribute__((visibility("default"))) void* mmap64(
+    void* addr, size_t length, int prot, int flags, int fd,
+    off64_t offset) noexcept {
+  return do_mmap(addr, length, prot, flags, fd, offset, true);
 }
