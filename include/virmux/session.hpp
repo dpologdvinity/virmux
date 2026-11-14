@@ -53,7 +53,8 @@ struct SessionInfo {
   std::string command;
   std::chrono::system_clock::time_point start_time;
   uint64_t last_cpu_ticks{0};
-  std::chrono::steady_clock::time_point last_active_time;
+  std::chrono::steady_clock::time_point last_active_time{
+      std::chrono::steady_clock::now()};
 };
 
 /**
