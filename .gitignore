@@ -1,0 +1,22 @@
+# Build output
+build/
+bin/
+*.o
+*.a
+*.so
+
+# System & Tooling
+.superpowers/
+.cache/
+compile_commands.json
+.clangd/
+
+# Secrets & Environment
+.env
+.env.*
+*.key
+*.pem
+
+# Owner action ledgers (per AGENTS.md)
+*STEPS-FOR-OWNER.md
+docs/agents/STEPS-FOR-OWNER.md
