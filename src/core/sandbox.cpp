@@ -137,7 +137,7 @@ std::string expand_home_path(const std::string& path) {
     if (home != nullptr && *home != '\0') {
       return home;
     }
-  } else if (path.rfind("~/", 0) == 0) {
+  } else if (path.starts_with("~/")) {
     const char* home = std::getenv("HOME");
     if (home != nullptr && *home != '\0') {
       return std::string(home) + path.substr(1);
