@@ -25,6 +25,7 @@ virmux_core_lib = static_library(
     'src/memory/ksm.cpp',
     'src/memory/compactor.cpp',
     'src/memory/telemetry.cpp',
+    'src/memory/memory_manager.cpp',
   ],
   include_directories: inc,
   dependencies: [threads_dep],
@@ -164,6 +165,14 @@ test_telemetry_exe = executable(
 )
 
 test('test_telemetry', test_telemetry_exe)
+
+test_memory_manager_exe = executable(
+  'test_memory_manager',
+  'tests/unit/test_memory_manager.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_memory_manager', test_memory_manager_exe)
 
 virmux_exe = executable(
   'virmux',
