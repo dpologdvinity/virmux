@@ -16,7 +16,7 @@ threads_dep = dependency('threads')
 
 virmux_core_lib = static_library(
   'virmux_core',
-  ['src/core/version.cpp', 'src/core/cgroup.cpp', 'src/sched/gate.cpp', 'src/core/sandbox.cpp'],
+  ['src/core/version.cpp', 'src/core/cgroup.cpp', 'src/sched/gate.cpp', 'src/core/sandbox.cpp', 'src/memory/cleanse.cpp'],
   include_directories: inc,
   dependencies: [threads_dep],
   install: false,
@@ -123,4 +123,13 @@ test(
   test_sandbox_exe,
   depends: [virmux_intercept_lib],
 )
+
+test_cleanse_exe = executable(
+  'test_cleanse',
+  'tests/unit/test_cleanse.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_cleanse', test_cleanse_exe)
+
 
