@@ -67,19 +67,21 @@ void cleanse_path(std::string_view path) {
   }
 
   if (std::filesystem::is_directory(fs_path, ec) && !ec) {
-    for (auto it = std::filesystem::recursive_directory_iterator(
-             fs_path,
-             std::filesystem::directory_options::skip_permission_denied, ec);
-         !ec && it != std::filesystem::recursive_directory_iterator();
-         it.increment(ec)) {
-      if (ec) {
-        ec.clear();
-        continue;
-      }
-
+    auto it = std::filesystem::recursive_directory_iterator(
+        fs_path, std::filesystem::directory_options::skip_permission_denied,
+        ec);
+    if (ec) {
+      return;
+    }
+    const auto end = std::filesystem::recursive_directory_iterator();
+    while (it != end) {
       std::error_code entry_ec;
       if (it->is_regular_file(entry_ec) && !entry_ec) {
         evict_file_cache(it->path());
+      }
+      it.increment(ec);
+      if (ec) {
+        ec.clear();
       }
     }
   }
