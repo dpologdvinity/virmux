@@ -32,6 +32,7 @@ virmux_core_lib = static_library(
     'src/storage/cas.cpp',
     'src/storage/scratch.cpp',
     'src/storage/overlay.cpp',
+    'src/ipc/ipc.cpp',
   ],
   include_directories: inc,
   dependencies: [threads_dep],
@@ -241,6 +242,14 @@ test_sandbox_overlay_exe = executable(
 )
 
 test('test_sandbox_overlay', test_sandbox_overlay_exe)
+
+test_ipc_exe = executable(
+  'test_ipc',
+  'tests/unit/test_ipc.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_ipc', test_ipc_exe)
 
 virmux_exe = executable(
   'virmux',
