@@ -42,6 +42,7 @@ int get_nprocs(void) __THROW;
 int get_nprocs_conf(void) __THROW;
 int open(const char *pathname, int flags, ...);
 int open64(const char *pathname, int flags, ...);
+int execve(const char *pathname, char *const argv[], char *const envp[]) __THROW;
 
 #ifdef __cplusplus
 }

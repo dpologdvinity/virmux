@@ -38,9 +38,21 @@ unity_dep = declare_dependency(
 
 dl_dep = meson.get_compiler('cpp').find_library('dl', required: false)
 
+browser_trim_lib = static_library(
+  'browser_trim',
+  'src/intercept/browser_trim.cpp',
+  include_directories: inc,
+  install: false,
+)
+
+browser_trim_dep = declare_dependency(
+  include_directories: inc,
+  link_with: browser_trim_lib,
+)
+
 virmux_intercept_lib = shared_library(
   'virmux_intercept',
-  'src/intercept/interceptor.cpp',
+  ['src/intercept/interceptor.cpp', 'src/intercept/browser_trim.cpp'],
   include_directories: inc,
   dependencies: [dl_dep],
   install: true,
@@ -63,6 +75,19 @@ test_interceptor_exe = executable(
 test(
   'test_interceptor',
   test_interceptor_exe,
+  env: ['LD_PRELOAD=' + virmux_intercept_lib.full_path()],
+  depends: [virmux_intercept_lib],
+)
+
+test_browser_trim_exe = executable(
+  'test_browser_trim',
+  'tests/unit/test_browser_trim.cpp',
+  dependencies: [browser_trim_dep, unity_dep],
+)
+
+test(
+  'test_browser_trim',
+  test_browser_trim_exe,
   env: ['LD_PRELOAD=' + virmux_intercept_lib.full_path()],
   depends: [virmux_intercept_lib],
 )

@@ -10,26 +10,31 @@
 #undef _FILE_OFFSET_BITS
 
 #include "virmux/intercept.h"
+#include "virmux/browser_trim.hpp"
 
 #include <cstdarg>
 #include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <string>
 #include <sys/syscall.h>
 #include <sys/sysinfo.h>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 
 using sysconf_fn_t = long (*)(int) noexcept;
 using get_nprocs_fn_t = int (*)(void) noexcept;
 using open_fn_t = int (*)(const char *, int, ...);
+using execve_fn_t = int (*)(const char *, char *const[], char *const[]) noexcept;
 
 static sysconf_fn_t real_sysconf = nullptr;
 static get_nprocs_fn_t real_get_nprocs = nullptr;
 static get_nprocs_fn_t real_get_nprocs_conf = nullptr;
 static open_fn_t real_open = nullptr;
+static execve_fn_t real_execve = nullptr;
 
 static thread_local bool in_intercept = false;
 
@@ -132,6 +137,9 @@ __attribute__((constructor)) void init_interceptor() noexcept {
         if (!real_open) {
             real_open = reinterpret_cast<open_fn_t>(dlsym(RTLD_NEXT, "open"));
         }
+    }
+    if (!real_execve) {
+        real_execve = reinterpret_cast<execve_fn_t>(dlsym(RTLD_NEXT, "execve"));
     }
 }
 
@@ -239,4 +247,64 @@ extern "C" __attribute__((visibility("default"))) int open64(const char *pathnam
         va_end(args);
     }
     return do_open(pathname, flags, mode);
+}
+
+extern "C" __attribute__((visibility("default"))) int execve(
+    const char *pathname,
+    char *const argv[],
+    char *const envp[]
+) noexcept {
+    if (in_intercept) {
+        if (real_execve) {
+            return real_execve(pathname, argv, envp);
+        }
+        return static_cast<int>(syscall(SYS_execve, pathname, argv, envp));
+    }
+
+    ReentrancyGuard guard;
+
+    if (!real_execve) {
+        real_execve = reinterpret_cast<execve_fn_t>(dlsym(RTLD_NEXT, "execve"));
+    }
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunknown-warning-option"
+#pragma clang diagnostic ignored "-Wtautological-pointer-compare"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wnonnull-compare"
+#endif
+    if (pathname != nullptr && argv != nullptr &&
+        (virmux::is_browser_binary(pathname) ||
+         (argv[0] != nullptr && virmux::is_browser_binary(argv[0])))) {
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+        try {
+            std::vector<std::string> augmented = virmux::inject_slim_flags(argv);
+            if (!augmented.empty()) {
+                std::vector<char *> new_argv;
+                new_argv.reserve(augmented.size() + 1);
+                for (auto &arg : augmented) {
+                    new_argv.push_back(const_cast<char *>(arg.c_str()));
+                }
+                new_argv.push_back(nullptr);
+
+                if (real_execve) {
+                    return real_execve(pathname, new_argv.data(), envp);
+                }
+                return static_cast<int>(syscall(SYS_execve, pathname, new_argv.data(), envp));
+            }
+        } catch (...) {
+            // In case of allocation failure, fall through to unaugmented execve
+        }
+    }
+
+    if (real_execve) {
+        return real_execve(pathname, argv, envp);
+    }
+    return static_cast<int>(syscall(SYS_execve, pathname, argv, envp));
 }
