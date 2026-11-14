@@ -36,6 +36,16 @@ unity_dep = declare_dependency(
   link_with: unity_lib,
 )
 
+dl_dep = meson.get_compiler('cpp').find_library('dl', required: false)
+
+virmux_intercept_lib = shared_library(
+  'virmux_intercept',
+  'src/intercept/interceptor.cpp',
+  include_directories: inc,
+  dependencies: [dl_dep],
+  install: true,
+)
+
 test_version_exe = executable(
   'test_version',
   'tests/unit/test_version.cpp',
@@ -43,3 +53,17 @@ test_version_exe = executable(
 )
 
 test('test_version', test_version_exe)
+
+test_interceptor_exe = executable(
+  'test_interceptor',
+  'tests/unit/test_interceptor.cpp',
+  dependencies: [unity_dep],
+)
+
+test(
+  'test_interceptor',
+  test_interceptor_exe,
+  env: ['LD_PRELOAD=' + virmux_intercept_lib.full_path()],
+  depends: [virmux_intercept_lib],
+)
+
