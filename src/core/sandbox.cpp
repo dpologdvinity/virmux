@@ -372,17 +372,15 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
 
   DaemonClient client;
   uint64_t session_id = 0;
-  if (client.is_alive(100)) {
-    SessionRegistration reg{
-        .name = "",
-        .pid = pid,
-        .virtual_cores = cfg.virtual_cores,
-        .memory_limit_bytes = cfg.memory_limit_bytes,
-        .cgroup_path = slice_name,
-        .command = cmd_str,
-    };
-    session_id = client.register_session(reg, 200);
-  }
+  SessionRegistration reg{
+      .name = "",
+      .pid = pid,
+      .virtual_cores = cfg.virtual_cores,
+      .memory_limit_bytes = cfg.memory_limit_bytes,
+      .cgroup_path = slice_name,
+      .command = cmd_str,
+  };
+  session_id = client.register_session(reg, 200);
 
   int status = 0;
   while (::waitpid(pid, &status, 0) < 0) {

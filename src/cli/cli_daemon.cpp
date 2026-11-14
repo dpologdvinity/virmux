@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -138,7 +139,8 @@ uint64_t resolve_target_session_id(DaemonClient& client, uint64_t val) {
     }
   }
   for (const auto& s : sessions) {
-    if (s.pid == static_cast<pid_t>(val)) {
+    if (val <= static_cast<uint64_t>(std::numeric_limits<pid_t>::max()) &&
+        s.pid == static_cast<pid_t>(val)) {
       return s.id;
     }
   }
@@ -289,21 +291,42 @@ int cmd_daemon(int argc, char* const argv[]) {
     return 1;
   }
 
+  int pipe_fds[2];
+  if (::pipe2(pipe_fds, O_CLOEXEC) < 0) {
+    std::perror("pipe2");
+    return 1;
+  }
+
   pid_t pid = ::fork();
   if (pid < 0) {
     std::perror("fork");
+    ::close(pipe_fds[0]);
+    ::close(pipe_fds[1]);
     return 1;
   }
 
   if (pid > 0) {
-    // In parent process: print background PID and return 0
+    // In parent process: wait for child readiness signal
+    ::close(pipe_fds[1]);
+    char status = 0;
+    ssize_t n = ::read(pipe_fds[0], &status, 1);
+    ::close(pipe_fds[0]);
+
+    if (n <= 0 || status != '1') {
+      std::cerr << "Error: failed to initialize supervisor daemon\n";
+      return 1;
+    }
+
     std::cout << "Supervisor daemon started in background (PID " << pid
               << ")\n";
     return 0;
   }
 
   // In child process
+  ::close(pipe_fds[0]);
   ::setsid();
+  (void)::chdir("/");
+
   int null_fd = ::open("/dev/null", O_RDWR);
   if (null_fd >= 0) {
     ::dup2(null_fd, STDIN_FILENO);
@@ -316,8 +339,16 @@ int cmd_daemon(int argc, char* const argv[]) {
 
   SupervisorDaemon daemon;
   if (!daemon.init()) {
+    char fail = '0';
+    (void)::write(pipe_fds[1], &fail, 1);
+    ::close(pipe_fds[1]);
     ::_exit(1);
   }
+
+  // Signal parent that daemon is initialized and listening
+  char ok = '1';
+  (void)::write(pipe_fds[1], &ok, 1);
+  ::close(pipe_fds[1]);
 
   g_active_daemon.store(&daemon);
   struct sigaction sa{};
