@@ -19,7 +19,7 @@ class ScopedToken {
   /**
    * @brief Construct an empty/unbound ScopedToken holding no token.
    */
-  constexpr ScopedToken() noexcept : gate_(nullptr), acquired_(false) {}
+  ScopedToken() noexcept : gate_(nullptr), acquired_(false) {}
 
   /**
    * @brief Acquire a token from the specified gate using its default timeout.

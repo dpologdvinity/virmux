@@ -69,8 +69,13 @@ void test_gate_queued_waiters_woken_on_release(void) {
   while (!thread_started.load()) {
     std::this_thread::yield();
   }
-  // Give thread time to block in cv.wait_for
-  std::this_thread::sleep_for(std::chrono::milliseconds(30));
+  // Bounded wait loop polling for waiter to block in queued state
+  auto poll_start = std::chrono::steady_clock::now();
+  while (gate.queued_count() == 0 &&
+         (std::chrono::steady_clock::now() - poll_start) <
+             std::chrono::milliseconds(500)) {
+    std::this_thread::yield();
+  }
   TEST_ASSERT_EQUAL_INT(1, gate.queued_count());
 
   gate.release_token();
@@ -196,9 +201,17 @@ void test_admission_gate_concurrency_stress(void) {
   TEST_ASSERT_EQUAL_INT(0, gate.queued_count());
 }
 
+void test_gate_clamps_non_positive_limit(void) {
+  virmux::AdmissionGate gate_zero(0);
+  TEST_ASSERT_EQUAL_INT(1, gate_zero.max_concurrent());
+  virmux::AdmissionGate gate_neg(-4);
+  TEST_ASSERT_EQUAL_INT(1, gate_neg.max_concurrent());
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_gate_allows_max_concurrent_tokens);
+  RUN_TEST(test_gate_clamps_non_positive_limit);
   RUN_TEST(test_gate_acquire_blocks_and_times_out);
   RUN_TEST(test_gate_queued_waiters_woken_on_release);
   RUN_TEST(test_gate_try_acquire_immediate);

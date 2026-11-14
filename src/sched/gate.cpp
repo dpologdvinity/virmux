@@ -45,7 +45,8 @@ void ScopedToken::release() noexcept {
 // AdmissionGate implementation
 AdmissionGate::AdmissionGate(int max_concurrent_heavy,
                              std::chrono::milliseconds timeout)
-    : max_concurrent_(max_concurrent_heavy), timeout_(timeout) {}
+    : max_concurrent_(max_concurrent_heavy <= 0 ? 1 : max_concurrent_heavy),
+      timeout_(timeout) {}
 
 bool AdmissionGate::acquire_token() { return acquire_token(timeout_); }
 
