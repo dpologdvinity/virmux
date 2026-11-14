@@ -1,10 +1,10 @@
 # virmux
 
-> **Virtual Resource Multiplexer in C for Linux & WSL.**  
+> **Virtual Resource Multiplexer in C++20/C for Linux & WSL.**  
 > High-Density Memory Deduplication, CPU Slicing, Workspace Isolation, and Admission Scheduling for Heavy Concurrent Workloads.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Standard: C17](https://img.shields.io/badge/Standard-C17-green.svg)](https://en.wikipedia.org/wiki/C17_(C_standard_revision))
+[![Standard: C++20 / C17](https://img.shields.io/badge/Standard-C%2B%2B20%20%7C%20C17-blue.svg)](https://en.wikipedia.org/wiki/C%2B%2B20)
 [![Platform: Linux / WSL2](https://img.shields.io/badge/Platform-Linux%20%7C%20WSL2-orange.svg)](https://learn.microsoft.com/en-us/windows/wsl/)
 
 ---

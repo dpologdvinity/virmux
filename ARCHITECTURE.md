@@ -73,7 +73,8 @@
 
 ### Technology Stack Rationale
 
-- **C17 (Language of Choice):** Low-level access to Linux kernel syscalls (`process_madvise`, `clone3`, `epoll`, `mount`, `posix_fadvise`) requires direct C ABI interaction. Zero garbage collection pauses ensures `virmux` never creates latency for the processes it monitors.
+- **C++20 (Language of Choice for Core):** RAII wrappers (`ScopedFd`, `ScopedMount`, `ScopedCgroup`, `ScopedThread`) guarantee deterministic, leak-free cleanup of kernel resources even on error paths. `std::jthread` and modern concurrency primitives provide safe, lock-free queues for the Admission Gate.
+- **C ABI (`extern "C"`) for `libvirmux_intercept.so`:** The `LD_PRELOAD` interceptor library compiles with C linkage so it can transparently intercept syscalls across any executable on the system (C, C++, Rust, Go, Python, Node).
 - **cgroups v2:** Modern Linux unified hierarchy provides atomic resource control across memory, CPU, and I/O.
 - **OverlayFS:** Standard kernel filesystem driver providing instant, zero-copy copy-on-write workspaces without external daemon dependencies.
 - **Meson + Ninja:** Fast, modern C build system with clean cross-platform dependency tracking.

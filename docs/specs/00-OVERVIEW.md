@@ -3,7 +3,7 @@
 
 ### 1. Executive Summary
 
-`virmux` (Virtual Resource Multiplexer) is a high-density systems runtime and resource supervisor written in C17 for Linux and WSL (Windows Subsystem for Linux).
+`virmux` (Virtual Resource Multiplexer) is a high-density systems runtime and resource supervisor written in modern C++20 (with C17 ABI exports for the dynamic interceptor) for Linux and WSL (Windows Subsystem for Linux).
 
 While traditional terminal multiplexers like `tmux` multiplex screen real estate and input streams, `virmux` multiplexes physical hardware resources: CPU cores, cache hierarchies, physical DRAM, swap, and disk I/O. It enables developers and automated agent swarms to run 10–30 concurrent, heavy workloads (e.g., headless browser test suites, C++/Rust compilations, model training, Docker builds, Blender rendering) on a single workstation or laptop without system lag, scheduler thrashing, or Out-Of-Memory (OOM) crashes.
 
@@ -62,7 +62,7 @@ When 10–20 independent terminal sessions or autonomous agents run simultaneous
 ### 4. Technical Invariants & Constraints
 
 1. **Non-Invasive to Source Code:** Target applications (e.g., Playwright scripts, CMakeLists, PyTorch models) must run completely unmodified.
-2. **Pure C17 Core:** The core runtime, interceptors, and supervisor are written in standard C17 with zero heavy runtime dependencies.
+2. **Modern C++20 Core with C ABI Interceptors:** The supervisor, admission queue, and CLI leverage C++20 RAII (`ScopedFd`, `ScopedMount`, `ScopedCgroup`), `std::jthread`, `std::string_view`, and atomic primitives to guarantee zero resource leaks. The dynamic preload interceptor (`libvirmux_intercept.so`) exports pure `extern "C"` symbols for universal compatibility.
 3. **Unprivileged Operation with Graceful Elevation:** Monitoring, spoofing, and workspace virtualization work in unprivileged user namespaces. Advanced cgroup v2 controllers and system-wide KSM utilize delegated privileges or degrade gracefully.
 4. **Deterministic Fault Isolation:** A failure, segfault, or OOM event in Session A must never terminate or corrupt Session B or the host shell.
 5. **Zero Idle Overhead:** When a session is idle or awaiting network response, its CPU footprint must be strictly 0.00% via kernel freezing.
