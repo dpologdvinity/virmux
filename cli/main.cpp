@@ -16,6 +16,7 @@
 
 #include "virmux/cleanse.hpp"
 #include "virmux/cli_cas.hpp"
+#include "virmux/cli_daemon.hpp"
 #include "virmux/cli_stats.hpp"
 #include "virmux/sandbox.hpp"
 #include "virmux/version.hpp"
@@ -34,6 +35,12 @@ void print_general_usage(std::ostream& out) {
       << "Commands:\n"
       << "  run [OPTIONS] -- <COMMAND...>   Execute a command inside a "
          "resource-isolated sandbox\n"
+      << "  daemon [OPTIONS]                Run the background supervisor "
+         "daemon\n"
+      << "  list [OPTIONS]                  List active virtualized sessions\n"
+      << "  freeze <SESSION_ID | PID>       Freeze an active session\n"
+      << "  thaw <SESSION_ID | PID>         Thaw a frozen session\n"
+      << "  kill <SESSION_ID | PID>         Terminate a session process tree\n"
       << "  stats [OPTIONS]                 Display host memory, KSM, and zram "
          "telemetry\n"
       << "  pack [PID ... | --all]          Proactively compact anonymous "
@@ -316,6 +323,26 @@ int main(int argc, char* argv[]) {
       char* help_argv[] = {argv[0], const_cast<char*>("cas"),
                            const_cast<char*>("--help")};
       return virmux::cmd_cas(3, help_argv);
+    } else if (argc > 2 && std::string_view(argv[2]) == "daemon") {
+      char* help_argv[] = {argv[0], const_cast<char*>("daemon"),
+                           const_cast<char*>("--help")};
+      return virmux::cmd_daemon(3, help_argv);
+    } else if (argc > 2 && std::string_view(argv[2]) == "list") {
+      char* help_argv[] = {argv[0], const_cast<char*>("list"),
+                           const_cast<char*>("--help")};
+      return virmux::cmd_list(3, help_argv);
+    } else if (argc > 2 && std::string_view(argv[2]) == "freeze") {
+      char* help_argv[] = {argv[0], const_cast<char*>("freeze"),
+                           const_cast<char*>("--help")};
+      return virmux::cmd_freeze(3, help_argv);
+    } else if (argc > 2 && std::string_view(argv[2]) == "thaw") {
+      char* help_argv[] = {argv[0], const_cast<char*>("thaw"),
+                           const_cast<char*>("--help")};
+      return virmux::cmd_thaw(3, help_argv);
+    } else if (argc > 2 && std::string_view(argv[2]) == "kill") {
+      char* help_argv[] = {argv[0], const_cast<char*>("kill"),
+                           const_cast<char*>("--help")};
+      return virmux::cmd_kill(3, help_argv);
     } else {
       print_general_usage(std::cout);
     }
@@ -336,6 +363,26 @@ int main(int argc, char* argv[]) {
 
   if (first_arg == "cas") {
     return virmux::cmd_cas(argc, argv);
+  }
+
+  if (first_arg == "daemon") {
+    return virmux::cmd_daemon(argc, argv);
+  }
+
+  if (first_arg == "list") {
+    return virmux::cmd_list(argc, argv);
+  }
+
+  if (first_arg == "freeze") {
+    return virmux::cmd_freeze(argc, argv);
+  }
+
+  if (first_arg == "thaw") {
+    return virmux::cmd_thaw(argc, argv);
+  }
+
+  if (first_arg == "kill") {
+    return virmux::cmd_kill(argc, argv);
   }
 
   std::cerr << "Error: unrecognized command '" << first_arg << "'\n";

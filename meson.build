@@ -28,6 +28,7 @@ virmux_core_lib = static_library(
     'src/memory/memory_manager.cpp',
     'src/cli/cli_stats.cpp',
     'src/cli/cli_cas.cpp',
+    'src/cli/cli_daemon.cpp',
     'src/storage/sha256.cpp',
     'src/storage/cas.cpp',
     'src/storage/scratch.cpp',
@@ -268,6 +269,14 @@ test_daemon_exe = executable(
 )
 
 test('test_daemon', test_daemon_exe)
+
+test_cli_daemon_exe = executable(
+  'test_cli_daemon',
+  'tests/unit/test_cli_daemon.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_cli_daemon', test_cli_daemon_exe)
 
 virmux_exe = executable(
   'virmux',
