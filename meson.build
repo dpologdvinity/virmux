@@ -34,6 +34,7 @@ virmux_core_lib = static_library(
     'src/storage/overlay.cpp',
     'src/ipc/ipc.cpp',
     'src/daemon/session.cpp',
+    'src/daemon/daemon.cpp',
   ],
   include_directories: inc,
   dependencies: [threads_dep],
@@ -259,6 +260,14 @@ test_session_exe = executable(
 )
 
 test('test_session', test_session_exe)
+
+test_daemon_exe = executable(
+  'test_daemon',
+  'tests/unit/test_daemon.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_daemon', test_daemon_exe)
 
 virmux_exe = executable(
   'virmux',
