@@ -182,10 +182,18 @@ log_success "Worker sacrificial OOM score verified: /proc/$PID_2/oom_score_adj i
 
 # 3. Terminate second worker (simulating OOM kill by sending SIGKILL to leaf process)
 kill -9 "$PID_2"
-# Allow supervisor telemetry loop (1.0s interval) to detect process termination
-sleep 1.2
 
-AFTER_JSON=$("$VIRMUX" list --json)
+# Wait for supervisor telemetry loop to detect process termination
+AFTER_JSON="[]"
+for _ in {1..30}; do
+  AFTER_JSON=$("$VIRMUX" list --json 2>/dev/null || echo "[]")
+  S2_STATE=$(echo "$AFTER_JSON" | python3 -c "import sys, json; data = json.load(sys.stdin); s2 = next((s for s in data if s['id'] == $ID_2), None); print(s2['state'] if s2 else '')" 2>/dev/null || true)
+  if [[ "$S2_STATE" == "DEAD" ]]; then
+    break
+  fi
+  sleep 0.1
+done
+
 python3 -c "
 import sys, json
 data = json.loads('''$AFTER_JSON''')
@@ -204,6 +212,7 @@ if ! "$VIRMUX" stats --json >/dev/null 2>&1; then
   exit 1
 fi
 
+"$VIRMUX" kill "$ID_1" 2>/dev/null || true
 kill -KILL "$RUN_PID_1" "$RUN_PID_2" 2>/dev/null || true
 wait "$RUN_PID_1" "$RUN_PID_2" 2>/dev/null || true
 WORKER_PIDS=""
@@ -285,10 +294,17 @@ done
 
 ID_3=$(echo "$LIST_JSON" | python3 -c "import sys, json; print(json.load(sys.stdin)[0]['id'])")
 
-# Wait >1.0s (1.5s) for auto-freeze to trigger (>500ms inactivity + telemetry cycle)
-sleep 1.5
+# Wait for auto-freeze to trigger (>500ms inactivity + telemetry cycle)
+FROZEN_JSON="[]"
+for _ in {1..40}; do
+  FROZEN_JSON=$("$VIRMUX" list --json 2>/dev/null || echo "[]")
+  S_STATE=$(echo "$FROZEN_JSON" | python3 -c "import sys, json; data = json.load(sys.stdin); s = next((s for s in data if s['id'] == $ID_3), None); print(s['state'] if s else '')" 2>/dev/null || true)
+  if [[ "$S_STATE" == "FROZEN" ]]; then
+    break
+  fi
+  sleep 0.1
+done
 
-FROZEN_JSON=$("$VIRMUX" list --json)
 python3 -c "
 import sys, json
 data = json.loads('''$FROZEN_JSON''')
@@ -296,7 +312,7 @@ s = next((s for s in data if s['id'] == $ID_3), None)
 assert s is not None, 'Session $ID_3 not found in session list'
 assert s['state'] == 'FROZEN', f'Expected state FROZEN, got {s[\"state\"]}'
 "
-log_success "Auto-freeze verified: idle session transitioned to FROZEN after >1.0s"
+log_success "Auto-freeze verified: idle session transitioned to FROZEN"
 
 # Run virmux thaw <ID>
 "$VIRMUX" thaw "$ID_3"
@@ -310,6 +326,7 @@ assert 'RUNNING' in s['state'], f'Expected state RUNNING, got {s[\"state\"]}'
 "
 log_success "Session thaw verified: session transitioned back to RUNNING"
 
+"$VIRMUX" kill "$ID_3" 2>/dev/null || true
 kill -KILL "$RUN_PID_3" 2>/dev/null || true
 wait "$RUN_PID_3" 2>/dev/null || true
 WORKER_PIDS=""
@@ -318,6 +335,13 @@ WORKER_PIDS=""
 # Test Case 4: Checkpoint & Restore Lifecycle
 # ---------------------------------------------------------------------------
 echo -e "\n${BOLD}Test 4: Checkpoint & Restore Lifecycle${RESET}"
+
+# Restart daemon without auto-freeze for clean checkpoint/restore environment
+stop_daemon
+rm -f "$VIRMUX_SOCKET"
+DAEMON_OUT=$("$VIRMUX" daemon)
+DAEMON_PID=$(echo "$DAEMON_OUT" | grep -oP 'PID \K[0-9]+' || true)
+wait_for_socket
 
 # Spawn active worker process
 "$VIRMUX" run -- /bin/sh -c "sleep 30" >/dev/null 2>&1 &
@@ -376,6 +400,7 @@ if [[ -d "${VIRMUX_CHECKPOINT_DIR}/${ID_4}" ]]; then
 fi
 log_success "Checkpoint cleanup verified: image directory removed upon restore"
 
+"$VIRMUX" kill "$ID_4" 2>/dev/null || true
 kill -KILL "$RUN_PID_4" 2>/dev/null || true
 wait "$RUN_PID_4" 2>/dev/null || true
 WORKER_PIDS=""
