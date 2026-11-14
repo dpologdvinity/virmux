@@ -22,7 +22,7 @@ namespace {
  */
 std::string collapse_home_path(const std::string& str) {
   const char* home = std::getenv("HOME");
-  if (home == nullptr || *home == '\0') {
+  if (home == nullptr || *home == '\0' || std::string_view(home) == "/") {
     return str;
   }
   std::string home_str(home);
@@ -161,7 +161,7 @@ uint64_t SessionRegistry::register_session(const SessionRegistration& req) {
   info.id = next_id_++;
   info.pid = req.pid;
   info.name = derive_session_name(req.name, req.command, info.id);
-  info.state = SessionState::RUNNING_NORMAL;
+  info.state = (req.pid > 0) ? SessionState::RUNNING_NORMAL : SessionState::DEAD;
   info.virtual_cores = (req.virtual_cores > 0) ? req.virtual_cores : 2;
   info.memory_limit_bytes = req.memory_limit_bytes;
   info.memory_rss_bytes = 0;
@@ -228,9 +228,9 @@ void SessionRegistry::refresh_telemetry() {
     }
 
     // 1. Process liveness check
-    int kill_res = ::kill(s.pid, 0);
-    if (kill_res != 0) {
-      if (errno == ESRCH) {
+    if (procfs_root_ == "/proc") {
+      int kill_res = ::kill(s.pid, 0);
+      if (kill_res != 0 && errno == ESRCH) {
         s.state = SessionState::DEAD;
         s.memory_rss_bytes = 0;
         s.ksm_dedup_bytes = 0;
@@ -252,10 +252,18 @@ void SessionRegistry::refresh_telemetry() {
       std::string line;
       while (std::getline(status_file, line)) {
         if (line.starts_with("State:")) {
-          if (line.find('Z') != std::string::npos) {
-            is_zombie = true;
-          } else if (line.find('T') != std::string::npos) {
-            is_stopped = true;
+          size_t idx = 6;
+          while (idx < line.size() &&
+                 std::isspace(static_cast<unsigned char>(line[idx]))) {
+            idx++;
+          }
+          if (idx < line.size()) {
+            char st = line[idx];
+            if (st == 'Z') {
+              is_zombie = true;
+            } else if (st == 'T') {
+              is_stopped = true;
+            }
           }
         } else if (line.starts_with("VmRSS:")) {
           auto colon = line.find(':');
