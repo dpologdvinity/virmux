@@ -13,6 +13,8 @@
 #include <fstream>
 #include <sstream>
 
+#include "virmux/checkpoint.hpp"
+
 namespace virmux {
 
 namespace {
@@ -151,6 +153,8 @@ std::string_view session_state_to_string(SessionState s) {
       return "WAITING_IO";
     case SessionState::FROZEN:
       return "FROZEN";
+    case SessionState::CHECKPOINTED:
+      return "CHECKPOINTED";
     case SessionState::DEAD:
       return "DEAD";
   }
@@ -173,14 +177,21 @@ SessionState session_state_from_string(std::string_view str) {
   if (str == "FROZEN") {
     return SessionState::FROZEN;
   }
+  if (str == "CHECKPOINTED") {
+    return SessionState::CHECKPOINTED;
+  }
   if (str == "DEAD") {
     return SessionState::DEAD;
   }
   return SessionState::INITIALIZING;
 }
 
-SessionRegistry::SessionRegistry(std::string procfs_root)
-    : procfs_root_(std::move(procfs_root)), next_id_(1) {}
+SessionRegistry::SessionRegistry(std::string procfs_root,
+                                 std::string checkpoint_dir)
+    : procfs_root_(std::move(procfs_root)),
+      next_id_(1),
+      checkpoint_mgr_(
+          std::make_unique<CheckpointManager>(std::move(checkpoint_dir))) {}
 
 SessionRegistry::~SessionRegistry() = default;
 
@@ -208,6 +219,9 @@ uint64_t SessionRegistry::register_session(const SessionRegistration& req) {
 bool SessionRegistry::unregister_session(uint64_t id) {
   std::lock_guard<std::mutex> lock(mutex_);
   dead_since_.erase(id);
+  if (checkpoint_mgr_) {
+    checkpoint_mgr_->remove_checkpoint(id);
+  }
   auto it = std::find_if(sessions_.begin(), sessions_.end(),
                          [id](const SessionInfo& s) { return s.id == id; });
   if (it != sessions_.end()) {
@@ -280,6 +294,12 @@ void SessionRegistry::refresh_telemetry() {
     }
 
     for (auto& s : sessions_) {
+      if (s.state == SessionState::CHECKPOINTED) {
+        s.memory_rss_bytes = 0;
+        s.ksm_dedup_bytes = 0;
+        continue;
+      }
+
       if (s.pid <= 0) {
         s.state = SessionState::DEAD;
         s.memory_rss_bytes = 0;
@@ -595,7 +615,8 @@ bool SessionRegistry::freeze_session(uint64_t id) {
   if (it == sessions_.end()) {
     return false;
   }
-  if (it->state == SessionState::DEAD || it->pid <= 0) {
+  if (it->state == SessionState::DEAD ||
+      it->state == SessionState::CHECKPOINTED || it->pid <= 0) {
     return false;
   }
 
@@ -643,7 +664,8 @@ bool SessionRegistry::thaw_session(uint64_t id) {
   if (it == sessions_.end()) {
     return false;
   }
-  if (it->state == SessionState::DEAD || it->pid <= 0) {
+  if (it->state == SessionState::DEAD ||
+      it->state == SessionState::CHECKPOINTED || it->pid <= 0) {
     return false;
   }
 
@@ -728,6 +750,10 @@ bool SessionRegistry::kill_session(uint64_t id, int signal) {
     if (dead_since_.find(it->id) == dead_since_.end()) {
       dead_since_[it->id] = std::chrono::steady_clock::now();
     }
+  }
+
+  if (checkpoint_mgr_) {
+    checkpoint_mgr_->remove_checkpoint(id);
   }
 
   return true;
@@ -915,6 +941,90 @@ std::vector<SessionInfo> SessionRegistry::from_json(std::string_view json) {
   }
 
   return results;
+}
+
+bool SessionRegistry::checkpoint_session(uint64_t id, std::string* msg) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto it = std::find_if(sessions_.begin(), sessions_.end(),
+                         [id](const SessionInfo& s) { return s.id == id; });
+  if (it == sessions_.end()) {
+    if (msg != nullptr) {
+      *msg = "Session " + std::to_string(id) + " not found";
+    }
+    return false;
+  }
+  if (it->state == SessionState::DEAD) {
+    if (msg != nullptr) {
+      *msg = "Cannot checkpoint dead session";
+    }
+    return false;
+  }
+  if (it->state == SessionState::CHECKPOINTED) {
+    if (msg != nullptr) {
+      *msg = "Session " + std::to_string(id) + " is already checkpointed";
+    }
+    return false;
+  }
+
+  if (!checkpoint_mgr_) {
+    if (msg != nullptr) {
+      *msg = "Checkpoint manager not initialized";
+    }
+    return false;
+  }
+
+  bool ok = checkpoint_mgr_->checkpoint_session(*it, msg);
+  if (ok) {
+    it->state = SessionState::CHECKPOINTED;
+    it->memory_rss_bytes = 0;
+    it->ksm_dedup_bytes = 0;
+  }
+  return ok;
+}
+
+bool SessionRegistry::restore_session(uint64_t id, std::string* msg) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto it = std::find_if(sessions_.begin(), sessions_.end(),
+                         [id](const SessionInfo& s) { return s.id == id; });
+  if (it == sessions_.end()) {
+    if (msg != nullptr) {
+      *msg = "Session " + std::to_string(id) + " not found";
+    }
+    return false;
+  }
+  if (it->state != SessionState::CHECKPOINTED) {
+    if (msg != nullptr) {
+      *msg = "Session " + std::to_string(id) + " is not checkpointed";
+    }
+    return false;
+  }
+
+  if (!checkpoint_mgr_) {
+    if (msg != nullptr) {
+      *msg = "Checkpoint manager not initialized";
+    }
+    return false;
+  }
+
+  bool ok = checkpoint_mgr_->restore_session(*it, msg);
+  if (ok) {
+    it->state = SessionState::RUNNING_NORMAL;
+    it->last_active_time = std::chrono::steady_clock::now();
+  }
+  return ok;
+}
+
+bool SessionRegistry::has_checkpoint(uint64_t id) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return checkpoint_mgr_ ? checkpoint_mgr_->has_checkpoint(id) : false;
+}
+
+CheckpointManager& SessionRegistry::checkpoint_manager() {
+  return *checkpoint_mgr_;
+}
+
+const CheckpointManager& SessionRegistry::checkpoint_manager() const {
+  return *checkpoint_mgr_;
 }
 
 }  // namespace virmux

@@ -695,6 +695,32 @@ void SupervisorDaemon::handle_client_request(int client_fd, uint16_t msg_type,
       send_ipc_message(client_fd, MSG_GET_STATS_RESP, stats_json, 1000);
       break;
     }
+    case MSG_CHECKPOINT_SESSION_REQ: {
+      uint64_t id = parse_session_id(payload);
+      std::string status_msg;
+      if (id > 0 && registry_.checkpoint_session(id, &status_msg)) {
+        std::string resp = status_msg.empty() ? "OK" : status_msg;
+        send_ipc_message(client_fd, MSG_CHECKPOINT_SESSION_RESP, resp, 5000);
+      } else {
+        std::string err =
+            status_msg.empty() ? "Failed to checkpoint session" : status_msg;
+        send_ipc_message(client_fd, MSG_ERROR_RESP, err, 5000);
+      }
+      break;
+    }
+    case MSG_RESTORE_SESSION_REQ: {
+      uint64_t id = parse_session_id(payload);
+      std::string status_msg;
+      if (id > 0 && registry_.restore_session(id, &status_msg)) {
+        std::string resp = status_msg.empty() ? "OK" : status_msg;
+        send_ipc_message(client_fd, MSG_RESTORE_SESSION_RESP, resp, 5000);
+      } else {
+        std::string err =
+            status_msg.empty() ? "Failed to restore session" : status_msg;
+        send_ipc_message(client_fd, MSG_ERROR_RESP, err, 5000);
+      }
+      break;
+    }
     default: {
       send_ipc_message(client_fd, MSG_ERROR_RESP, "Unknown message type", 500);
       break;
@@ -874,6 +900,84 @@ bool DaemonClient::kill_session(uint64_t id, int signal, int timeout_ms) {
   bool ok = recv_ipc_message(fd, resp_type, resp_payload, timeout_ms);
   ::close(fd);
   return ok && (resp_type == MSG_KILL_SESSION_RESP);
+}
+
+bool DaemonClient::checkpoint_session(uint64_t id, std::string* msg,
+                                      int timeout_ms) {
+  int fd = connect_socket(timeout_ms);
+  if (fd < 0) {
+    if (msg != nullptr) {
+      *msg = "Failed to connect to daemon socket";
+    }
+    return false;
+  }
+  std::string payload = std::to_string(id);
+  if (!send_ipc_message(fd, MSG_CHECKPOINT_SESSION_REQ, payload, timeout_ms)) {
+    ::close(fd);
+    if (msg != nullptr) {
+      *msg = "Failed to send checkpoint request";
+    }
+    return false;
+  }
+  uint16_t resp_type = 0;
+  std::string resp_payload;
+  bool ok = recv_ipc_message(fd, resp_type, resp_payload, timeout_ms);
+  ::close(fd);
+  if (!ok) {
+    if (msg != nullptr) {
+      *msg = "Timeout or error receiving response from daemon";
+    }
+    return false;
+  }
+  if (resp_type == MSG_CHECKPOINT_SESSION_RESP) {
+    if (msg != nullptr) {
+      *msg = resp_payload;
+    }
+    return true;
+  }
+  if (msg != nullptr) {
+    *msg = resp_payload.empty() ? "Failed to checkpoint session" : resp_payload;
+  }
+  return false;
+}
+
+bool DaemonClient::restore_session(uint64_t id, std::string* msg,
+                                   int timeout_ms) {
+  int fd = connect_socket(timeout_ms);
+  if (fd < 0) {
+    if (msg != nullptr) {
+      *msg = "Failed to connect to daemon socket";
+    }
+    return false;
+  }
+  std::string payload = std::to_string(id);
+  if (!send_ipc_message(fd, MSG_RESTORE_SESSION_REQ, payload, timeout_ms)) {
+    ::close(fd);
+    if (msg != nullptr) {
+      *msg = "Failed to send restore request";
+    }
+    return false;
+  }
+  uint16_t resp_type = 0;
+  std::string resp_payload;
+  bool ok = recv_ipc_message(fd, resp_type, resp_payload, timeout_ms);
+  ::close(fd);
+  if (!ok) {
+    if (msg != nullptr) {
+      *msg = "Timeout or error receiving response from daemon";
+    }
+    return false;
+  }
+  if (resp_type == MSG_RESTORE_SESSION_RESP) {
+    if (msg != nullptr) {
+      *msg = resp_payload;
+    }
+    return true;
+  }
+  if (msg != nullptr) {
+    *msg = resp_payload.empty() ? "Failed to restore session" : resp_payload;
+  }
+  return false;
 }
 
 std::string DaemonClient::get_stats(int timeout_ms) {

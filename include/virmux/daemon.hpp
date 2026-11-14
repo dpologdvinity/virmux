@@ -151,6 +151,18 @@ class DaemonClient {
   bool kill_session(uint64_t id, int signal = SIGTERM, int timeout_ms = 1000);
 
   /**
+   * @brief Checkpoint a session by ID.
+   */
+  bool checkpoint_session(uint64_t id, std::string* msg = nullptr,
+                          int timeout_ms = 5000);
+
+  /**
+   * @brief Restore a checkpointed session by ID.
+   */
+  bool restore_session(uint64_t id, std::string* msg = nullptr,
+                       int timeout_ms = 5000);
+
+  /**
    * @brief Query system and memory telemetry JSON stats from daemon.
    */
   std::string get_stats(int timeout_ms = 1000);

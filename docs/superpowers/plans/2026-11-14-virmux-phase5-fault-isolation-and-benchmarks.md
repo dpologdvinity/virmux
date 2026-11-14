@@ -49,7 +49,7 @@
   - Add auto-thaw hook on activity/IPC.
   - Add unit tests in `tests/unit/test_idle_autofreeze.cpp`.
 
-- [ ] **Task 3: Session Checkpoint & Restore Subsystem (`virmux checkpoint` / `restore`)**
+- [x] **Task 3: Session Checkpoint & Restore Subsystem (`virmux checkpoint` / `restore`)**
   - Implement `CheckpointManager` in `include/virmux/checkpoint.hpp` and `src/core/checkpoint.cpp`.
   - Add CLI subcommands `virmux checkpoint <ID>` and `virmux restore <ID>`.
   - Add unit tests in `tests/unit/test_checkpoint.cpp`.

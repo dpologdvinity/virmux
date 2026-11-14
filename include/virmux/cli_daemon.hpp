@@ -69,4 +69,20 @@ int cmd_thaw(int argc, char* const argv[]);
  */
 int cmd_kill(int argc, char* const argv[]);
 
+/**
+ * @brief Executes the `virmux checkpoint` CLI subcommand.
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return 0 on success, non-zero on failure.
+ */
+int cmd_checkpoint(int argc, char* const argv[]);
+
+/**
+ * @brief Executes the `virmux restore` CLI subcommand.
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return 0 on success, non-zero on failure.
+ */
+int cmd_restore(int argc, char* const argv[]);
+
 }  // namespace virmux

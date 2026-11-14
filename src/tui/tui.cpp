@@ -52,6 +52,8 @@ std::string format_state_label(SessionState state) {
       return "WAITING";
     case SessionState::FROZEN:
       return "FROZEN";
+    case SessionState::CHECKPOINTED:
+      return "CHKPT";
     case SessionState::DEAD:
       return "DEAD";
   }
@@ -451,7 +453,8 @@ void VirmuxTui::render_curses(const std::vector<SessionInfo>& sessions,
         if (has_colors()) attron(COLOR_PAIR(2) | A_BOLD);
         mvprintw(y++, 0, "%s", formatted_row.c_str());
         if (has_colors()) attroff(COLOR_PAIR(2) | A_BOLD);
-      } else if (s.state == SessionState::FROZEN) {
+      } else if (s.state == SessionState::FROZEN ||
+                 s.state == SessionState::CHECKPOINTED) {
         if (has_colors()) attron(COLOR_PAIR(3));
         mvprintw(y++, 0, "%s", formatted_row.c_str());
         if (has_colors()) attroff(COLOR_PAIR(3));

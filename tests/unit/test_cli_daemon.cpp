@@ -160,6 +160,16 @@ void test_cmd_help_flags(void) {
   char* kill_args[] = {const_cast<char*>("virmux"), const_cast<char*>("kill"),
                        const_cast<char*>("--help")};
   TEST_ASSERT_EQUAL_INT(0, virmux::cmd_kill(3, kill_args));
+
+  char* chkpt_args[] = {const_cast<char*>("virmux"),
+                        const_cast<char*>("checkpoint"),
+                        const_cast<char*>("--help")};
+  TEST_ASSERT_EQUAL_INT(0, virmux::cmd_checkpoint(3, chkpt_args));
+
+  char* restore_args[] = {const_cast<char*>("virmux"),
+                          const_cast<char*>("restore"),
+                          const_cast<char*>("-h")};
+  TEST_ASSERT_EQUAL_INT(0, virmux::cmd_restore(3, restore_args));
 }
 
 void test_cmd_missing_and_invalid_args(void) {
@@ -176,6 +186,14 @@ void test_cmd_missing_and_invalid_args(void) {
                           const_cast<char*>("kill")};
   TEST_ASSERT_EQUAL_INT(1, virmux::cmd_kill(2, kill_no_args));
 
+  char* chkpt_no_args[] = {const_cast<char*>("virmux"),
+                           const_cast<char*>("checkpoint")};
+  TEST_ASSERT_EQUAL_INT(1, virmux::cmd_checkpoint(2, chkpt_no_args));
+
+  char* restore_no_args[] = {const_cast<char*>("virmux"),
+                            const_cast<char*>("restore")};
+  TEST_ASSERT_EQUAL_INT(1, virmux::cmd_restore(2, restore_no_args));
+
   // Invalid session ID (non-numeric)
   char* freeze_invalid[] = {const_cast<char*>("virmux"),
                             const_cast<char*>("freeze"),
@@ -188,8 +206,19 @@ void test_cmd_missing_and_invalid_args(void) {
   TEST_ASSERT_EQUAL_INT(1, virmux::cmd_thaw(3, thaw_invalid));
 
   char* kill_invalid[] = {const_cast<char*>("virmux"),
-                          const_cast<char*>("kill"), const_cast<char*>("xyz")};
+                          const_cast<char*>("kill"),
+                          const_cast<char*>("non_number")};
   TEST_ASSERT_EQUAL_INT(1, virmux::cmd_kill(3, kill_invalid));
+
+  char* chkpt_invalid[] = {const_cast<char*>("virmux"),
+                           const_cast<char*>("checkpoint"),
+                           const_cast<char*>("abc")};
+  TEST_ASSERT_EQUAL_INT(1, virmux::cmd_checkpoint(3, chkpt_invalid));
+
+  char* restore_invalid[] = {const_cast<char*>("virmux"),
+                             const_cast<char*>("restore"),
+                             const_cast<char*>("xyz")};
+  TEST_ASSERT_EQUAL_INT(1, virmux::cmd_restore(3, restore_invalid));
 
   // Unrecognized options
   char* daemon_unrec[] = {const_cast<char*>("virmux"),

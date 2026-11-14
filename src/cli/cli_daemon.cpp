@@ -84,6 +84,8 @@ std::string format_state_col(SessionState state) {
       return "WAITING";
     case SessionState::FROZEN:
       return "FROZEN";
+    case SessionState::CHECKPOINTED:
+      return "CHKPT";
     case SessionState::DEAD:
       return "DEAD";
   }
@@ -190,6 +192,22 @@ void print_kill_usage(std::ostream& out) {
   out << "Usage:\n"
       << "  virmux kill <SESSION_ID | PID>\n\n"
       << "Terminate a virtualized session and its process tree.\n\n"
+      << "Options:\n"
+      << "  -h, --help   Show this help message\n";
+}
+
+void print_checkpoint_usage(std::ostream& out) {
+  out << "Usage:\n"
+      << "  virmux checkpoint <SESSION_ID | PID>\n\n"
+      << "Checkpoint an active virtualized session.\n\n"
+      << "Options:\n"
+      << "  -h, --help   Show this help message\n";
+}
+
+void print_restore_usage(std::ostream& out) {
+  out << "Usage:\n"
+      << "  virmux restore <SESSION_ID | PID>\n\n"
+      << "Restore a checkpointed session back to running state.\n\n"
       << "Options:\n"
       << "  -h, --help   Show this help message\n";
 }
@@ -585,6 +603,120 @@ int cmd_kill(int argc, char* const argv[]) {
   }
 
   std::cout << "Session " << session_id << " killed successfully.\n";
+  return 0;
+}
+
+int cmd_checkpoint(int argc, char* const argv[]) {
+  int start_idx = parse_subcmd_start(argc, argv, "checkpoint");
+  std::string_view target_arg;
+
+  for (int i = start_idx; i < argc; ++i) {
+    std::string_view arg = argv[i];
+    if (arg == "-h" || arg == "--help") {
+      print_checkpoint_usage(std::cout);
+      return 0;
+    }
+    if (arg.starts_with("-")) {
+      std::cerr << "Error: unrecognized option '" << arg << "'\n";
+      print_checkpoint_usage(std::cerr);
+      return 1;
+    }
+    if (target_arg.empty()) {
+      target_arg = arg;
+    } else {
+      std::cerr << "Error: unexpected extra argument '" << arg << "'\n";
+      print_checkpoint_usage(std::cerr);
+      return 1;
+    }
+  }
+
+  if (target_arg.empty()) {
+    std::cerr << "Error: missing session ID or PID\n";
+    print_checkpoint_usage(std::cerr);
+    return 1;
+  }
+
+  uint64_t val = 0;
+  if (!parse_session_or_pid(target_arg, val)) {
+    std::cerr << "Error: invalid session ID or PID: '" << target_arg << "'\n";
+    return 1;
+  }
+
+  DaemonClient client;
+  if (!client.is_alive(500)) {
+    std::cerr << "Error: supervisor daemon is not running or unreachable\n";
+    return 1;
+  }
+
+  uint64_t session_id = resolve_target_session_id(client, val);
+  std::string status_msg;
+  if (!client.checkpoint_session(session_id, &status_msg)) {
+    std::cerr << "Error: "
+              << (status_msg.empty() ? ("failed to checkpoint session " +
+                                        std::to_string(session_id))
+                                     : status_msg)
+              << "\n";
+    return 1;
+  }
+
+  std::cout << "Session " << session_id << " checkpointed successfully.\n";
+  return 0;
+}
+
+int cmd_restore(int argc, char* const argv[]) {
+  int start_idx = parse_subcmd_start(argc, argv, "restore");
+  std::string_view target_arg;
+
+  for (int i = start_idx; i < argc; ++i) {
+    std::string_view arg = argv[i];
+    if (arg == "-h" || arg == "--help") {
+      print_restore_usage(std::cout);
+      return 0;
+    }
+    if (arg.starts_with("-")) {
+      std::cerr << "Error: unrecognized option '" << arg << "'\n";
+      print_restore_usage(std::cerr);
+      return 1;
+    }
+    if (target_arg.empty()) {
+      target_arg = arg;
+    } else {
+      std::cerr << "Error: unexpected extra argument '" << arg << "'\n";
+      print_restore_usage(std::cerr);
+      return 1;
+    }
+  }
+
+  if (target_arg.empty()) {
+    std::cerr << "Error: missing session ID or PID\n";
+    print_restore_usage(std::cerr);
+    return 1;
+  }
+
+  uint64_t val = 0;
+  if (!parse_session_or_pid(target_arg, val)) {
+    std::cerr << "Error: invalid session ID or PID: '" << target_arg << "'\n";
+    return 1;
+  }
+
+  DaemonClient client;
+  if (!client.is_alive(500)) {
+    std::cerr << "Error: supervisor daemon is not running or unreachable\n";
+    return 1;
+  }
+
+  uint64_t session_id = resolve_target_session_id(client, val);
+  std::string status_msg;
+  if (!client.restore_session(session_id, &status_msg)) {
+    std::cerr << "Error: "
+              << (status_msg.empty() ? ("failed to restore session " +
+                                        std::to_string(session_id))
+                                     : status_msg)
+              << "\n";
+    return 1;
+  }
+
+  std::cout << "Session " << session_id << " restored successfully.\n";
   return 0;
 }
 

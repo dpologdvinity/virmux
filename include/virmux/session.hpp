@@ -6,6 +6,7 @@
 #include <csignal>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -14,6 +15,8 @@
 #include <vector>
 
 namespace virmux {
+
+class CheckpointManager;
 
 /**
  * @brief Lifecycle states for a managed virmux session.
@@ -24,6 +27,7 @@ enum class SessionState {
   RUNNING_NORMAL,
   WAITING_IO,
   FROZEN,
+  CHECKPOINTED,
   DEAD
 };
 
@@ -74,7 +78,8 @@ struct SessionRegistration {
  */
 class SessionRegistry {
  public:
-  explicit SessionRegistry(std::string procfs_root = "/proc");
+  explicit SessionRegistry(std::string procfs_root = "/proc",
+                           std::string checkpoint_dir = "");
   ~SessionRegistry();
 
   SessionRegistry(const SessionRegistry&) = delete;
@@ -180,6 +185,34 @@ class SessionRegistry {
   bool kill_session(uint64_t id, int signal = SIGTERM);
 
   /**
+   * @brief Checkpoint session to disk image or deep freeze pageout.
+   * @param id Session ID.
+   * @param msg Optional output status message.
+   * @return true on success, false on error.
+   */
+  bool checkpoint_session(uint64_t id, std::string* msg = nullptr);
+
+  /**
+   * @brief Restore session from checkpoint back to running state.
+   * @param id Session ID.
+   * @param msg Optional output status message.
+   * @return true on success, false on error.
+   */
+  bool restore_session(uint64_t id, std::string* msg = nullptr);
+
+  /**
+   * @brief Check if session has a checkpoint image on disk.
+   * @param id Session ID.
+   */
+  [[nodiscard]] bool has_checkpoint(uint64_t id) const;
+
+  /**
+   * @brief Access underlying CheckpointManager.
+   */
+  [[nodiscard]] CheckpointManager& checkpoint_manager();
+  [[nodiscard]] const CheckpointManager& checkpoint_manager() const;
+
+  /**
    * @brief Serialize session list to JSON array.
    * @return JSON string.
    */
@@ -201,6 +234,7 @@ class SessionRegistry {
   bool auto_freeze_enabled_{false};
   uint64_t idle_timeout_ms_{500};
   std::function<void(uint64_t id, pid_t pid)> on_auto_freeze_;
+  std::unique_ptr<CheckpointManager> checkpoint_mgr_;
 };
 
 }  // namespace virmux

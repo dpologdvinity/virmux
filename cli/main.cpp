@@ -44,6 +44,8 @@ void print_general_usage(std::ostream& out) {
       << "  freeze <SESSION_ID | PID>       Freeze an active session\n"
       << "  thaw <SESSION_ID | PID>         Thaw a frozen session\n"
       << "  kill <SESSION_ID | PID>         Terminate a session process tree\n"
+      << "  checkpoint <SESSION_ID | PID>   Checkpoint an active session\n"
+      << "  restore <SESSION_ID | PID>      Restore a checkpointed session\n"
       << "  stats [OPTIONS]                 Display host memory, KSM, and zram "
          "telemetry\n"
       << "  pack [PID ... | --all]          Proactively compact anonymous "
@@ -413,6 +415,14 @@ int main(int argc, char* argv[]) {
       char* help_argv[] = {argv[0], const_cast<char*>("kill"),
                            const_cast<char*>("--help")};
       return virmux::cmd_kill(3, help_argv);
+    } else if (argc > 2 && std::string_view(argv[2]) == "checkpoint") {
+      char* help_argv[] = {argv[0], const_cast<char*>("checkpoint"),
+                           const_cast<char*>("--help")};
+      return virmux::cmd_checkpoint(3, help_argv);
+    } else if (argc > 2 && std::string_view(argv[2]) == "restore") {
+      char* help_argv[] = {argv[0], const_cast<char*>("restore"),
+                           const_cast<char*>("--help")};
+      return virmux::cmd_restore(3, help_argv);
     } else {
       print_general_usage(std::cout);
     }
@@ -457,6 +467,14 @@ int main(int argc, char* argv[]) {
 
   if (first_arg == "kill") {
     return virmux::cmd_kill(argc, argv);
+  }
+
+  if (first_arg == "checkpoint") {
+    return virmux::cmd_checkpoint(argc, argv);
+  }
+
+  if (first_arg == "restore") {
+    return virmux::cmd_restore(argc, argv);
   }
 
   std::cerr << "Error: unrecognized command '" << first_arg << "'\n";

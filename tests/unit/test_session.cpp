@@ -311,6 +311,9 @@ void test_session_state_strings(void) {
       "FROZEN",
       virmux::session_state_to_string(virmux::SessionState::FROZEN).data());
   TEST_ASSERT_EQUAL_STRING(
+      "CHECKPOINTED",
+      virmux::session_state_to_string(virmux::SessionState::CHECKPOINTED).data());
+  TEST_ASSERT_EQUAL_STRING(
       "DEAD",
       virmux::session_state_to_string(virmux::SessionState::DEAD).data());
 
@@ -324,6 +327,8 @@ void test_session_state_strings(void) {
                     virmux::session_state_from_string("WAITING_IO"));
   TEST_ASSERT_EQUAL(virmux::SessionState::FROZEN,
                     virmux::session_state_from_string("FROZEN"));
+  TEST_ASSERT_EQUAL(virmux::SessionState::CHECKPOINTED,
+                    virmux::session_state_from_string("CHECKPOINTED"));
   TEST_ASSERT_EQUAL(virmux::SessionState::DEAD,
                     virmux::session_state_from_string("DEAD"));
 }

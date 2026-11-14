@@ -22,6 +22,7 @@ virmux_core_lib = static_library(
     'src/core/cgroup.cpp',
     'src/sched/gate.cpp',
     'src/core/sandbox.cpp',
+    'src/core/checkpoint.cpp',
     'src/memory/cleanse.cpp',
     'src/memory/ksm.cpp',
     'src/memory/compactor.cpp',
@@ -304,6 +305,14 @@ test_idle_autofreeze_exe = executable(
 
 test('test_idle_autofreeze', test_idle_autofreeze_exe)
 
+test_checkpoint_exe = executable(
+  'test_checkpoint',
+  'tests/unit/test_checkpoint.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_checkpoint', test_checkpoint_exe)
+
 virmux_exe = executable(
   'virmux',
   'cli/main.cpp',
@@ -352,6 +361,18 @@ test(
   'test_cli_cas_help',
   virmux_exe,
   args: ['cas', '--help'],
+)
+
+test(
+  'test_cli_checkpoint_help',
+  virmux_exe,
+  args: ['checkpoint', '--help'],
+)
+
+test(
+  'test_cli_restore_help',
+  virmux_exe,
+  args: ['restore', '--help'],
 )
 
 test(
