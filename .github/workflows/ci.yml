@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build & Test (${{ matrix.compiler.cc }} / ${{ matrix.buildtype }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - cc: gcc
+            cxx: g++
+          - cc: clang
+            cxx: clang++
+        buildtype: [debug, release]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            meson \
+            ninja-build \
+            ccache \
+            python3 \
+            util-linux
+
+      - name: System diagnostic check
+        run: bash scripts/doctor.sh
+
+      - name: Configure Meson build
+        env:
+          CC: ${{ matrix.compiler.cc }}
+          CXX: ${{ matrix.compiler.cxx }}
+        run: |
+          meson setup build \
+            --buildtype=${{ matrix.buildtype }} \
+            -Dwarning_level=3 \
+            -Dwerror=false
+
+      - name: Compile targets
+        run: ninja -C build
+
+      - name: Run test suite
+        run: meson test -C build --verbose --print-errorlogs
+
+      - name: Upload build artifacts
+        if: matrix.buildtype == 'release' && matrix.compiler.cc == 'gcc'
+        uses: actions/upload-artifact@v4
+        with:
+          name: virmux-binaries
+          path: |
+            build/virmux
+            build/libvirmux_intercept.so
+          retention-days: 7
+
+  sanitizer:
+    name: Address & Undefined Sanitizer (ASan/UBSan)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            meson \
+            ninja-build \
+            python3
+
+      - name: Configure Meson with ASan / UBSan
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          meson setup build-asan \
+            -Db_sanitize=address,undefined \
+            -Dwarning_level=3
+
+      - name: Compile with Sanitizers
+        run: ninja -C build-asan
+
+      - name: Run Unit Tests with Sanitizers
+        run: meson test -C build-asan --verbose --print-errorlogs --exclude-suite integration

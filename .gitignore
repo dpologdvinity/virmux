@@ -4,12 +4,25 @@ bin/
 *.o
 *.a
 *.so
+*.out
+
+# Node.js / Markdownlint
+node_modules/
+npm-debug.log*
 
 # System & Tooling
 .superpowers/
 .cache/
+.agents/
+.claude/
 compile_commands.json
 .clangd/
+vgcore.*
+/core
+core.*
+*.swp
+*.swo
+*~
 
 # Secrets & Environment
 .env

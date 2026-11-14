@@ -1,0 +1,11 @@
+{
+  // Use default rules as a baseline
+  "default": true,
+  // Disable line-length limits (helpful for long URLs and prose)
+  "MD013": false,
+  // Allow inline HTML tags like <details> or <br>
+  "MD033": false,
+  // Enforce dash (-) for unordered lists
+  "MD004": { "style": "dash" }
+}
+
