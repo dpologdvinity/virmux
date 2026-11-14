@@ -131,10 +131,9 @@ void ScratchWorkspace::populate_env(std::vector<std::string>& env_vars) const {
   for (const auto& [prefix, full] : vars) {
     bool found = false;
     for (auto& var : env_vars) {
-      if (var.rfind(prefix, 0) == 0) {
+      if (var.starts_with(prefix)) {
         var = full;
         found = true;
-        break;
       }
     }
     if (!found) {
