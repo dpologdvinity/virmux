@@ -16,7 +16,7 @@ threads_dep = dependency('threads')
 
 virmux_core_lib = static_library(
   'virmux_core',
-  ['src/core/version.cpp', 'src/core/cgroup.cpp', 'src/sched/gate.cpp'],
+  ['src/core/version.cpp', 'src/core/cgroup.cpp', 'src/sched/gate.cpp', 'src/core/sandbox.cpp'],
   include_directories: inc,
   dependencies: [threads_dep],
   install: false,
@@ -111,4 +111,16 @@ test_gate_exe = executable(
 )
 
 test('test_gate', test_gate_exe)
+
+test_sandbox_exe = executable(
+  'test_sandbox',
+  'tests/unit/test_sandbox.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test(
+  'test_sandbox',
+  test_sandbox_exe,
+  depends: [virmux_intercept_lib],
+)
 
