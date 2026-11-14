@@ -26,6 +26,7 @@
 #include <string>
 
 #include "virmux/cgroup.hpp"
+#include "virmux/daemon.hpp"
 #include "virmux/gate.hpp"
 #include "virmux/intercept.h"
 #include "virmux/overlay.hpp"
@@ -360,6 +361,27 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
     slice.attach_pid(pid);
   }
 
+  // Check if supervisor daemon is active and register session
+  std::string cmd_str;
+  for (int i = 0; argv[i] != nullptr; ++i) {
+    if (i > 0) {
+      cmd_str += ' ';
+    }
+    cmd_str += argv[i];
+  }
+
+  DaemonClient client;
+  uint64_t session_id = 0;
+  SessionRegistration reg{
+      .name = "",
+      .pid = pid,
+      .virtual_cores = cfg.virtual_cores,
+      .memory_limit_bytes = cfg.memory_limit_bytes,
+      .cgroup_path = slice.valid() ? slice.path() : "",
+      .command = cmd_str,
+  };
+  session_id = client.register_session(reg, 200);
+
   int status = 0;
   while (::waitpid(pid, &status, 0) < 0) {
     if (errno == EINTR) {
@@ -367,6 +389,10 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
     }
     status = -1;
     break;
+  }
+
+  if (session_id > 0) {
+    client.unregister_session(session_id, 200);
   }
 
   // Cleanup scratch space and ephemeral overlay workspace

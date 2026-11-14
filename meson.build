@@ -13,6 +13,7 @@ inc = include_directories('include')
 tests_inc = include_directories('tests', 'tests/unity')
 
 threads_dep = dependency('threads')
+ncurses_dep = dependency('ncursesw', required: true)
 
 virmux_core_lib = static_library(
   'virmux_core',
@@ -28,20 +29,25 @@ virmux_core_lib = static_library(
     'src/memory/memory_manager.cpp',
     'src/cli/cli_stats.cpp',
     'src/cli/cli_cas.cpp',
+    'src/cli/cli_daemon.cpp',
     'src/storage/sha256.cpp',
     'src/storage/cas.cpp',
     'src/storage/scratch.cpp',
     'src/storage/overlay.cpp',
+    'src/ipc/ipc.cpp',
+    'src/daemon/session.cpp',
+    'src/daemon/daemon.cpp',
+    'src/tui/tui.cpp',
   ],
   include_directories: inc,
-  dependencies: [threads_dep],
+  dependencies: [threads_dep, ncurses_dep],
   install: false,
 )
 
 virmux_core_dep = declare_dependency(
   include_directories: inc,
   link_with: virmux_core_lib,
-  dependencies: [threads_dep],
+  dependencies: [threads_dep, ncurses_dep],
 )
 
 unity_lib = static_library(
@@ -242,6 +248,46 @@ test_sandbox_overlay_exe = executable(
 
 test('test_sandbox_overlay', test_sandbox_overlay_exe)
 
+test_ipc_exe = executable(
+  'test_ipc',
+  'tests/unit/test_ipc.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_ipc', test_ipc_exe)
+
+test_session_exe = executable(
+  'test_session',
+  'tests/unit/test_session.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_session', test_session_exe)
+
+test_daemon_exe = executable(
+  'test_daemon',
+  'tests/unit/test_daemon.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_daemon', test_daemon_exe)
+
+test_cli_daemon_exe = executable(
+  'test_cli_daemon',
+  'tests/unit/test_cli_daemon.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_cli_daemon', test_cli_daemon_exe)
+
+test_tui_exe = executable(
+  'test_tui',
+  'tests/unit/test_tui.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_tui', test_tui_exe)
+
 virmux_exe = executable(
   'virmux',
   'cli/main.cpp',
@@ -325,5 +371,14 @@ test(
   timeout: 120,
 )
 
-
+test(
+  'integration_daemon_tui',
+  find_program('bash'),
+  args: [
+    meson.current_source_dir() / 'tests/integration/test_daemon_tui.sh',
+    meson.current_build_dir(),
+  ],
+  depends: [virmux_exe, virmux_intercept_lib],
+  timeout: 120,
+)
 
