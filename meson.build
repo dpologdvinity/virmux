@@ -132,4 +132,36 @@ test_cleanse_exe = executable(
 
 test('test_cleanse', test_cleanse_exe)
 
+virmux_exe = executable(
+  'virmux',
+  'cli/main.cpp',
+  dependencies: [virmux_core_dep],
+  install: true,
+)
+
+test(
+  'test_cli_smoke',
+  virmux_exe,
+  args: ['run', '--cores', '3', '--', '/bin/sh', '-c', 'echo "hello from virmux"'],
+  depends: [virmux_intercept_lib],
+)
+
+test(
+  'test_cli_version',
+  virmux_exe,
+  args: ['--version'],
+)
+
+test(
+  'test_cli_help',
+  virmux_exe,
+  args: ['--help'],
+)
+
+test(
+  'test_cli_run_help',
+  virmux_exe,
+  args: ['run', '--help'],
+)
+
 
