@@ -60,6 +60,10 @@ void test_ipc_header_size_and_endianness(void) {
  * @brief Test 2: Verify socket path resolution with env override, user runtime dir, and /tmp fallback.
  */
 void test_resolve_socket_path(void) {
+  const char* orig_env = std::getenv("VIRMUX_SOCKET");
+  std::string saved_env = (orig_env != nullptr) ? orig_env : "";
+  bool had_env = (orig_env != nullptr);
+
   // Test environment variable override
   const std::string custom_socket = "/tmp/virmux_custom_override.sock";
   ::setenv("VIRMUX_SOCKET", custom_socket.c_str(), 1);
@@ -80,6 +84,13 @@ void test_resolve_socket_path(void) {
   }
 
   TEST_ASSERT_EQUAL_STRING(expected.c_str(), virmux::resolve_socket_path().c_str());
+
+  // Restore original environment
+  if (had_env) {
+    ::setenv("VIRMUX_SOCKET", saved_env.c_str(), 1);
+  } else {
+    ::unsetenv("VIRMUX_SOCKET");
+  }
 }
 
 /**
@@ -257,6 +268,52 @@ void test_ipc_socket_disconnect_and_invalid_fd(void) {
   TEST_ASSERT_FALSE(virmux::send_ipc_message(-1, virmux::MSG_PING, "", 100));
 }
 
+/**
+ * @brief Verify fragmented stream reassembly across partial read boundaries.
+ */
+void test_ipc_fragmented_stream_reassembly(void) {
+  int fds[2];
+  TEST_ASSERT_EQUAL_INT(0, ::socketpair(AF_UNIX, SOCK_STREAM, 0, fds));
+  virmux::ScopedFd fd0(fds[0]);
+  virmux::ScopedFd fd1(fds[1]);
+
+  std::string test_payload = "fragmented_stream_test_payload_1234567890_abcdefghij";
+  virmux::IpcHeader hdr{};
+  hdr.magic = virmux::IPC_MAGIC;
+  hdr.version = virmux::IPC_VERSION;
+  hdr.msg_type = virmux::MSG_LIST_SESSIONS_RESP;
+  hdr.payload_len = static_cast<uint32_t>(test_payload.size());
+
+  // Write header in small 3-byte chunks
+  const uint8_t* hdr_bytes = reinterpret_cast<const uint8_t*>(&hdr);
+  size_t hdr_sent = 0;
+  while (hdr_sent < sizeof(hdr)) {
+    size_t chunk = std::min<size_t>(3, sizeof(hdr) - hdr_sent);
+    ssize_t n = ::write(fd0.get(), hdr_bytes + hdr_sent, chunk);
+    TEST_ASSERT_EQUAL_INT(chunk, n);
+    hdr_sent += chunk;
+  }
+
+  // Write payload in 7-byte chunks
+  const uint8_t* payload_bytes =
+      reinterpret_cast<const uint8_t*>(test_payload.data());
+  size_t payload_sent = 0;
+  while (payload_sent < test_payload.size()) {
+    size_t chunk = std::min<size_t>(7, test_payload.size() - payload_sent);
+    ssize_t n = ::write(fd0.get(), payload_bytes + payload_sent, chunk);
+    TEST_ASSERT_EQUAL_INT(chunk, n);
+    payload_sent += chunk;
+  }
+
+  // Recv should correctly reassemble entire packet
+  uint16_t msg_type = 0;
+  std::string out_payload;
+  bool recvd = virmux::recv_ipc_message(fd1.get(), msg_type, out_payload, 1000);
+  TEST_ASSERT_TRUE(recvd);
+  TEST_ASSERT_EQUAL_HEX16(virmux::MSG_LIST_SESSIONS_RESP, msg_type);
+  TEST_ASSERT_EQUAL_STRING(test_payload.c_str(), out_payload.c_str());
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_ipc_header_size_and_endianness);
@@ -267,5 +324,6 @@ int main(void) {
   RUN_TEST(test_ipc_oversized_payload_rejected);
   RUN_TEST(test_ipc_invalid_version_rejected);
   RUN_TEST(test_ipc_socket_disconnect_and_invalid_fd);
+  RUN_TEST(test_ipc_fragmented_stream_reassembly);
   return UNITY_END();
 }

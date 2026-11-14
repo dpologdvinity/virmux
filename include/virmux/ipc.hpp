@@ -25,10 +25,11 @@ inline constexpr uint32_t IPC_MAX_PAYLOAD = 16 * 1024 * 1024;
  * @brief Packed binary TLV header for all IPC messages.
  *
  * Exactly 12 bytes: magic (4), version (2), msg_type (2), payload_len (4).
+ * Serialized in host native byte order for zero-copy performance over local AF_UNIX sockets.
  */
 #pragma pack(push, 1)
 struct IpcHeader {
-  uint32_t magic;       ///< 0x564D5558 ('V', 'M', 'U', 'X')
+  uint32_t magic;       ///< 0x564D5558 ('V', 'M', 'U', 'X') in host byte order
   uint16_t version;     ///< IPC protocol version (1)
   uint16_t msg_type;    ///< Message type identifier (see IpcMsgType)
   uint32_t payload_len; ///< Byte length of payload immediately following header
