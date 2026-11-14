@@ -402,8 +402,9 @@ bool SupervisorDaemon::init() {
   }
   std::strncpy(addr.sun_path, socket_path_.c_str(), sizeof(addr.sun_path) - 1);
 
-  // Stale socket detection: attempt connect
-  int test_fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  // Stale socket detection: attempt connect with non-blocking probe
+  int test_fd =
+      ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
   if (test_fd >= 0) {
     if (::connect(test_fd, reinterpret_cast<struct sockaddr*>(&addr),
                   sizeof(addr)) == 0) {
@@ -421,15 +422,18 @@ bool SupervisorDaemon::init() {
     return false;
   }
 
-  if (::bind(server_fd_, reinterpret_cast<struct sockaddr*>(&addr),
-             sizeof(addr)) < 0) {
+  mode_t old_umask = ::umask(0077);
+  int bind_res = ::bind(server_fd_, reinterpret_cast<struct sockaddr*>(&addr),
+                        sizeof(addr));
+  ::umask(old_umask);
+
+  if (bind_res < 0) {
     ::close(server_fd_);
     server_fd_ = -1;
     return false;
   }
 
   // Socket permissions: 0700
-  ::fchmod(server_fd_, 0700);
   ::chmod(socket_path_.c_str(), 0700);
 
   if (::listen(server_fd_, 128) < 0) {
@@ -443,6 +447,10 @@ bool SupervisorDaemon::init() {
 }
 
 void SupervisorDaemon::run() {
+  if (stop_requested_.load()) {
+    return;
+  }
+
   if (server_fd_ < 0) {
     if (!init()) {
       return;
@@ -450,7 +458,6 @@ void SupervisorDaemon::run() {
   }
 
   running_.store(true);
-  stop_requested_.store(false);
 
   std::vector<int> client_fds;
   auto last_telemetry = std::chrono::steady_clock::now();

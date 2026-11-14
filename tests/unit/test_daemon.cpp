@@ -8,6 +8,7 @@ extern "C" {
 }
 
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
@@ -65,6 +66,11 @@ void test_daemon_init_and_stale_socket_cleanup(void) {
   virmux::SupervisorDaemon daemon(config);
   TEST_ASSERT_TRUE(daemon.init());
   TEST_ASSERT_TRUE(std::filesystem::exists(sock_path));
+
+  // Verify socket permissions are 0700
+  struct stat st;
+  TEST_ASSERT_EQUAL_INT(0, ::stat(sock_path.c_str(), &st));
+  TEST_ASSERT_EQUAL_HEX(0700, st.st_mode & 0777);
 
   // Verify that new daemon is listening (connect succeeds)
   int test_fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
