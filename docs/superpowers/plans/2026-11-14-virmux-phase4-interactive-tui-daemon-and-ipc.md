@@ -298,11 +298,11 @@
   - Verifies daemon shutdown on SIGTERM and socket unlinking.
 - Register `integration_daemon_tui` test in `meson.build` with `timeout: 120`.
 
-- [ ] **Step 1: Write `tests/integration/test_daemon_tui.sh`**
-- [ ] **Step 2: Register in `meson.build`**
-- [ ] **Step 3: Run full test suite (`ninja -C build test`)**
+- [x] **Step 1: Write `tests/integration/test_daemon_tui.sh`**
+- [x] **Step 2: Register in `meson.build`**
+- [x] **Step 3: Run full test suite (`ninja -C build test`)**
   - All unit and integration tests must pass.
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
   - `git commit -m "test(integration): add supervisor daemon and TUI lifecycle integration suite"`
 
 ---
