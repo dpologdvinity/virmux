@@ -9,7 +9,7 @@ bin/
 .superpowers/
 .cache/
 compile_commands.json
-.clangd/
+.clangd*
 
 # Secrets & Environment
 .env

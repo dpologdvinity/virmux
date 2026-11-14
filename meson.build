@@ -14,7 +14,7 @@ tests_inc = include_directories('tests', 'tests/unity')
 
 virmux_core_lib = static_library(
   'virmux_core',
-  'src/core/version.cpp',
+  ['src/core/version.cpp', 'src/core/cgroup.cpp'],
   include_directories: inc,
   install: false,
 )
@@ -91,4 +91,12 @@ test(
   env: ['LD_PRELOAD=' + virmux_intercept_lib.full_path()],
   depends: [virmux_intercept_lib],
 )
+
+test_cgroup_exe = executable(
+  'test_cgroup',
+  'tests/unit/test_cgroup.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_cgroup', test_cgroup_exe)
 
