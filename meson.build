@@ -296,6 +296,14 @@ test_fault_isolation_exe = executable(
 
 test('test_fault_isolation', test_fault_isolation_exe)
 
+test_idle_autofreeze_exe = executable(
+  'test_idle_autofreeze',
+  'tests/unit/test_idle_autofreeze.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_idle_autofreeze', test_idle_autofreeze_exe)
+
 virmux_exe = executable(
   'virmux',
   'cli/main.cpp',

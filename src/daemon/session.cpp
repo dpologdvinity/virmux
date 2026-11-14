@@ -198,6 +198,8 @@ uint64_t SessionRegistry::register_session(const SessionRegistration& req) {
   info.cgroup_path = collapse_home_path(req.cgroup_path);
   info.command = collapse_home_path(req.command);
   info.start_time = std::chrono::system_clock::now();
+  info.last_cpu_ticks = 0;
+  info.last_active_time = std::chrono::steady_clock::now();
 
   sessions_.push_back(info);
   return info.id;
@@ -241,185 +243,312 @@ std::vector<SessionInfo> SessionRegistry::list_sessions() const {
   return sessions_;
 }
 
-void SessionRegistry::refresh_telemetry() {
+void SessionRegistry::set_auto_freeze(bool enabled, uint64_t idle_timeout_ms) {
   std::lock_guard<std::mutex> lock(mutex_);
+  auto_freeze_enabled_ = enabled;
+  idle_timeout_ms_ = idle_timeout_ms;
+}
 
-  long page_sz = ::sysconf(_SC_PAGESIZE);
-  if (page_sz <= 0) {
-    page_sz = 4096;
-  }
+bool SessionRegistry::auto_freeze_enabled() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return auto_freeze_enabled_;
+}
 
-  for (auto& s : sessions_) {
-    if (s.pid <= 0) {
-      s.state = SessionState::DEAD;
-      s.memory_rss_bytes = 0;
-      s.ksm_dedup_bytes = 0;
-      if (dead_since_.find(s.id) == dead_since_.end()) {
-        dead_since_[s.id] = std::chrono::steady_clock::now();
-      }
-      continue;
+uint64_t SessionRegistry::idle_timeout_ms() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return idle_timeout_ms_;
+}
+
+void SessionRegistry::set_on_auto_freeze(
+    std::function<void(uint64_t id, pid_t pid)> cb) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  on_auto_freeze_ = std::move(cb);
+}
+
+void SessionRegistry::refresh_telemetry() {
+  std::vector<std::pair<uint64_t, pid_t>> newly_frozen;
+  std::function<void(uint64_t, pid_t)> freeze_cb;
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    freeze_cb = on_auto_freeze_;
+    auto now_steady = std::chrono::steady_clock::now();
+
+    long page_sz = ::sysconf(_SC_PAGESIZE);
+    if (page_sz <= 0) {
+      page_sz = 4096;
     }
 
-    // 1. Process liveness check
-    if (procfs_root_ == "/proc") {
-      int kill_res = ::kill(s.pid, 0);
-      if (kill_res != 0 && errno == ESRCH) {
+    for (auto& s : sessions_) {
+      if (s.pid <= 0) {
         s.state = SessionState::DEAD;
         s.memory_rss_bytes = 0;
         s.ksm_dedup_bytes = 0;
         if (dead_since_.find(s.id) == dead_since_.end()) {
-          dead_since_[s.id] = std::chrono::steady_clock::now();
+          dead_since_[s.id] = now_steady;
         }
         continue;
       }
-    }
 
-    const std::filesystem::path proc_pid =
-        std::filesystem::path(procfs_root_) / std::to_string(s.pid);
-
-    // 2. Check proc status for zombie or stopped states and fallback RSS
-    bool is_zombie = false;
-    bool is_stopped = false;
-    uint64_t vmrss_bytes = 0;
-
-    const std::filesystem::path status_path = proc_pid / "status";
-    std::ifstream status_file(status_path);
-    if (status_file.is_open()) {
-      std::string line;
-      while (std::getline(status_file, line)) {
-        if (line.starts_with("State:")) {
-          size_t idx = 6;
-          while (idx < line.size() &&
-                 std::isspace(static_cast<unsigned char>(line[idx]))) {
-            idx++;
+      // 1. Process liveness check
+      if (procfs_root_ == "/proc") {
+        int kill_res = ::kill(s.pid, 0);
+        if (kill_res != 0 && errno == ESRCH) {
+          s.state = SessionState::DEAD;
+          s.memory_rss_bytes = 0;
+          s.ksm_dedup_bytes = 0;
+          if (dead_since_.find(s.id) == dead_since_.end()) {
+            dead_since_[s.id] = now_steady;
           }
-          if (idx < line.size()) {
-            char st = line[idx];
-            if (st == 'Z') {
-              is_zombie = true;
-            } else if (st == 'T') {
-              is_stopped = true;
-            }
-          }
-        } else if (line.starts_with("VmRSS:")) {
-          auto colon = line.find(':');
-          if (colon != std::string::npos) {
-            uint64_t val_kb = 0;
-            std::stringstream ss(line.substr(colon + 1));
-            if (ss >> val_kb) {
-              vmrss_bytes = val_kb * 1024ULL;
-            }
-          }
+          continue;
         }
       }
-    }
 
-    if (is_zombie) {
-      s.state = SessionState::DEAD;
-      s.memory_rss_bytes = 0;
-      s.ksm_dedup_bytes = 0;
-      if (dead_since_.find(s.id) == dead_since_.end()) {
-        dead_since_[s.id] = std::chrono::steady_clock::now();
-      }
-      continue;
-    }
+      const std::filesystem::path proc_pid =
+          std::filesystem::path(procfs_root_) / std::to_string(s.pid);
 
-    // 3. Read RSS from statm
-    bool got_rss = false;
-    const std::filesystem::path statm_path = proc_pid / "statm";
-    std::ifstream statm(statm_path);
-    if (statm.is_open()) {
-      uint64_t total_pages = 0;
-      uint64_t rss_pages = 0;
-      if (statm >> total_pages >> rss_pages) {
-        s.memory_rss_bytes = rss_pages * static_cast<uint64_t>(page_sz);
-        got_rss = true;
-      }
-    }
+      // 2. Check proc status for zombie or stopped states and fallback RSS
+      bool is_zombie = false;
+      bool is_stopped = false;
+      bool status_opened = false;
+      uint64_t vmrss_bytes = 0;
 
-    if (!got_rss && vmrss_bytes > 0) {
-      s.memory_rss_bytes = vmrss_bytes;
-      got_rss = true;
-    }
-
-    // 4. Read KSM dedup
-    s.ksm_dedup_bytes = 0;
-    const std::filesystem::path ksm_pages_path = proc_pid / "ksm_merging_pages";
-    std::ifstream ksm_file(ksm_pages_path);
-    if (ksm_file.is_open()) {
-      uint64_t ksm_pages = 0;
-      if (ksm_file >> ksm_pages) {
-        s.ksm_dedup_bytes = ksm_pages * static_cast<uint64_t>(page_sz);
-      }
-    } else {
-      const std::filesystem::path smaps_path = proc_pid / "smaps_rollup";
-      std::ifstream smaps_file(smaps_path);
-      if (smaps_file.is_open()) {
+      const std::filesystem::path status_path = proc_pid / "status";
+      std::ifstream status_file(status_path);
+      if (status_file.is_open()) {
+        status_opened = true;
         std::string line;
-        while (std::getline(smaps_file, line)) {
-          if (line.starts_with("KSM:")) {
-            auto colon = line.find(':');
-            if (colon != std::string::npos) {
-              uint64_t kb = 0;
-              std::stringstream ss(line.substr(colon + 1));
-              if (ss >> kb) {
-                s.ksm_dedup_bytes = kb * 1024ULL;
+        while (std::getline(status_file, line)) {
+          if (line.starts_with("State:")) {
+            size_t idx = 6;
+            while (idx < line.size() &&
+                   std::isspace(static_cast<unsigned char>(line[idx]))) {
+              idx++;
+            }
+            if (idx < line.size()) {
+              char st = line[idx];
+              if (st == 'Z') {
+                is_zombie = true;
+              } else if (st == 'T') {
+                is_stopped = true;
               }
             }
-            break;
+          } else if (line.starts_with("VmRSS:")) {
+            auto colon = line.find(':');
+            if (colon != std::string::npos) {
+              uint64_t val_kb = 0;
+              std::stringstream ss(line.substr(colon + 1));
+              if (ss >> val_kb) {
+                vmrss_bytes = val_kb * 1024ULL;
+              }
+            }
+          }
+        }
+      }
+
+      if (is_zombie) {
+        s.state = SessionState::DEAD;
+        s.memory_rss_bytes = 0;
+        s.ksm_dedup_bytes = 0;
+        if (dead_since_.find(s.id) == dead_since_.end()) {
+          dead_since_[s.id] = now_steady;
+        }
+        continue;
+      }
+
+      // 3. Read RSS from statm
+      bool got_rss = false;
+      const std::filesystem::path statm_path = proc_pid / "statm";
+      std::ifstream statm(statm_path);
+      if (statm.is_open()) {
+        uint64_t total_pages = 0;
+        uint64_t rss_pages = 0;
+        if (statm >> total_pages >> rss_pages) {
+          s.memory_rss_bytes = rss_pages * static_cast<uint64_t>(page_sz);
+          got_rss = true;
+        }
+      }
+
+      if (!got_rss && vmrss_bytes > 0) {
+        s.memory_rss_bytes = vmrss_bytes;
+        got_rss = true;
+      }
+
+      // 4. Read KSM dedup
+      s.ksm_dedup_bytes = 0;
+      const std::filesystem::path ksm_pages_path = proc_pid / "ksm_merging_pages";
+      std::ifstream ksm_file(ksm_pages_path);
+      if (ksm_file.is_open()) {
+        uint64_t ksm_pages = 0;
+        if (ksm_file >> ksm_pages) {
+          s.ksm_dedup_bytes = ksm_pages * static_cast<uint64_t>(page_sz);
+        }
+      } else {
+        const std::filesystem::path smaps_path = proc_pid / "smaps_rollup";
+        std::ifstream smaps_file(smaps_path);
+        if (smaps_file.is_open()) {
+          std::string line;
+          while (std::getline(smaps_file, line)) {
+            if (line.starts_with("KSM:")) {
+              auto colon = line.find(':');
+              if (colon != std::string::npos) {
+                uint64_t kb = 0;
+                std::stringstream ss(line.substr(colon + 1));
+                if (ss >> kb) {
+                  s.ksm_dedup_bytes = kb * 1024ULL;
+                }
+              }
+              break;
+            }
+          }
+        }
+      }
+
+      // 5. Update freeze state from external signals / cgroup
+      if (s.state != SessionState::DEAD) {
+        bool is_frozen = is_stopped;
+        bool cgroup_freeze_opened = false;
+        if (!s.cgroup_path.empty()) {
+          const std::filesystem::path freeze_file =
+              std::filesystem::path(s.cgroup_path) / "cgroup.freeze";
+          std::ifstream ff(freeze_file);
+          if (ff.is_open()) {
+            cgroup_freeze_opened = true;
+            int val = 0;
+            if (ff >> val && val == 1) {
+              is_frozen = true;
+            }
+          }
+        }
+
+        if (is_frozen) {
+          s.state = SessionState::FROZEN;
+        } else if (s.state == SessionState::FROZEN &&
+                   (status_opened || cgroup_freeze_opened)) {
+          s.state = SessionState::RUNNING_NORMAL;
+          s.last_active_time = now_steady;
+        }
+      }
+
+      // 6. CPU ticks & Inactivity tracking for auto-freeze
+      if (s.state != SessionState::DEAD) {
+        const std::filesystem::path stat_path = proc_pid / "stat";
+        std::ifstream stat_file(stat_path);
+        if (stat_file.is_open()) {
+          std::string stat_content;
+          if (std::getline(stat_file, stat_content)) {
+            auto paren = stat_content.rfind(')');
+            if (paren != std::string::npos && paren + 1 < stat_content.size()) {
+              std::string_view rest(stat_content.data() + paren + 1,
+                                     stat_content.size() - (paren + 1));
+              uint64_t utime = 0;
+              uint64_t stime = 0;
+              size_t token_idx = 0;
+              size_t i = 0;
+              while (i < rest.size()) {
+                while (i < rest.size() && (rest[i] == ' ' || rest[i] == '\t')) {
+                  i++;
+                }
+                if (i >= rest.size()) break;
+                size_t tok_start = i;
+                while (i < rest.size() && rest[i] != ' ' && rest[i] != '\t') {
+                  i++;
+                }
+                if (token_idx == 11) {
+                  std::from_chars(rest.data() + tok_start, rest.data() + i,
+                                  utime);
+                } else if (token_idx == 12) {
+                  std::from_chars(rest.data() + tok_start, rest.data() + i,
+                                  stime);
+                  break;
+                }
+                token_idx++;
+              }
+
+              uint64_t total_ticks = utime + stime;
+              if (total_ticks > s.last_cpu_ticks) {
+                s.last_cpu_ticks = total_ticks;
+                s.last_active_time = now_steady;
+                if (s.state == SessionState::FROZEN) {
+                  s.state = SessionState::RUNNING_NORMAL;
+                }
+              } else if (total_ticks == s.last_cpu_ticks &&
+                         auto_freeze_enabled_) {
+                if (s.state == SessionState::RUNNING_NORMAL ||
+                    s.state == SessionState::WAITING_IO) {
+                  auto elapsed_ms =
+                      std::chrono::duration_cast<std::chrono::milliseconds>(
+                          now_steady - s.last_active_time)
+                          .count();
+                  if (elapsed_ms >= static_cast<int64_t>(idle_timeout_ms_)) {
+                    bool frozen = false;
+                    if (!s.cgroup_path.empty()) {
+                      const std::filesystem::path freeze_file =
+                          std::filesystem::path(s.cgroup_path) / "cgroup.freeze";
+                      std::error_code ec;
+                      if (std::filesystem::exists(freeze_file, ec)) {
+                        std::ofstream ofs(freeze_file);
+                        if (ofs.is_open()) {
+                          ofs << "1\n";
+                          ofs.flush();
+                          if (!ofs.fail()) {
+                            frozen = true;
+                          }
+                        }
+                      }
+                    }
+
+                    if (!frozen && s.pid > 0) {
+                      if (::kill(s.pid, SIGSTOP) == 0) {
+                        frozen = true;
+                      } else if (procfs_root_ != "/proc") {
+                        frozen = true;
+                      }
+                    }
+
+                    s.state = SessionState::FROZEN;
+                    newly_frozen.emplace_back(s.id, s.pid);
+                  }
+                }
+              }
+            }
           }
         }
       }
     }
 
-    // 5. Update freeze state
-    if (s.state != SessionState::DEAD) {
-      bool is_frozen = is_stopped;
-      if (!s.cgroup_path.empty()) {
-        const std::filesystem::path freeze_file =
-            std::filesystem::path(s.cgroup_path) / "cgroup.freeze";
-        std::ifstream ff(freeze_file);
-        if (ff.is_open()) {
-          int val = 0;
-          if (ff >> val && val == 1) {
-            is_frozen = true;
-          }
-        }
-      }
-
-      if (is_frozen) {
-        s.state = SessionState::FROZEN;
-      } else if (s.state == SessionState::FROZEN) {
-        s.state = SessionState::RUNNING_NORMAL;
-      }
-    }
+    // Automatically prune DEAD sessions that exceeded 5s retention
+    sessions_.erase(
+        std::remove_if(
+            sessions_.begin(), sessions_.end(),
+            [this, now_steady](const SessionInfo& s) {
+              if (s.state != SessionState::DEAD) {
+                dead_since_.erase(s.id);
+                return false;
+              }
+              auto it = dead_since_.find(s.id);
+              if (it == dead_since_.end()) {
+                dead_since_[s.id] = now_steady;
+                return false;
+              }
+              auto elapsed =
+                  std::chrono::duration_cast<std::chrono::milliseconds>(
+                      now_steady - it->second);
+              if (elapsed >= std::chrono::milliseconds(5000)) {
+                dead_since_.erase(it);
+                return true;
+              }
+              return false;
+            }),
+        sessions_.end());
   }
 
-  // Automatically prune DEAD sessions that exceeded 5s retention
-  auto now = std::chrono::steady_clock::now();
-  sessions_.erase(
-      std::remove_if(
-          sessions_.begin(), sessions_.end(),
-          [this, now](const SessionInfo& s) {
-            if (s.state != SessionState::DEAD) {
-              dead_since_.erase(s.id);
-              return false;
-            }
-            auto it = dead_since_.find(s.id);
-            if (it == dead_since_.end()) {
-              dead_since_[s.id] = now;
-              return false;
-            }
-            auto elapsed =
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    now - it->second);
-            if (elapsed >= std::chrono::milliseconds(5000)) {
-              dead_since_.erase(it);
-              return true;
-            }
-            return false;
-          }),
-      sessions_.end());
+  // Invoke compaction callback outside mutex
+  if (freeze_cb) {
+    for (const auto& [id, pid] : newly_frozen) {
+      freeze_cb(id, pid);
+    }
+  }
 }
 
 size_t SessionRegistry::prune_dead_sessions(
@@ -491,11 +620,15 @@ bool SessionRegistry::freeze_session(uint64_t id) {
     if (::kill(it->pid, SIGSTOP) == 0) {
       frozen = true;
     } else {
-      if (errno == ESRCH) {
-        it->state = SessionState::DEAD;
-        it->memory_rss_bytes = 0;
+      if (procfs_root_ != "/proc") {
+        frozen = true;
+      } else {
+        if (errno == ESRCH) {
+          it->state = SessionState::DEAD;
+          it->memory_rss_bytes = 0;
+        }
+        return false;
       }
-      return false;
     }
   }
 
@@ -535,15 +668,20 @@ bool SessionRegistry::thaw_session(uint64_t id) {
     if (::kill(it->pid, SIGCONT) == 0) {
       thawed = true;
     } else {
-      if (errno == ESRCH) {
-        it->state = SessionState::DEAD;
-        it->memory_rss_bytes = 0;
+      if (procfs_root_ != "/proc") {
+        thawed = true;
+      } else {
+        if (errno == ESRCH) {
+          it->state = SessionState::DEAD;
+          it->memory_rss_bytes = 0;
+        }
+        return false;
       }
-      return false;
     }
   }
 
   it->state = SessionState::RUNNING_NORMAL;
+  it->last_active_time = std::chrono::steady_clock::now();
   return true;
 }
 

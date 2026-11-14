@@ -197,6 +197,23 @@ void test_cmd_missing_and_invalid_args(void) {
                           const_cast<char*>("--unknown")};
   TEST_ASSERT_EQUAL_INT(1, virmux::cmd_daemon(3, daemon_unrec));
 
+  // Invalid --idle-ms options
+  char* daemon_idle_no_arg[] = {const_cast<char*>("virmux"),
+                                const_cast<char*>("daemon"),
+                                const_cast<char*>("--idle-ms")};
+  TEST_ASSERT_EQUAL_INT(1, virmux::cmd_daemon(3, daemon_idle_no_arg));
+
+  char* daemon_idle_bad_arg[] = {const_cast<char*>("virmux"),
+                                 const_cast<char*>("daemon"),
+                                 const_cast<char*>("--idle-ms"),
+                                 const_cast<char*>("not_a_number")};
+  TEST_ASSERT_EQUAL_INT(1, virmux::cmd_daemon(4, daemon_idle_bad_arg));
+
+  char* daemon_idle_zero[] = {const_cast<char*>("virmux"),
+                              const_cast<char*>("daemon"),
+                              const_cast<char*>("--idle-ms=0")};
+  TEST_ASSERT_EQUAL_INT(1, virmux::cmd_daemon(3, daemon_idle_zero));
+
   char* list_unrec[] = {const_cast<char*>("virmux"), const_cast<char*>("list"),
                         const_cast<char*>("--foo")};
   TEST_ASSERT_EQUAL_INT(1, virmux::cmd_list(3, list_unrec));

@@ -351,6 +351,14 @@ SupervisorDaemon::SupervisorDaemon(DaemonConfig config)
     : config_(std::move(config)),
       socket_path_(config_.socket_path.empty() ? resolve_socket_path()
                                                : config_.socket_path) {
+  registry_.set_auto_freeze(config_.auto_freeze_enabled,
+                            config_.idle_timeout_ms);
+  registry_.set_on_auto_freeze([this](uint64_t /*id*/, pid_t pid) {
+    if (pid > 0) {
+      (void)compactor_.compact_pid(pid);
+    }
+  });
+
   if (::pipe2(wake_pipe_, O_CLOEXEC | O_NONBLOCK) < 0) {
     wake_pipe_[0] = -1;
     wake_pipe_[1] = -1;
@@ -381,6 +389,14 @@ bool SupervisorDaemon::init() {
 
   // Protect supervisor daemon from kernel OOM killer if permissions permit (-900)
   set_process_oom_score(0, -900);
+
+  registry_.set_auto_freeze(config_.auto_freeze_enabled,
+                            config_.idle_timeout_ms);
+  registry_.set_on_auto_freeze([this](uint64_t /*id*/, pid_t pid) {
+    if (pid > 0) {
+      (void)compactor_.compact_pid(pid);
+    }
+  });
 
   stop_requested_.store(false);
   running_.store(false);
@@ -601,6 +617,12 @@ void SupervisorDaemon::stop() {
 bool SupervisorDaemon::is_running() const { return running_.load(); }
 
 SessionRegistry& SupervisorDaemon::registry() { return registry_; }
+
+ProcessCompactor& SupervisorDaemon::compactor() { return compactor_; }
+
+const ProcessCompactor& SupervisorDaemon::compactor() const {
+  return compactor_;
+}
 
 const std::string& SupervisorDaemon::socket_path() const {
   return socket_path_;

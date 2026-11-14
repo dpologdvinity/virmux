@@ -154,6 +154,9 @@ void print_daemon_usage(std::ostream& out) {
       << "Options:\n"
       << "  --foreground    Run daemon in foreground (default: background "
          "daemon)\n"
+      << "  --auto-freeze   Enable automatic freezing of inactive sessions\n"
+      << "  --idle-ms <MS>  Inactivity idle timeout threshold in ms (default: "
+         "500)\n"
       << "  -h, --help      Show this help message\n";
 }
 
@@ -248,6 +251,8 @@ std::string format_session_json(const std::vector<SessionInfo>& sessions) {
 int cmd_daemon(int argc, char* const argv[]) {
   int start_idx = parse_subcmd_start(argc, argv, "daemon");
   bool foreground = false;
+  bool auto_freeze = false;
+  uint64_t idle_ms = 500;
 
   for (int i = start_idx; i < argc; ++i) {
     std::string_view arg = argv[i];
@@ -257,6 +262,32 @@ int cmd_daemon(int argc, char* const argv[]) {
     }
     if (arg == "--foreground") {
       foreground = true;
+    } else if (arg == "--auto-freeze") {
+      auto_freeze = true;
+    } else if (arg == "--idle-ms") {
+      if (i + 1 >= argc) {
+        std::cerr << "Error: --idle-ms requires an argument\n";
+        return 1;
+      }
+      std::string_view val_sv = argv[++i];
+      uint64_t val = 0;
+      auto [p, ec] =
+          std::from_chars(val_sv.data(), val_sv.data() + val_sv.size(), val);
+      if (ec != std::errc() || val == 0) {
+        std::cerr << "Error: invalid --idle-ms value '" << val_sv << "'\n";
+        return 1;
+      }
+      idle_ms = val;
+    } else if (arg.starts_with("--idle-ms=")) {
+      std::string_view val_sv = arg.substr(10);
+      uint64_t val = 0;
+      auto [p, ec] =
+          std::from_chars(val_sv.data(), val_sv.data() + val_sv.size(), val);
+      if (ec != std::errc() || val == 0) {
+        std::cerr << "Error: invalid --idle-ms value '" << val_sv << "'\n";
+        return 1;
+      }
+      idle_ms = val;
     } else {
       std::cerr << "Error: unrecognized option '" << arg << "'\n";
       print_daemon_usage(std::cerr);
@@ -264,8 +295,12 @@ int cmd_daemon(int argc, char* const argv[]) {
     }
   }
 
+  DaemonConfig cfg;
+  cfg.auto_freeze_enabled = auto_freeze;
+  cfg.idle_timeout_ms = idle_ms;
+
   if (foreground) {
-    SupervisorDaemon daemon;
+    SupervisorDaemon daemon(cfg);
     if (!daemon.init()) {
       std::cerr << "Error: failed to initialize supervisor daemon (already "
                    "running?)\n";
@@ -337,7 +372,7 @@ int cmd_daemon(int argc, char* const argv[]) {
     }
   }
 
-  SupervisorDaemon daemon;
+  SupervisorDaemon daemon(cfg);
   if (!daemon.init()) {
     char fail = '0';
     (void)::write(pipe_fds[1], &fail, 1);

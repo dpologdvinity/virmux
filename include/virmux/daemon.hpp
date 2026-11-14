@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "virmux/compactor.hpp"
 #include "virmux/ipc.hpp"
 #include "virmux/session.hpp"
 
@@ -25,6 +26,8 @@ namespace virmux {
 struct DaemonConfig {
   std::string socket_path{resolve_socket_path()};
   int telemetry_interval_ms{1000};
+  bool auto_freeze_enabled{false};
+  uint64_t idle_timeout_ms{500};
 };
 
 /**
@@ -71,6 +74,12 @@ class SupervisorDaemon {
   SessionRegistry& registry();
 
   /**
+   * @brief Access the process memory compactor engine.
+   */
+  [[nodiscard]] ProcessCompactor& compactor();
+  [[nodiscard]] const ProcessCompactor& compactor() const;
+
+  /**
    * @brief Get configured socket path.
    */
   [[nodiscard]] const std::string& socket_path() const;
@@ -81,6 +90,7 @@ class SupervisorDaemon {
 
   DaemonConfig config_;
   SessionRegistry registry_;
+  ProcessCompactor compactor_;
   std::string socket_path_;
   std::atomic<bool> running_{false};
   std::atomic<bool> stop_requested_{false};

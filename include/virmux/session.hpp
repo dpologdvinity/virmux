@@ -5,6 +5,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -51,6 +52,8 @@ struct SessionInfo {
   std::string cgroup_path;
   std::string command;
   std::chrono::system_clock::time_point start_time;
+  uint64_t last_cpu_ticks{0};
+  std::chrono::steady_clock::time_point last_active_time;
 };
 
 /**
@@ -123,6 +126,29 @@ class SessionRegistry {
   void refresh_telemetry();
 
   /**
+   * @brief Configure transparent inactivity auto-freeze engine.
+   * @param enabled Whether auto-freeze is active.
+   * @param idle_timeout_ms Inactivity idle threshold in milliseconds (default: 500).
+   */
+  void set_auto_freeze(bool enabled, uint64_t idle_timeout_ms = 500);
+
+  /**
+   * @brief Check if auto-freeze is enabled.
+   */
+  [[nodiscard]] bool auto_freeze_enabled() const;
+
+  /**
+   * @brief Get configured inactivity timeout in milliseconds.
+   */
+  [[nodiscard]] uint64_t idle_timeout_ms() const;
+
+  /**
+   * @brief Register callback invoked when a session is auto-frozen due to inactivity.
+   * @param cb Callback function taking session ID and process PID.
+   */
+  void set_on_auto_freeze(std::function<void(uint64_t id, pid_t pid)> cb);
+
+  /**
    * @brief Prune sessions in DEAD state that have exceeded retention duration.
    * @param max_age Retention duration threshold (0 to prune all DEAD sessions immediately).
    * @return Number of pruned sessions.
@@ -171,6 +197,9 @@ class SessionRegistry {
   uint64_t next_id_{1};
   std::vector<SessionInfo> sessions_;
   std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> dead_since_;
+  bool auto_freeze_enabled_{false};
+  uint64_t idle_timeout_ms_{500};
+  std::function<void(uint64_t id, pid_t pid)> on_auto_freeze_;
 };
 
 }  // namespace virmux

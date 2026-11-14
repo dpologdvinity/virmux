@@ -43,7 +43,7 @@
   - Implement `CgroupSlice::set_pids_max()` and `RLIMIT_NPROC` fallback in `sandbox.cpp`.
   - Add unit tests in `tests/unit/test_fault_isolation.cpp`.
 
-- [ ] **Task 2: Inactivity Detection & Transparent Auto-Freeze Engine**
+- [x] **Task 2: Inactivity Detection & Transparent Auto-Freeze Engine**
   - Add CPU tick delta tracking to `SessionRegistry::refresh_telemetry()`.
   - Implement configurable auto-freeze threshold (`idle_timeout_ms = 500`) with automatic `freeze_session` and `MemoryCompactor::compact_pid()` pageout.
   - Add auto-thaw hook on activity/IPC.
