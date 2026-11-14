@@ -13,7 +13,9 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <utility>
 
@@ -210,8 +212,15 @@ bool OverlayWorkspace::mount_in_current_namespace() {
   int res = ::mount("overlay", merged_dir_.c_str(), "overlay", 0, opts.c_str());
   if (res == 0) {
     mounted_ = true;
-    ::mount(merged_dir_.c_str(), config_.lower_dir.c_str(), nullptr,
-            MS_BIND | MS_REC, nullptr);
+    if (!config_.lower_dir.empty()) {
+      if (::mount(merged_dir_.c_str(), config_.lower_dir.c_str(), nullptr,
+                  MS_BIND | MS_REC, nullptr) != 0) {
+        std::fprintf(stderr,
+                     "warning: [overlay] bind mount of merged dir onto lower "
+                     "dir failed: %s\n",
+                     std::strerror(errno));
+      }
+    }
     return true;
   }
 
