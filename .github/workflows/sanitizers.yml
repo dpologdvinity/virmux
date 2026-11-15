@@ -41,6 +41,9 @@ jobs:
           # Grant cgroups v2 write permissions if mounted
           sudo chmod -R a+rw /sys/fs/cgroup 2>/dev/null || true
 
+      - name: System diagnostic check
+        run: bash scripts/doctor.sh
+
       - name: Configure Meson with ASan / UBSan
         env:
           CC: clang
@@ -48,6 +51,7 @@ jobs:
         run: |
           meson setup build-asan \
             -Db_sanitize=address,undefined \
+            -Db_lundef=false \
             -Dwarning_level=3 \
             -Dwerror=true
 

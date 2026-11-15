@@ -94,7 +94,7 @@ void test_auto_freeze_disabled_idle_process(void) {
 
   if (pid == 0) {
     while (true) {
-      ::usleep(10000);
+      ::pause();
     }
     ::_exit(0);
   }
@@ -138,7 +138,7 @@ void test_auto_freeze_enabled_idle_process(void) {
 
   if (pid == 0) {
     while (true) {
-      ::usleep(10000);
+      ::pause();
     }
     ::_exit(0);
   }
@@ -248,7 +248,7 @@ void test_thaw_restores_and_resets_last_active_time(void) {
 
   if (pid == 0) {
     while (true) {
-      ::usleep(10000);
+      ::pause();
     }
     ::_exit(0);
   }
@@ -346,7 +346,7 @@ void test_touch_session_auto_thaws(void) {
 
   if (pid == 0) {
     while (true) {
-      ::usleep(10000);
+      ::pause();
     }
     ::_exit(0);
   }
