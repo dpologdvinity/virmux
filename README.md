@@ -23,11 +23,14 @@ Running multiple terminal sessions or autonomous AI agent swarms simultaneously 
 
 1. **Memory Multiplexing:** Deduplicates identical memory pages across processes via **KSM (Kernel Samepage Merging)**, compresses inactive heaps into RAM with **`zram`**, and actively reclaims memory using **`process_madvise(MADV_PAGEOUT)`**.
 2. **CPU Shielding & Admission Gate:** Pins Cores 0–1 strictly for your interactive shell and editor (`cpuset.cpus`), while queuing heavy bursts (compilers, test runners) through an admission token-bucket to eliminate CPU cache thrashing.
-3. **Copy-on-Write Ephemeral Workspaces:** Provisions unprivileged **OverlayFS** workspaces with in-memory `tmpfs` scratch directories—dozens of agent workspaces share a single repository on disk with zero write leakage.
-4. **Content-Addressable Storage (CAS):** 2-level directory-sharded artifact cache (`objects/ab/cd/<hash>`) with atomic staging, RFC 6234 SHA-256 validation, and true LRU eviction.
-5. **Transparent Hardware Spoofing:** Intercepts `nproc` and `/proc/meminfo` via `LD_PRELOAD`, tricking greedy runtimes into behaving politely without changing a single line of project code.
-6. **Supervisor Daemon & IPC:** Lightweight Unix domain socket server with binary TLV framing (`VMUX`), background telemetry, process tree signaling, and lifecycle state management.
-7. **Interactive TUI Dashboard:** Real-time ncurses dashboard (`virmux top`) showing active sessions, memory saved, CPU topology, and hotkey lifecycle controls (`Space` freeze/thaw, `K` kill, `q` quit).
+3. **Fault Isolation & Blast Radius Containment:** Configures deterministic OOM priority hierarchy (`oom_score_adj = -900` daemon protection, `+800` sacrificial worker) and fork-bomb limits (`pids.max` with `RLIMIT_NPROC` fallback) so unruly child processes cannot bring down siblings or the host OS.
+4. **Transparent Inactivity Auto-Freeze:** Background telemetry continuously monitors CPU tick deltas and cgroups v2 `cpu.stat`; idle sessions (>500ms inactivity) are automatically frozen via cgroups or `SIGSTOP` with heap memory paged out via `process_madvise(MADV_PAGEOUT)`.
+5. **Session Checkpointing & Hibernation:** Save and restore running sessions (`virmux checkpoint` / `virmux restore`) using CRIU dump/restore when elevated capabilities exist, falling back to deep freeze + pageout in standard unprivileged environments.
+6. **Copy-on-Write Ephemeral Workspaces:** Provisions unprivileged **OverlayFS** workspaces with in-memory `tmpfs` scratch directories—dozens of agent workspaces share a single repository on disk with zero write leakage.
+7. **Content-Addressable Storage (CAS):** 2-level directory-sharded artifact cache (`objects/ab/cd/<hash>`) with atomic staging, RFC 6234 SHA-256 validation, and true LRU eviction.
+8. **Transparent Hardware Spoofing:** Intercepts `nproc` and `/proc/meminfo` via `LD_PRELOAD`, tricking greedy runtimes into behaving politely without changing a single line of project code.
+9. **Supervisor Daemon & IPC:** Lightweight Unix domain socket server with binary TLV framing (`VMUX`), background telemetry, process tree signaling, and lifecycle state management.
+10. **Interactive TUI Dashboard:** Real-time ncurses dashboard (`virmux top`) showing active sessions, memory saved, CPU topology, and hotkey lifecycle controls (`Space` freeze/thaw, `K` kill, `q` quit).
 
 ---
 
@@ -47,7 +50,7 @@ cd virmux
 meson setup build
 ninja -C build
 
-# Run unit and integration test suite (34 tests)
+# Run unit and integration test suite (40 tests)
 ninja -C build test
 ```
 
@@ -107,7 +110,25 @@ virmux thaw 1
 virmux kill 1
 ```
 
-#### 5. Telemetry & Compaction (`virmux stats`, `virmux pack`)
+#### 5. Session Checkpointing & Hibernation (`virmux checkpoint`, `virmux restore`)
+```bash
+# Checkpoint running session to disk (CRIU dump or deep-freeze pageout fallback)
+virmux checkpoint 1
+
+# Restore checkpointed session back to running state
+virmux restore 1
+```
+
+#### 6. Fault Isolation & Auto-Freeze Options
+```bash
+# Start daemon with automatic inactivity freeze (defaults to 500ms idle threshold)
+virmux daemon --auto-freeze --idle-ms 500
+
+# Execute sandboxed workload with fork-bomb ceiling (pids.max and RLIMIT_NPROC fallback)
+virmux run --max-pids 64 -- python3 worker.py
+```
+
+#### 7. Telemetry & Compaction (`virmux stats`, `virmux pack`)
 ```bash
 # Inspect host memory, KSM deduplication, and zram compression telemetry
 virmux stats
@@ -120,7 +141,7 @@ virmux pack
 virmux pack 1234 5678
 ```
 
-#### 6. Content-Addressable Storage (`virmux cas`)
+#### 8. Content-Addressable Storage (`virmux cas`)
 ```bash
 # Inspect CAS cache size, hit/miss ratios, and entry counts
 virmux cas stats

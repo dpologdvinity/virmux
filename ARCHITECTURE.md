@@ -49,12 +49,23 @@
    - Implements `SupervisorDaemon` listening on Unix domain sockets (`/run/user/<UID>/virmux.sock` or fallback `/tmp/virmux-<UID>.sock`).
    - Stale socket detection: uses non-blocking probe to avoid clobbering active daemons; cleans stale sockets on `ECONNREFUSED` or `ENOENT`.
    - Socket permissions enforced to `0700` using `umask(0077)`.
-   - Maintains thread-safe `SessionRegistry` with states: `INITIALIZING`, `RUNNING_BURST`, `RUNNING_NORMAL`, `WAITING_IO`, `FROZEN`, `DEAD`.
+   - Maintains thread-safe `SessionRegistry` with states: `INITIALIZING`, `RUNNING_BURST`, `RUNNING_NORMAL`, `WAITING_IO`, `FROZEN`, `CHECKPOINTED`, `DEAD`.
+   - Inactivity auto-freeze engine: monitors CPU tick deltas and cgroups v2 `cpu.stat` aggregated usage; automatically freezes idle tasks (>500ms inactivity) and invokes `process_madvise(MADV_PAGEOUT)` compaction.
    - Gathers per-process telemetry from `/proc/<pid>/statm`, `/proc/<pid>/status`, and `/proc/<pid>/smaps_rollup`.
-   - Manages process tree termination via `cgroup.kill` and recursive procfs task scanning.
+   - Manages process tree termination via `cgroup.kill` and recursive procfs task scanning with auto-thaw so frozen tasks process termination signals.
    - Automatically prunes dead sessions after a 5-second retention window.
 
-2. **`src/ipc/` (Binary Framing & Transport):**
+2. **`src/core/checkpoint.cpp` (Checkpoint & Hibernation Subsystem):**
+   - Implements `CheckpointManager` resolving storage paths (`$VIRMUX_CHECKPOINT_DIR`, `/run/user/<UID>/virmux/checkpoints`, or `/tmp/virmux-<UID>/checkpoints`) with `0700` directory hardening.
+   - Probes CRIU binary and capabilities (`criu check`) via direct `fork()` + `execv()` without shell injection risks.
+   - Executes privileged CRIU dump/restore (`criu dump --shell-job`, `criu restore -d`) or unprivileged deep-freeze fallback (cgroup freeze + `process_madvise(MADV_PAGEOUT)`).
+   - Restores checkpoints on daemon restart by scanning checkpoint storage on startup.
+
+3. **`src/core/sandbox.cpp` (Fault Isolation & Blast Radius):**
+   - Deterministic OOM score adjuster (`set_process_oom_score`): writes `-900` to supervisor daemon (shielded from kernel OOM) and `+800` to worker children before `execvp` (sacrificial leaf tasks).
+   - Fork-bomb containment: clamps cgroups v2 `pids.max` on slice with defensive `setrlimit(RLIMIT_NPROC)` fallback when cgroups are unavailable.
+
+4. **`src/ipc/` (Binary Framing & Transport):**
    - Packed 12-byte binary TLV header (`IpcHeader`):
      - `magic`: 4-byte magic `0x564D5558` (`"VMUX"`).
      - `version`: Protocol version `1`.
@@ -62,30 +73,30 @@
      - `payload_len`: 32-bit payload length (bounded to 16 MiB sanity limit).
    - Non-blocking socket I/O using monotonic poll deadlines with fragmented stream reassembly.
 
-3. **`src/tui/` (Terminal Dashboard `virmux top`):**
+5. **`src/tui/` (Terminal Dashboard `virmux top`):**
    - High-performance, zero-flicker terminal dashboard powered by Ncurses (`libncursesw`).
    - Maintains sub-0.5% CPU overhead during continuous 500ms refresh cycles.
    - Live system telemetry display: host load average, CPU shield vs worker partition, KSM deduplication, zram compression ratio.
    - Interactive keyboard navigation (`j`/`k`, `Up`/`Down`) with lifecycle controls (`Space` freeze/thaw, `K` kill, `q` quit).
    - Clean terminal restoration on `SIGINT` / `SIGTERM` via RAII and async-signal-safe flags.
 
-4. **`src/memory/` (Memory Packing & Compaction):**
+6. **`src/memory/` (Memory Packing & Compaction):**
    - Direct kernel interface to tune KSM (`/sys/kernel/mm/ksm/pages_to_scan`, `sleep_millisecs`, `run`).
    - Compacts anonymous memory into swap/zram via `process_madvise(MADV_PAGEOUT)`.
    - Real-time telemetry reader for host memory, `/proc/meminfo`, KSM statistics, and `/sys/block/zram*` metrics.
 
-5. **`src/sched/` (CPU Slicing & Admission Gate):**
+7. **`src/sched/` (CPU Slicing & Admission Gate):**
    - Shields interactive cores (Cores 0–1) by pinning managed tasks to worker cores via cgroups v2 `cpuset.cpus`.
    - Enforces memory soft ceiling via `memory.high`.
    - Token-bucket concurrency gate (`AdmissionGate`) throttling heavy bursts to prevent cache thrashing.
 
-6. **`src/storage/` (Workspace Isolation & CAS Subsystem):**
+8. **`src/storage/` (Workspace Isolation & CAS Subsystem):**
    - Unprivileged ephemeral OverlayFS controller using user and mount namespaces (`CLONE_NEWUSER | CLONE_NEWNS`).
    - Automatic secondary bind mount shadowing (`merged_dir` over `lower_dir`) preventing host lowerdir leakage.
    - Content-Addressable Storage (CAS) with 2-level directory sharding (`objects/ab/cd/<hash>`), atomic staging, RFC 6234 SHA-256 validation, and true LRU eviction on `prune()`.
    - Temporary scratch space redirection (`TMPDIR`, `TEMP`, `TMP`) with page cache eviction (`cleanse_path`).
 
-7. **`src/intercept/` (`libvirmux_intercept.so`):**
+9. **`src/intercept/` (`libvirmux_intercept.so`):**
    - Dynamic library injected via `LD_PRELOAD`.
    - Intercepts `sysconf(_SC_NPROCESSORS_ONLN)` and `/proc/meminfo` to spoof available hardware resources.
    - Intercepts Chromium/Node process launches to inject low-memory flags (`--single-process`, `--disable-gpu`, `--renderer-process-limit=1`).
