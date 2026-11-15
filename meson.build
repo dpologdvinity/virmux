@@ -14,6 +14,7 @@ tests_inc = include_directories('tests', 'tests/unity')
 
 threads_dep = dependency('threads')
 ncurses_dep = dependency('ncursesw', required: true)
+util_dep = meson.get_compiler('cpp').find_library('util', required: false)
 
 virmux_core_lib = static_library(
   'virmux_core',
@@ -23,12 +24,14 @@ virmux_core_lib = static_library(
     'src/sched/gate.cpp',
     'src/core/sandbox.cpp',
     'src/core/checkpoint.cpp',
+    'src/bench/bench.cpp',
     'src/memory/cleanse.cpp',
     'src/memory/ksm.cpp',
     'src/memory/compactor.cpp',
     'src/memory/telemetry.cpp',
     'src/memory/memory_manager.cpp',
     'src/cli/cli_stats.cpp',
+    'src/cli/cli_bench.cpp',
     'src/cli/cli_cas.cpp',
     'src/cli/cli_daemon.cpp',
     'src/storage/sha256.cpp',
@@ -41,14 +44,14 @@ virmux_core_lib = static_library(
     'src/tui/tui.cpp',
   ],
   include_directories: inc,
-  dependencies: [threads_dep, ncurses_dep],
+  dependencies: [threads_dep, ncurses_dep, util_dep],
   install: false,
 )
 
 virmux_core_dep = declare_dependency(
   include_directories: inc,
   link_with: virmux_core_lib,
-  dependencies: [threads_dep, ncurses_dep],
+  dependencies: [threads_dep, ncurses_dep, util_dep],
 )
 
 unity_lib = static_library(
@@ -313,6 +316,22 @@ test_checkpoint_exe = executable(
 
 test('test_checkpoint', test_checkpoint_exe)
 
+test_bench_exe = executable(
+  'test_bench',
+  'tests/unit/test_bench.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_bench', test_bench_exe)
+
+test_cli_bench_exe = executable(
+  'test_cli_bench',
+  'tests/unit/test_cli_bench.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_cli_bench', test_cli_bench_exe)
+
 virmux_exe = executable(
   'virmux',
   'cli/main.cpp',
@@ -376,6 +395,24 @@ test(
 )
 
 test(
+  'test_cli_bench_help',
+  virmux_exe,
+  args: ['bench', '--help'],
+)
+
+test(
+  'test_cli_bench_run_help',
+  virmux_exe,
+  args: ['bench', 'run', '--help'],
+)
+
+test(
+  'test_cli_bench_report_help',
+  virmux_exe,
+  args: ['bench', 'report', '--help'],
+)
+
+test(
   'integration_virmux_run',
   find_program('bash'),
   args: [
@@ -424,6 +461,17 @@ test(
   find_program('bash'),
   args: [
     meson.current_source_dir() / 'tests/integration/test_fault_isolation.sh',
+    meson.current_build_dir(),
+  ],
+  depends: [virmux_exe, virmux_intercept_lib],
+  timeout: 120,
+)
+
+test(
+  'integration_bench_gauntlet',
+  find_program('bash'),
+  args: [
+    meson.current_source_dir() / 'tests/integration/test_bench_gauntlet.sh',
     meson.current_build_dir(),
   ],
   depends: [virmux_exe, virmux_intercept_lib],

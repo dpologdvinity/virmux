@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "virmux/cleanse.hpp"
+#include "virmux/cli_bench.hpp"
 #include "virmux/cli_cas.hpp"
 #include "virmux/cli_daemon.hpp"
 #include "virmux/cli_stats.hpp"
@@ -52,7 +53,9 @@ void print_general_usage(std::ostream& out) {
       << "  pack [PID ... | --all]          Proactively compact anonymous "
          "memory into swap/zram\n"
       << "  cas <SUBCOMMAND> [OPTIONS]      Inspect and manage "
-         "content-addressable storage cache\n\n"
+         "content-addressable storage cache\n"
+      << "  bench <SUBCOMMAND> [OPTIONS]    Run stress benchmarks and "
+         "generate comparison reports\n\n"
       << "Options:\n"
       << "  -h, --help                      Show this help message\n"
       << "  -v, --version                   Show version information\n";
@@ -453,6 +456,10 @@ int main(int argc, char* argv[]) {
       char* help_argv[] = {argv[0], const_cast<char*>("restore"),
                            const_cast<char*>("--help")};
       return virmux::cmd_restore(3, help_argv);
+    } else if (argc > 2 && std::string_view(argv[2]) == "bench") {
+      char* help_argv[] = {argv[0], const_cast<char*>("bench"),
+                           const_cast<char*>("--help")};
+      return virmux::cmd_bench(3, help_argv);
     } else {
       print_general_usage(std::cout);
     }
@@ -505,6 +512,10 @@ int main(int argc, char* argv[]) {
 
   if (first_arg == "restore") {
     return virmux::cmd_restore(argc, argv);
+  }
+
+  if (first_arg == "bench") {
+    return virmux::cmd_bench(argc, argv);
   }
 
   std::cerr << "Error: unrecognized command '" << first_arg << "'\n";
