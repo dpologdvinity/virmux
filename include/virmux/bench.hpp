@@ -10,6 +10,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -307,6 +308,159 @@ class TelemetrySampler {
   uint64_t ksm_bytes_saved_{0};
   uint64_t peak_ksm_bytes_saved_{0};
   size_t sample_count_{0};
+};
+
+/**
+ * @brief Telemetry and performance metrics recorded during a benchmark run.
+ */
+struct BenchmarkResult {
+  std::string mode{"baseline"};
+  int task_count{0};
+  double wall_time_sec{0.0};
+  uint64_t peak_rss_bytes{0};
+  uint64_t peak_swap_bytes{0};
+  uint64_t peak_ksm_bytes_saved{0};
+  double avg_latency_ms{0.0};
+  double p99_latency_ms{0.0};
+  double min_latency_ms{0.0};
+  double max_latency_ms{0.0};
+  size_t latency_samples{0};
+  int oom_killed_count{0};
+  int successful_tasks{0};
+  int failed_tasks{0};
+};
+
+/**
+ * @brief Side-by-side comparison of unmanaged baseline vs Virmux-managed benchmark results.
+ */
+struct BenchmarkComparison {
+  BenchmarkResult baseline;
+  BenchmarkResult managed;
+
+  /**
+   * @brief Percentage reduction in peak RSS memory usage ((1 - managed / baseline) * 100).
+   */
+  [[nodiscard]] double rss_reduction_pct() const noexcept {
+    if (baseline.peak_rss_bytes == 0) {
+      return 0.0;
+    }
+    return (1.0 - static_cast<double>(managed.peak_rss_bytes) /
+                      static_cast<double>(baseline.peak_rss_bytes)) *
+           100.0;
+  }
+
+  /**
+   * @brief Percentage reduction in peak swap memory usage ((1 - managed / baseline) * 100).
+   */
+  [[nodiscard]] double swap_reduction_pct() const noexcept {
+    if (baseline.peak_swap_bytes == 0) {
+      return 0.0;
+    }
+    return (1.0 - static_cast<double>(managed.peak_swap_bytes) /
+                      static_cast<double>(baseline.peak_swap_bytes)) *
+           100.0;
+  }
+
+  /**
+   * @brief Ratio of baseline input latency to managed input latency (baseline / managed).
+   */
+  [[nodiscard]] double latency_improvement_x() const noexcept {
+    if (managed.avg_latency_ms <= 0.0001) {
+      return 1.0;
+    }
+    return baseline.avg_latency_ms / managed.avg_latency_ms;
+  }
+
+  /**
+   * @brief Ratio of baseline completion time to managed completion time (baseline / managed).
+   */
+  [[nodiscard]] double time_improvement_x() const noexcept {
+    if (managed.wall_time_sec <= 0.0001) {
+      return 1.0;
+    }
+    return baseline.wall_time_sec / managed.wall_time_sec;
+  }
+};
+
+/**
+ * @brief Format side-by-side ASCII/ANSI terminal comparison table.
+ */
+[[nodiscard]] std::string format_comparison_table(const BenchmarkComparison& comp);
+
+/**
+ * @brief Format benchmark comparison into structured JSON string.
+ */
+[[nodiscard]] std::string format_comparison_json(const BenchmarkComparison& comp);
+
+/**
+ * @brief Parse structured JSON string into BenchmarkComparison instance.
+ * @return BenchmarkComparison on success, or std::nullopt on syntax error.
+ */
+[[nodiscard]] std::optional<BenchmarkComparison> parse_comparison_json(std::string_view json);
+
+/**
+ * @brief Benchmark runner orchestrating synthetic workload tasks in baseline and managed modes.
+ */
+class BenchmarkRunner {
+ public:
+  /**
+   * @brief Construct a BenchmarkRunner instance.
+   * @param quick If true, executes quick iterations with reduced load.
+   */
+  explicit BenchmarkRunner(bool quick = false);
+  ~BenchmarkRunner();
+
+  BenchmarkRunner(const BenchmarkRunner&) = delete;
+  BenchmarkRunner& operator=(const BenchmarkRunner&) = delete;
+  BenchmarkRunner(BenchmarkRunner&&) noexcept;
+  BenchmarkRunner& operator=(BenchmarkRunner&&) noexcept;
+
+  /**
+   * @brief Enable or disable quick mode.
+   */
+  void set_quick(bool quick) noexcept { quick_ = quick; }
+
+  /**
+   * @brief Check whether quick mode is enabled.
+   */
+  [[nodiscard]] bool is_quick() const noexcept { return quick_; }
+
+  /**
+   * @brief Signal the runner to terminate any running tasks immediately.
+   */
+  void stop();
+
+  /**
+   * @brief Run unmanaged baseline benchmark.
+   * @param duration_sec Run duration in seconds.
+   * @param tasks Number of concurrent tasks.
+   * @return BenchmarkResult containing recorded metrics.
+   */
+  BenchmarkResult run_baseline(int duration_sec = 5, int tasks = 12);
+
+  /**
+   * @brief Run Virmux-managed benchmark.
+   * @param duration_sec Run duration in seconds.
+   * @param tasks Number of concurrent tasks.
+   * @return BenchmarkResult containing recorded metrics.
+   */
+  BenchmarkResult run_managed(int duration_sec = 5, int tasks = 12);
+
+  /**
+   * @brief Run full gauntlet comparison: unmanaged baseline vs Virmux managed.
+   * @param duration_sec Run duration in seconds.
+   * @param tasks Number of concurrent tasks.
+   * @return BenchmarkComparison with baseline and managed results.
+   */
+  BenchmarkComparison run_gauntlet(int duration_sec = 5, int tasks = 12);
+
+ private:
+  bool quick_{false};
+  std::atomic<bool> stop_flag_{false};
+
+  std::vector<BenchmarkTaskConfig> build_tasks(int count, int duration_sec) const;
+  BenchmarkResult execute_suite(const std::vector<BenchmarkTaskConfig>& tasks,
+                               bool managed, int duration_sec);
 };
 
 }  // namespace virmux

@@ -8,6 +8,9 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <pty.h>
+#include <sched.h>
+#include <signal.h>
+#include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -18,9 +21,14 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <numeric>
+#include <sstream>
 #include <stdexcept>
 
+#include "virmux/cli_stats.hpp"
+#include "virmux/gate.hpp"
+#include "virmux/sandbox.hpp"
 #include "virmux/sha256.hpp"
 
 namespace virmux {
@@ -789,6 +797,655 @@ void TelemetrySampler::add_target_pid(pid_t pid) {
 void TelemetrySampler::clear_target_pids() {
   std::lock_guard<std::mutex> lock(mutex_);
   tracked_pids_.clear();
+}
+
+namespace {
+
+std::string_view trim_ws(std::string_view s) {
+  while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) {
+    s.remove_prefix(1);
+  }
+  while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) {
+    s.remove_suffix(1);
+  }
+  return s;
+}
+
+std::optional<std::string_view> extract_json_obj(std::string_view json, std::string_view key) {
+  std::string quoted = "\"" + std::string(key) + "\"";
+  size_t pos = json.find(quoted);
+  if (pos == std::string_view::npos) {
+    return std::nullopt;
+  }
+  pos = json.find(':', pos + quoted.size());
+  if (pos == std::string_view::npos) {
+    return std::nullopt;
+  }
+  pos = json.find('{', pos + 1);
+  if (pos == std::string_view::npos) {
+    return std::nullopt;
+  }
+
+  size_t start = pos;
+  int depth = 0;
+  for (size_t i = start; i < json.size(); ++i) {
+    if (json[i] == '{') {
+      depth++;
+    } else if (json[i] == '}') {
+      depth--;
+      if (depth == 0) {
+        return json.substr(start, i - start + 1);
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+std::string parse_str_field(std::string_view obj, std::string_view key, const std::string& def = "") {
+  std::string quoted = "\"" + std::string(key) + "\"";
+  size_t pos = obj.find(quoted);
+  if (pos == std::string_view::npos) {
+    return def;
+  }
+  pos = obj.find(':', pos + quoted.size());
+  if (pos == std::string_view::npos) {
+    return def;
+  }
+  pos = obj.find('"', pos + 1);
+  if (pos == std::string_view::npos) {
+    return def;
+  }
+  size_t val_start = pos + 1;
+  size_t val_end = obj.find('"', val_start);
+  if (val_end == std::string_view::npos) {
+    return def;
+  }
+  return std::string(obj.substr(val_start, val_end - val_start));
+}
+
+double parse_double_field(std::string_view obj, std::string_view key, double def = 0.0) {
+  std::string quoted = "\"" + std::string(key) + "\"";
+  size_t pos = obj.find(quoted);
+  if (pos == std::string_view::npos) {
+    return def;
+  }
+  pos = obj.find(':', pos + quoted.size());
+  if (pos == std::string_view::npos) {
+    return def;
+  }
+  pos++;
+  while (pos < obj.size() && std::isspace(static_cast<unsigned char>(obj[pos]))) {
+    pos++;
+  }
+  size_t end = pos;
+  while (end < obj.size() && (std::isdigit(static_cast<unsigned char>(obj[end])) ||
+                              obj[end] == '.' || obj[end] == '-' ||
+                              obj[end] == 'e' || obj[end] == 'E' || obj[end] == '+')) {
+    end++;
+  }
+  if (end > pos) {
+    try {
+      return std::stod(std::string(obj.substr(pos, end - pos)));
+    } catch (...) {}
+  }
+  return def;
+}
+
+uint64_t parse_uint64_field(std::string_view obj, std::string_view key, uint64_t def = 0) {
+  std::string quoted = "\"" + std::string(key) + "\"";
+  size_t pos = obj.find(quoted);
+  if (pos == std::string_view::npos) {
+    return def;
+  }
+  pos = obj.find(':', pos + quoted.size());
+  if (pos == std::string_view::npos) {
+    return def;
+  }
+  pos++;
+  while (pos < obj.size() && std::isspace(static_cast<unsigned char>(obj[pos]))) {
+    pos++;
+  }
+  size_t end = pos;
+  while (end < obj.size() && std::isdigit(static_cast<unsigned char>(obj[end]))) {
+    end++;
+  }
+  if (end > pos) {
+    try {
+      return std::stoull(std::string(obj.substr(pos, end - pos)));
+    } catch (...) {}
+  }
+  return def;
+}
+
+int parse_int_field(std::string_view obj, std::string_view key, int def = 0) {
+  return static_cast<int>(parse_double_field(obj, key, static_cast<double>(def)));
+}
+
+BenchmarkResult parse_result_block(std::string_view obj) {
+  BenchmarkResult res;
+  res.mode = parse_str_field(obj, "mode", "baseline");
+  res.task_count = parse_int_field(obj, "task_count", 0);
+  res.wall_time_sec = parse_double_field(obj, "wall_time_sec", 0.0);
+  res.peak_rss_bytes = parse_uint64_field(obj, "peak_rss_bytes", 0);
+  res.peak_swap_bytes = parse_uint64_field(obj, "peak_swap_bytes", 0);
+  res.peak_ksm_bytes_saved = parse_uint64_field(obj, "peak_ksm_bytes_saved", 0);
+  res.avg_latency_ms = parse_double_field(obj, "avg_latency_ms", 0.0);
+  res.p99_latency_ms = parse_double_field(obj, "p99_latency_ms", 0.0);
+  res.min_latency_ms = parse_double_field(obj, "min_latency_ms", 0.0);
+  res.max_latency_ms = parse_double_field(obj, "max_latency_ms", 0.0);
+  res.latency_samples = static_cast<size_t>(parse_uint64_field(obj, "latency_samples", 0));
+  res.oom_killed_count = parse_int_field(obj, "oom_killed_count", 0);
+  res.successful_tasks = parse_int_field(obj, "successful_tasks", 0);
+  res.failed_tasks = parse_int_field(obj, "failed_tasks", 0);
+  return res;
+}
+
+}  // namespace
+
+std::string format_comparison_table(const BenchmarkComparison& comp) {
+  std::ostringstream oss;
+  constexpr int kWidth = 88;
+
+  if (comp.baseline.task_count == 0 && comp.managed.task_count == 0) {
+    oss << "No benchmark results recorded.\n";
+    return oss.str();
+  }
+
+  if (comp.baseline.task_count == 0 && comp.managed.task_count > 0) {
+    const auto& m = comp.managed;
+    oss << std::string(kWidth, '=') << "\n";
+    oss << "                       VIRMUX GAUNTLET BENCHMARK REPORT\n";
+    oss << std::string(kWidth, '=') << "\n";
+    oss << "  Execution Mode:             Virmux Managed\n";
+    oss << "  Concurrent Tasks:           " << m.task_count << "\n";
+    oss << "  Total Wall-Clock Time:      " << std::fixed << std::setprecision(2)
+        << m.wall_time_sec << " s\n";
+    oss << "  Peak Host RAM (RSS):        " << format_bytes(m.peak_rss_bytes) << "\n";
+    oss << "  Peak Swap Allocated:        " << format_bytes(m.peak_swap_bytes) << "\n";
+    oss << "  KSM Memory Saved:           " << format_bytes(m.peak_ksm_bytes_saved) << "\n";
+    oss << "  Host Terminal Input Lag:    " << std::fixed << std::setprecision(2)
+        << m.avg_latency_ms << " ms (p99: " << m.p99_latency_ms << " ms)\n";
+    oss << "  OOM Termination Count:      " << m.oom_killed_count << "\n";
+    oss << "  Tasks Completed / Total:    " << m.successful_tasks << "/" << m.task_count << "\n";
+    oss << std::string(kWidth, '=') << "\n";
+    return oss.str();
+  }
+
+  if (comp.managed.task_count == 0 && comp.baseline.task_count > 0) {
+    const auto& b = comp.baseline;
+    oss << std::string(kWidth, '=') << "\n";
+    oss << "                       VIRMUX GAUNTLET BENCHMARK REPORT\n";
+    oss << std::string(kWidth, '=') << "\n";
+    oss << "  Execution Mode:             Unmanaged Baseline\n";
+    oss << "  Concurrent Tasks:           " << b.task_count << "\n";
+    oss << "  Total Wall-Clock Time:      " << std::fixed << std::setprecision(2)
+        << b.wall_time_sec << " s\n";
+    oss << "  Peak Host RAM (RSS):        " << format_bytes(b.peak_rss_bytes) << "\n";
+    oss << "  Peak Swap Allocated:        " << format_bytes(b.peak_swap_bytes) << "\n";
+    oss << "  KSM Memory Saved:           " << format_bytes(b.peak_ksm_bytes_saved) << "\n";
+    oss << "  Host Terminal Input Lag:    " << std::fixed << std::setprecision(2)
+        << b.avg_latency_ms << " ms (p99: " << b.p99_latency_ms << " ms)\n";
+    oss << "  OOM Termination Count:      " << b.oom_killed_count << "\n";
+    oss << "  Tasks Completed / Total:    " << b.successful_tasks << "/" << b.task_count << "\n";
+    oss << std::string(kWidth, '=') << "\n";
+    return oss.str();
+  }
+
+  const auto& b = comp.baseline;
+  const auto& m = comp.managed;
+
+  char buf[256];
+  oss << std::string(kWidth, '=') << "\n";
+  oss << "                       VIRMUX 12-TERMINAL GAUNTLET BENCHMARK REPORT\n";
+  oss << std::string(kWidth, '=') << "\n";
+  std::snprintf(buf, sizeof(buf), "%-28s %-24s %-24s %s\n",
+                "Metric", "Baseline (Unmanaged)", "Virmux Managed", "Delta / Gain");
+  oss << buf;
+  oss << std::string(kWidth, '-') << "\n";
+
+  // 1. Peak Host RAM
+  {
+    double red = comp.rss_reduction_pct();
+    std::string delta_str;
+    if (b.peak_rss_bytes > 0) {
+      char d_buf[64];
+      std::snprintf(d_buf, sizeof(d_buf), "%+.1f%%", -red);
+      delta_str = d_buf;
+    } else {
+      delta_str = "N/A";
+    }
+    std::snprintf(buf, sizeof(buf), "%-28s %-24s %-24s %s\n",
+                  "Peak Host RAM (RSS)",
+                  format_bytes(b.peak_rss_bytes).c_str(),
+                  format_bytes(m.peak_rss_bytes).c_str(),
+                  delta_str.c_str());
+    oss << buf;
+  }
+
+  // 2. Peak Swap
+  {
+    double red = comp.swap_reduction_pct();
+    std::string delta_str;
+    if (b.peak_swap_bytes > 0) {
+      char d_buf[64];
+      std::snprintf(d_buf, sizeof(d_buf), "%+.1f%%", -red);
+      delta_str = d_buf;
+    } else {
+      delta_str = "0 B (Clean)";
+    }
+    std::snprintf(buf, sizeof(buf), "%-28s %-24s %-24s %s\n",
+                  "Peak Swap Allocated",
+                  format_bytes(b.peak_swap_bytes).c_str(),
+                  format_bytes(m.peak_swap_bytes).c_str(),
+                  delta_str.c_str());
+    oss << buf;
+  }
+
+  // 3. KSM Memory Saved
+  {
+    std::string gain = "+" + format_bytes(m.peak_ksm_bytes_saved) + " saved";
+    std::snprintf(buf, sizeof(buf), "%-28s %-24s %-24s %s\n",
+                  "KSM Memory Saved",
+                  format_bytes(b.peak_ksm_bytes_saved).c_str(),
+                  format_bytes(m.peak_ksm_bytes_saved).c_str(),
+                  gain.c_str());
+    oss << buf;
+  }
+
+  // 4. Input Latency
+  {
+    char b_lat[64], m_lat[64], delta_lat[64];
+    std::snprintf(b_lat, sizeof(b_lat), "%.2f ms (p99: %.2f)", b.avg_latency_ms, b.p99_latency_ms);
+    std::snprintf(m_lat, sizeof(m_lat), "%.2f ms (p99: %.2f)", m.avg_latency_ms, m.p99_latency_ms);
+    double lat_mult = comp.latency_improvement_x();
+    std::snprintf(delta_lat, sizeof(delta_lat), "%.1fx faster", lat_mult);
+    std::snprintf(buf, sizeof(buf), "%-28s %-24s %-24s %s\n",
+                  "Host Terminal Input Lag", b_lat, m_lat, delta_lat);
+    oss << buf;
+  }
+
+  // 5. Wall-Clock Completion
+  {
+    char b_time[64], m_time[64], delta_time[64];
+    std::snprintf(b_time, sizeof(b_time), "%.2f s", b.wall_time_sec);
+    std::snprintf(m_time, sizeof(m_time), "%.2f s", m.wall_time_sec);
+    double t_mult = comp.time_improvement_x();
+    std::snprintf(delta_time, sizeof(delta_time), "%.1fx faster", t_mult);
+    std::snprintf(buf, sizeof(buf), "%-28s %-24s %-24s %s\n",
+                  "Total Wall-Clock Time", b_time, m_time, delta_time);
+    oss << buf;
+  }
+
+  // 6. OOM Termination Count
+  {
+    char b_oom[64], m_oom[64], delta_oom[64];
+    std::snprintf(b_oom, sizeof(b_oom), "%d killed", b.oom_killed_count);
+    std::snprintf(m_oom, sizeof(m_oom), "%d killed", m.oom_killed_count);
+    if (m.oom_killed_count == 0) {
+      std::snprintf(delta_oom, sizeof(delta_oom), "0 failures");
+    } else {
+      std::snprintf(delta_oom, sizeof(delta_oom), "%+d OOMs",
+                    m.oom_killed_count - b.oom_killed_count);
+    }
+    std::snprintf(buf, sizeof(buf), "%-28s %-24s %-24s %s\n",
+                  "OOM Termination Count", b_oom, m_oom, delta_oom);
+    oss << buf;
+  }
+
+  // 7. Tasks Completed / Total
+  {
+    char b_tasks[64], m_tasks[64], delta_tasks[64];
+    std::snprintf(b_tasks, sizeof(b_tasks), "%d/%d", b.successful_tasks, b.task_count);
+    std::snprintf(m_tasks, sizeof(m_tasks), "%d/%d", m.successful_tasks, m.task_count);
+    double pass_rate = m.task_count > 0 ? (100.0 * m.successful_tasks / m.task_count) : 0.0;
+    std::snprintf(delta_tasks, sizeof(delta_tasks), "%.1f%% pass", pass_rate);
+    std::snprintf(buf, sizeof(buf), "%-28s %-24s %-24s %s\n",
+                  "Tasks Completed / Total", b_tasks, m_tasks, delta_tasks);
+    oss << buf;
+  }
+
+  oss << std::string(kWidth, '=') << "\n";
+  oss << "Summary: Peak RAM reduced by " << std::fixed << std::setprecision(1)
+      << comp.rss_reduction_pct() << "%, input latency improved by "
+      << std::fixed << std::setprecision(1) << comp.latency_improvement_x()
+      << "x, completion time " << std::fixed << std::setprecision(1)
+      << comp.time_improvement_x() << "x faster.\n";
+
+  return oss.str();
+}
+
+std::string format_comparison_json(const BenchmarkComparison& comp) {
+  std::ostringstream oss;
+  oss << "{\n";
+  oss << "  \"baseline\": {\n";
+  oss << "    \"mode\": \"" << comp.baseline.mode << "\",\n";
+  oss << "    \"task_count\": " << comp.baseline.task_count << ",\n";
+  oss << "    \"wall_time_sec\": " << std::fixed << std::setprecision(4)
+      << comp.baseline.wall_time_sec << ",\n";
+  oss << "    \"peak_rss_bytes\": " << comp.baseline.peak_rss_bytes << ",\n";
+  oss << "    \"peak_swap_bytes\": " << comp.baseline.peak_swap_bytes << ",\n";
+  oss << "    \"peak_ksm_bytes_saved\": " << comp.baseline.peak_ksm_bytes_saved << ",\n";
+  oss << "    \"avg_latency_ms\": " << comp.baseline.avg_latency_ms << ",\n";
+  oss << "    \"p99_latency_ms\": " << comp.baseline.p99_latency_ms << ",\n";
+  oss << "    \"min_latency_ms\": " << comp.baseline.min_latency_ms << ",\n";
+  oss << "    \"max_latency_ms\": " << comp.baseline.max_latency_ms << ",\n";
+  oss << "    \"latency_samples\": " << comp.baseline.latency_samples << ",\n";
+  oss << "    \"oom_killed_count\": " << comp.baseline.oom_killed_count << ",\n";
+  oss << "    \"successful_tasks\": " << comp.baseline.successful_tasks << ",\n";
+  oss << "    \"failed_tasks\": " << comp.baseline.failed_tasks << "\n";
+  oss << "  },\n";
+  oss << "  \"managed\": {\n";
+  oss << "    \"mode\": \"" << comp.managed.mode << "\",\n";
+  oss << "    \"task_count\": " << comp.managed.task_count << ",\n";
+  oss << "    \"wall_time_sec\": " << comp.managed.wall_time_sec << ",\n";
+  oss << "    \"peak_rss_bytes\": " << comp.managed.peak_rss_bytes << ",\n";
+  oss << "    \"peak_swap_bytes\": " << comp.managed.peak_swap_bytes << ",\n";
+  oss << "    \"peak_ksm_bytes_saved\": " << comp.managed.peak_ksm_bytes_saved << ",\n";
+  oss << "    \"avg_latency_ms\": " << comp.managed.avg_latency_ms << ",\n";
+  oss << "    \"p99_latency_ms\": " << comp.managed.p99_latency_ms << ",\n";
+  oss << "    \"min_latency_ms\": " << comp.managed.min_latency_ms << ",\n";
+  oss << "    \"max_latency_ms\": " << comp.managed.max_latency_ms << ",\n";
+  oss << "    \"latency_samples\": " << comp.managed.latency_samples << ",\n";
+  oss << "    \"oom_killed_count\": " << comp.managed.oom_killed_count << ",\n";
+  oss << "    \"successful_tasks\": " << comp.managed.successful_tasks << ",\n";
+  oss << "    \"failed_tasks\": " << comp.managed.failed_tasks << "\n";
+  oss << "  },\n";
+  oss << "  \"summary\": {\n";
+  oss << "    \"rss_reduction_pct\": " << comp.rss_reduction_pct() << ",\n";
+  oss << "    \"swap_reduction_pct\": " << comp.swap_reduction_pct() << ",\n";
+  oss << "    \"latency_improvement_x\": " << comp.latency_improvement_x() << ",\n";
+  oss << "    \"time_improvement_x\": " << comp.time_improvement_x() << "\n";
+  oss << "  }\n";
+  oss << "}\n";
+  return oss.str();
+}
+
+std::optional<BenchmarkComparison> parse_comparison_json(std::string_view json) {
+  auto trimmed = trim_ws(json);
+  if (trimmed.empty() || trimmed.front() != '{' || trimmed.back() != '}') {
+    return std::nullopt;
+  }
+
+  auto baseline_obj = extract_json_obj(trimmed, "baseline");
+  auto managed_obj = extract_json_obj(trimmed, "managed");
+
+  if (!baseline_obj && !managed_obj) {
+    return std::nullopt;
+  }
+
+  BenchmarkComparison comp;
+  if (baseline_obj) {
+    comp.baseline = parse_result_block(*baseline_obj);
+  }
+  if (managed_obj) {
+    comp.managed = parse_result_block(*managed_obj);
+  }
+  return comp;
+}
+
+BenchmarkRunner::BenchmarkRunner(bool quick) : quick_(quick) {}
+
+BenchmarkRunner::~BenchmarkRunner() {
+  stop();
+}
+
+BenchmarkRunner::BenchmarkRunner(BenchmarkRunner&& other) noexcept
+    : quick_(other.quick_), stop_flag_(other.stop_flag_.load()) {}
+
+BenchmarkRunner& BenchmarkRunner::operator=(BenchmarkRunner&& other) noexcept {
+  if (this != &other) {
+    stop();
+    quick_ = other.quick_;
+    stop_flag_.store(other.stop_flag_.load());
+  }
+  return *this;
+}
+
+void BenchmarkRunner::stop() {
+  stop_flag_.store(true);
+}
+
+std::vector<BenchmarkTaskConfig> BenchmarkRunner::build_tasks(int count, int duration_sec) const {
+  const WorkloadType types[] = {
+      WorkloadType::BROWSER,  WorkloadType::COMPILER, WorkloadType::MODEL,
+      WorkloadType::BUILD,    WorkloadType::BROWSER,  WorkloadType::COMPILER,
+      WorkloadType::BROWSER,  WorkloadType::COMPILER, WorkloadType::MODEL,
+      WorkloadType::BUILD,    WorkloadType::BROWSER,  WorkloadType::COMPILER,
+  };
+
+  std::vector<BenchmarkTaskConfig> tasks;
+  tasks.reserve(std::max(1, count));
+
+  for (int i = 0; i < count; ++i) {
+    BenchmarkTaskConfig cfg;
+    cfg.type = types[i % 12];
+    cfg.duration_seconds = duration_sec;
+    cfg.virtual_cores = 2;
+
+    switch (cfg.type) {
+      case WorkloadType::BROWSER:
+        cfg.name = "browser_" + std::to_string(i);
+        cfg.memory_limit_bytes = 1073741824ULL;  // 1 GiB
+        cfg.is_heavy = false;
+        cfg.target_alloc_mb = quick_ ? 32 : 128;
+        break;
+      case WorkloadType::COMPILER:
+        cfg.name = "compiler_" + std::to_string(i);
+        cfg.memory_limit_bytes = 1073741824ULL;  // 1 GiB
+        cfg.is_heavy = true;
+        cfg.target_alloc_mb = 0;
+        break;
+      case WorkloadType::MODEL:
+        cfg.name = "model_" + std::to_string(i);
+        cfg.memory_limit_bytes = 1073741824ULL;  // 1 GiB
+        cfg.is_heavy = true;
+        cfg.target_alloc_mb = quick_ ? 16 : 64;
+        break;
+      case WorkloadType::BUILD:
+        cfg.name = "build_" + std::to_string(i);
+        cfg.memory_limit_bytes = 536870912ULL;   // 512 MiB
+        cfg.is_heavy = false;
+        cfg.target_alloc_mb = 0;
+        break;
+    }
+
+    tasks.push_back(std::move(cfg));
+  }
+
+  return tasks;
+}
+
+BenchmarkResult BenchmarkRunner::execute_suite(
+    const std::vector<BenchmarkTaskConfig>& tasks, bool managed, int duration_sec) {
+  (void)duration_sec;
+  stop_flag_.store(false);
+
+  BenchmarkResult res;
+  res.mode = managed ? "managed" : "baseline";
+  res.task_count = static_cast<int>(tasks.size());
+
+  InputLatencyProbe probe;
+  TelemetrySampler telemetry;
+
+  telemetry.start(30);
+  probe.start(20);
+
+  std::vector<pid_t> child_pids;
+  std::mutex pids_mutex;
+
+  struct ProcessCleaner {
+    std::vector<pid_t>& pids;
+    std::mutex& mtx;
+    std::atomic<bool>& stop;
+
+    ~ProcessCleaner() {
+      stop.store(true);
+      std::lock_guard<std::mutex> lock(mtx);
+      for (pid_t p : pids) {
+        if (p > 0 && ::kill(p, 0) == 0) {
+          ::kill(p, SIGTERM);
+        }
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      for (pid_t p : pids) {
+        if (p > 0 && ::kill(p, 0) == 0) {
+          ::kill(p, SIGKILL);
+        }
+        if (p > 0) {
+          ::waitpid(p, nullptr, WNOHANG);
+        }
+      }
+    }
+  } cleaner{child_pids, pids_mutex, stop_flag_};
+
+  std::atomic<int> success_count{0};
+  std::atomic<int> failed_count{0};
+  std::atomic<int> oom_count{0};
+
+  AdmissionGate gate(2, std::chrono::seconds(10));
+
+  const auto start_time = std::chrono::steady_clock::now();
+
+  std::vector<std::thread> workers;
+  workers.reserve(tasks.size());
+
+  for (const auto& task : tasks) {
+    workers.emplace_back([this, task, managed, &gate, &child_pids, &pids_mutex,
+                          &telemetry, &success_count, &failed_count, &oom_count]() {
+      if (stop_flag_.load(std::memory_order_relaxed)) {
+        return;
+      }
+
+      std::unique_ptr<ScopedToken> token;
+      if (managed && task.is_heavy) {
+        while (!stop_flag_.load(std::memory_order_relaxed)) {
+          token = std::make_unique<ScopedToken>(gate, std::chrono::milliseconds(100));
+          if (token->acquired()) {
+            break;
+          }
+        }
+      }
+
+      if (stop_flag_.load(std::memory_order_relaxed)) {
+        return;
+      }
+
+      pid_t pid = ::fork();
+      if (pid < 0) {
+        failed_count++;
+        return;
+      }
+
+      if (pid == 0) {
+        ::setpgid(0, 0);
+
+        if (managed) {
+          set_worker_oom_score(0);
+
+          cpu_set_t cpuset;
+          CPU_ZERO(&cpuset);
+          long ncores = sysconf(_SC_NPROCESSORS_ONLN);
+          if (ncores > 2) {
+            for (long c = 2; c < ncores; ++c) {
+              CPU_SET(c, &cpuset);
+            }
+            sched_setaffinity(0, sizeof(cpuset), &cpuset);
+          } else if (ncores == 2) {
+            CPU_SET(1, &cpuset);
+            sched_setaffinity(0, sizeof(cpuset), &cpuset);
+          }
+        }
+
+        int rc = run_synthetic_workload(task.type, task.duration_seconds,
+                                        task.target_alloc_mb, nullptr);
+        ::_exit(rc);
+      }
+
+      {
+        std::lock_guard<std::mutex> lock(pids_mutex);
+        child_pids.push_back(pid);
+      }
+      telemetry.add_target_pid(pid);
+
+      int status = 0;
+      pid_t wr = ::waitpid(pid, &status, 0);
+
+      {
+        std::lock_guard<std::mutex> lock(pids_mutex);
+        auto it = std::find(child_pids.begin(), child_pids.end(), pid);
+        if (it != child_pids.end()) {
+          *it = -1;
+        }
+      }
+
+      if (wr > 0) {
+        if (WIFEXITED(status)) {
+          if (WEXITSTATUS(status) == 0) {
+            success_count++;
+          } else {
+            failed_count++;
+          }
+        } else if (WIFSIGNALED(status)) {
+          failed_count++;
+          int sig = WTERMSIG(status);
+          if (sig == SIGKILL || sig == SIGSEGV) {
+            oom_count++;
+          }
+        }
+      }
+    });
+  }
+
+  for (auto& w : workers) {
+    if (w.joinable()) {
+      w.join();
+    }
+  }
+
+  const auto elapsed = std::chrono::duration<double>(
+                           std::chrono::steady_clock::now() - start_time)
+                           .count();
+
+  probe.stop();
+  telemetry.stop();
+
+  res.wall_time_sec = elapsed;
+  res.peak_rss_bytes = telemetry.peak_rss_bytes();
+  res.peak_swap_bytes = telemetry.peak_swap_bytes();
+  res.peak_ksm_bytes_saved = telemetry.peak_ksm_bytes_saved();
+  res.avg_latency_ms = probe.avg_latency_ms();
+  res.p99_latency_ms = probe.p99_latency_ms();
+  res.min_latency_ms = probe.min_latency_ms();
+  res.max_latency_ms = probe.max_latency_ms();
+  res.latency_samples = probe.sample_count();
+  res.oom_killed_count = oom_count.load();
+  res.successful_tasks = success_count.load();
+  res.failed_tasks = failed_count.load();
+
+  return res;
+}
+
+BenchmarkResult BenchmarkRunner::run_baseline(int duration_sec, int tasks) {
+  int dur = duration_sec > 0 ? duration_sec : (quick_ ? 1 : 5);
+  int tcount = tasks > 0 ? tasks : (quick_ ? 4 : 12);
+  auto task_configs = build_tasks(tcount, dur);
+  return execute_suite(task_configs, false, dur);
+}
+
+BenchmarkResult BenchmarkRunner::run_managed(int duration_sec, int tasks) {
+  int dur = duration_sec > 0 ? duration_sec : (quick_ ? 1 : 5);
+  int tcount = tasks > 0 ? tasks : (quick_ ? 4 : 12);
+  auto task_configs = build_tasks(tcount, dur);
+  return execute_suite(task_configs, true, dur);
+}
+
+BenchmarkComparison BenchmarkRunner::run_gauntlet(int duration_sec, int tasks) {
+  int dur = duration_sec > 0 ? duration_sec : (quick_ ? 1 : 5);
+  int tcount = tasks > 0 ? tasks : (quick_ ? 4 : 12);
+  BenchmarkComparison comp;
+  comp.baseline = run_baseline(dur, tcount);
+  comp.managed = run_managed(dur, tcount);
+  return comp;
 }
 
 }  // namespace virmux

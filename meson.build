@@ -31,6 +31,7 @@ virmux_core_lib = static_library(
     'src/memory/telemetry.cpp',
     'src/memory/memory_manager.cpp',
     'src/cli/cli_stats.cpp',
+    'src/cli/cli_bench.cpp',
     'src/cli/cli_cas.cpp',
     'src/cli/cli_daemon.cpp',
     'src/storage/sha256.cpp',
@@ -323,6 +324,14 @@ test_bench_exe = executable(
 
 test('test_bench', test_bench_exe)
 
+test_cli_bench_exe = executable(
+  'test_cli_bench',
+  'tests/unit/test_cli_bench.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_cli_bench', test_cli_bench_exe)
+
 virmux_exe = executable(
   'virmux',
   'cli/main.cpp',
@@ -383,6 +392,24 @@ test(
   'test_cli_restore_help',
   virmux_exe,
   args: ['restore', '--help'],
+)
+
+test(
+  'test_cli_bench_help',
+  virmux_exe,
+  args: ['bench', '--help'],
+)
+
+test(
+  'test_cli_bench_run_help',
+  virmux_exe,
+  args: ['bench', 'run', '--help'],
+)
+
+test(
+  'test_cli_bench_report_help',
+  virmux_exe,
+  args: ['bench', 'report', '--help'],
 )
 
 test(

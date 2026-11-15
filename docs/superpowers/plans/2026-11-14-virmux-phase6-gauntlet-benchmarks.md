@@ -42,7 +42,7 @@
   - Implement `TelemetrySampler`: samples `/proc/meminfo`, swap, KSM savings, and active PIDs at configurable intervals.
   - Unit tests in `tests/unit/test_bench.cpp`.
 
-- [ ] **Task 2: Benchmark Engine & Comparison Reporter (`virmux bench run`, `report`)**
+- [x] **Task 2: Benchmark Engine & Comparison Reporter (`virmux bench run`, `report`)**
   - Implement `BenchmarkRunner` orchestrating 12 concurrent tasks under:
     - Mode A: Unmanaged baseline (direct background fork/exec without virmux controls).
     - Mode B: Virmux-managed (sandboxed with admission gate, core shielding, memory limits).
