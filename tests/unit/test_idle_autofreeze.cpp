@@ -1,6 +1,7 @@
 /**
  * @file test_idle_autofreeze.cpp
- * @brief Unit tests for CPU tick delta tracking, inactivity auto-freeze, and compaction engine.
+ * @brief Unit tests for CPU tick delta tracking, inactivity auto-freeze, and
+ * compaction engine.
  */
 
 extern "C" {
@@ -26,7 +27,8 @@ void setUp(void) {}
 void tearDown(void) {}
 
 /**
- * @brief Test 1: CPU ticks reading from procfs stat (field 14 utime + field 15 stime).
+ * @brief Test 1: CPU ticks reading from procfs stat (field 14 utime + field 15
+ * stime).
  */
 void test_stat_cpu_ticks_parsing(void) {
   // 1. Synthetic procfs test
@@ -83,7 +85,8 @@ void test_stat_cpu_ticks_parsing(void) {
 }
 
 /**
- * @brief Test 2: Auto-freeze disabled keeps idle process in RUNNING_NORMAL state.
+ * @brief Test 2: Auto-freeze disabled keeps idle process in RUNNING_NORMAL
+ * state.
  */
 void test_auto_freeze_disabled_idle_process(void) {
   pid_t pid = ::fork();
@@ -126,7 +129,8 @@ void test_auto_freeze_disabled_idle_process(void) {
 }
 
 /**
- * @brief Test 3: Auto-freeze enabled transitions idle process past timeout to FROZEN and invokes callback.
+ * @brief Test 3: Auto-freeze enabled transitions idle process past timeout to
+ * FROZEN and invokes callback.
  */
 void test_auto_freeze_enabled_idle_process(void) {
   pid_t pid = ::fork();
@@ -186,7 +190,8 @@ void test_auto_freeze_enabled_idle_process(void) {
 }
 
 /**
- * @brief Test 4: Active busy process continuously updates CPU ticks and is NOT frozen.
+ * @brief Test 4: Active busy process continuously updates CPU ticks and is NOT
+ * frozen.
  */
 void test_active_busy_process_not_frozen(void) {
   pid_t pid = ::fork();
@@ -234,7 +239,8 @@ void test_active_busy_process_not_frozen(void) {
 }
 
 /**
- * @brief Test 5: Thaw restores session to RUNNING_NORMAL and resets last_active_time.
+ * @brief Test 5: Thaw restores session to RUNNING_NORMAL and resets
+ * last_active_time.
  */
 void test_thaw_restores_and_resets_last_active_time(void) {
   pid_t pid = ::fork();
@@ -276,7 +282,8 @@ void test_thaw_restores_and_resets_last_active_time(void) {
 }
 
 /**
- * @brief Test 6: SupervisorDaemon wires auto-freeze configuration and compactor callback.
+ * @brief Test 6: SupervisorDaemon wires auto-freeze configuration and compactor
+ * callback.
  */
 void test_supervisor_daemon_auto_freeze_wiring(void) {
   virmux::DaemonConfig cfg;
@@ -288,6 +295,87 @@ void test_supervisor_daemon_auto_freeze_wiring(void) {
   TEST_ASSERT_EQUAL_UINT64(250, daemon.registry().idle_timeout_ms());
 }
 
+/**
+ * @brief Test 7: Multithreaded CPU usage tracking from cgroup cpu.stat takes
+ * precedence.
+ */
+void test_cgroup_cpustat_parsing(void) {
+  std::string tmp_proc =
+      "/tmp/virmux_cpustat_proc_" + std::to_string(::getpid());
+  std::string tmp_cg = "/tmp/virmux_cpustat_cg_" + std::to_string(::getpid());
+  std::error_code ec;
+  std::filesystem::create_directories(tmp_proc + "/4321", ec);
+  std::filesystem::create_directories(tmp_cg, ec);
+
+  // Main thread stat has 50 ticks
+  std::ofstream stat_out(tmp_proc + "/4321/stat");
+  stat_out << "4321 (cgproc) S 1 4321 4321 0 -1 4194304 100 0 0 0 20 30 0 0 "
+              "20 0 1 0 1000 10000 100 18446744073709551615 0 0 0 0 0 0 0 0 0 "
+              "0 0 0 0 0\n";
+  stat_out.close();
+
+  // cgroups cpu.stat reports full slice usage: 987654 usec
+  std::ofstream cg_out(tmp_cg + "/cpu.stat");
+  cg_out << "usage_usec 987654\nuser_usec 500000\nsystem_usec 487654\n";
+  cg_out.close();
+
+  virmux::SessionRegistry reg(tmp_proc);
+  virmux::SessionRegistration req;
+  req.name = "cg-proc";
+  req.pid = 4321;
+  req.command = "cg-worker";
+  req.cgroup_path = tmp_cg;
+
+  uint64_t id = reg.register_session(req);
+  reg.refresh_telemetry();
+  auto s = reg.get_session(id);
+  TEST_ASSERT_TRUE(s.has_value());
+  // cpu.stat usage_usec takes precedence over proc stat ticks
+  TEST_ASSERT_EQUAL_UINT64(987654, s->last_cpu_ticks);
+
+  std::filesystem::remove_all(tmp_proc, ec);
+  std::filesystem::remove_all(tmp_cg, ec);
+}
+
+/**
+ * @brief Test 8: touch_session automatically thaws a frozen session.
+ */
+void test_touch_session_auto_thaws(void) {
+  pid_t pid = ::fork();
+  TEST_ASSERT_TRUE(pid >= 0);
+
+  if (pid == 0) {
+    while (true) {
+      ::usleep(10000);
+    }
+    ::_exit(0);
+  }
+
+  virmux::SessionRegistry reg;
+  virmux::SessionRegistration req;
+  req.name = "touch-target";
+  req.pid = pid;
+  req.command = "worker-touch";
+
+  uint64_t id = reg.register_session(req);
+  TEST_ASSERT_TRUE(reg.freeze_session(id));
+
+  auto s = reg.get_session(id);
+  TEST_ASSERT_TRUE(s.has_value());
+  TEST_ASSERT_EQUAL(virmux::SessionState::FROZEN, s->state);
+
+  // Calling touch_session must auto-thaw to RUNNING_NORMAL
+  TEST_ASSERT_TRUE(reg.touch_session(id));
+
+  s = reg.get_session(id);
+  TEST_ASSERT_TRUE(s.has_value());
+  TEST_ASSERT_EQUAL(virmux::SessionState::RUNNING_NORMAL, s->state);
+
+  ::kill(pid, SIGKILL);
+  int st = 0;
+  ::waitpid(pid, &st, 0);
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_stat_cpu_ticks_parsing);
@@ -296,5 +384,7 @@ int main(void) {
   RUN_TEST(test_active_busy_process_not_frozen);
   RUN_TEST(test_thaw_restores_and_resets_last_active_time);
   RUN_TEST(test_supervisor_daemon_auto_freeze_wiring);
+  RUN_TEST(test_cgroup_cpustat_parsing);
+  RUN_TEST(test_touch_session_auto_thaws);
   return UNITY_END();
 }

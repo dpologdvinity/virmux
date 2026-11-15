@@ -1,6 +1,7 @@
 /**
  * @file test_checkpoint.cpp
- * @brief Unit tests for CheckpointManager, SessionRegistry checkpointing, and IPC.
+ * @brief Unit tests for CheckpointManager, SessionRegistry checkpointing, and
+ * IPC.
  */
 
 extern "C" {
@@ -109,7 +110,8 @@ void test_checkpoint_criu_availability_probe(void) {
   TEST_ASSERT_FALSE(mgr.is_criu_available());
 
   ::unsetenv("VIRMUX_CRIU_FORCE");
-  // Default probe in unprivileged sandbox should return false (or true if privileged)
+  // Default probe in unprivileged sandbox should return false (or true if
+  // privileged)
   bool res = mgr.is_criu_available();
   // Either true or false, but does not crash or hang
   (void)res;
@@ -156,7 +158,8 @@ void test_checkpoint_unprivileged_freeze_pageout(void) {
   ifs.close();
 
   TEST_ASSERT_TRUE(content.find("\"id\": 101") != std::string::npos);
-  TEST_ASSERT_TRUE(content.find("\"name\": \"worker-sim\"") != std::string::npos);
+  TEST_ASSERT_TRUE(content.find("\"name\": \"worker-sim\"") !=
+                   std::string::npos);
   TEST_ASSERT_TRUE(content.find("\"criu\": false") != std::string::npos);
 
   // Restore session
@@ -324,6 +327,77 @@ void test_checkpoint_error_handling(void) {
   std::filesystem::remove_all(temp_dir, ec);
 }
 
+void test_checkpoint_persistence_across_registry_restart(void) {
+  std::string temp_dir = get_unique_temp_dir();
+  pid_t sleeper = spawn_sleeper();
+  TEST_ASSERT_TRUE(sleeper > 0);
+
+  uint64_t session_id = 0;
+  {
+    virmux::SessionRegistry reg("/proc", temp_dir);
+    virmux::SessionRegistration req;
+    req.name = "persistent-worker";
+    req.pid = sleeper;
+    req.command = "/bin/sleep 60";
+    session_id = reg.register_session(req);
+    TEST_ASSERT_EQUAL_UINT64(1, session_id);
+
+    std::string msg;
+    TEST_ASSERT_TRUE(reg.checkpoint_session(session_id, &msg));
+  }
+
+  // Simulate daemon restart: create new registry pointing to same temp_dir
+  {
+    virmux::SessionRegistry reg2("/proc", temp_dir);
+    auto sess = reg2.get_session(session_id);
+    TEST_ASSERT_TRUE(sess.has_value());
+    TEST_ASSERT_EQUAL_STRING("persistent-worker", sess->name.c_str());
+    TEST_ASSERT_EQUAL(static_cast<int>(virmux::SessionState::CHECKPOINTED),
+                      static_cast<int>(sess->state));
+
+    std::string msg;
+    TEST_ASSERT_TRUE(reg2.restore_session(session_id, &msg));
+    auto sess_restored = reg2.get_session(session_id);
+    TEST_ASSERT_TRUE(sess_restored.has_value());
+    TEST_ASSERT_EQUAL(static_cast<int>(virmux::SessionState::RUNNING_NORMAL),
+                      static_cast<int>(sess_restored->state));
+  }
+
+  terminate_process(sleeper);
+  std::error_code ec;
+  std::filesystem::remove_all(temp_dir, ec);
+}
+
+void test_checkpoint_restore_fails_for_dead_process(void) {
+  std::string temp_dir = get_unique_temp_dir();
+  pid_t sleeper = spawn_sleeper();
+  TEST_ASSERT_TRUE(sleeper > 0);
+
+  virmux::SessionRegistry reg("/proc", temp_dir);
+  virmux::SessionRegistration req;
+  req.name = "dying-worker";
+  req.pid = sleeper;
+  req.command = "test";
+  uint64_t id = reg.register_session(req);
+
+  std::string msg;
+  TEST_ASSERT_TRUE(reg.checkpoint_session(id, &msg));
+
+  // Kill the process while checkpointed so SIGCONT will encounter ESRCH
+  terminate_process(sleeper);
+
+  // Restore should fail and preserve checkpoint
+  msg.clear();
+  TEST_ASSERT_FALSE(reg.restore_session(id, &msg));
+  TEST_ASSERT_TRUE(msg.find("has exited") != std::string::npos);
+
+  // Checkpoint manager still has the checkpoint since restore aborted
+  TEST_ASSERT_TRUE(reg.has_checkpoint(id));
+
+  std::error_code ec;
+  std::filesystem::remove_all(temp_dir, ec);
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_checkpoint_path_resolution_and_permissions);
@@ -332,5 +406,7 @@ int main(void) {
   RUN_TEST(test_session_registry_checkpoint_and_restore);
   RUN_TEST(test_daemon_ipc_checkpoint_and_restore);
   RUN_TEST(test_checkpoint_error_handling);
+  RUN_TEST(test_checkpoint_persistence_across_registry_restart);
+  RUN_TEST(test_checkpoint_restore_fails_for_dead_process);
   return UNITY_END();
 }

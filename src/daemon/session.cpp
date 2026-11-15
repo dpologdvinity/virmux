@@ -139,6 +139,53 @@ void kill_process_tree(pid_t pid, int signal, const std::string& procfs_root) {
   }
 }
 
+std::string parse_json_str(std::string_view json, std::string_view key) {
+  auto pos = json.find(key);
+  if (pos == std::string_view::npos) return "";
+  pos = json.find(':', pos);
+  if (pos == std::string_view::npos) return "";
+  pos = json.find('"', pos);
+  if (pos == std::string_view::npos) return "";
+  size_t start = pos + 1;
+  std::string val;
+  for (size_t i = start; i < json.size(); ++i) {
+    if (json[i] == '"') break;
+    if (json[i] == '\\' && i + 1 < json.size()) {
+      char next = json[++i];
+      if (next == 'n')
+        val += '\n';
+      else if (next == 'r')
+        val += '\r';
+      else if (next == 't')
+        val += '\t';
+      else
+        val += next;
+    } else {
+      val += json[i];
+    }
+  }
+  return val;
+}
+
+uint64_t parse_json_uint(std::string_view json, std::string_view key,
+                         uint64_t default_val = 0) {
+  auto pos = json.find(key);
+  if (pos == std::string_view::npos) return default_val;
+  pos = json.find(':', pos);
+  if (pos == std::string_view::npos) return default_val;
+  pos++;
+  while (pos < json.size() &&
+         (std::isspace(static_cast<unsigned char>(json[pos])) ||
+          json[pos] == '"')) {
+    pos++;
+  }
+  uint64_t val = default_val;
+  if (pos < json.size()) {
+    std::from_chars(json.data() + pos, json.data() + json.size(), val);
+  }
+  return val;
+}
+
 }  // namespace
 
 std::string_view session_state_to_string(SessionState s) {
@@ -191,7 +238,55 @@ SessionRegistry::SessionRegistry(std::string procfs_root,
     : procfs_root_(std::move(procfs_root)),
       next_id_(1),
       checkpoint_mgr_(
-          std::make_unique<CheckpointManager>(std::move(checkpoint_dir))) {}
+          std::make_unique<CheckpointManager>(std::move(checkpoint_dir))) {
+  if (checkpoint_mgr_) {
+    const std::string& bdir = checkpoint_mgr_->base_dir();
+    std::error_code ec;
+    if (std::filesystem::exists(bdir, ec) &&
+        std::filesystem::is_directory(bdir, ec)) {
+      for (const auto& entry : std::filesystem::directory_iterator(bdir, ec)) {
+        if (!entry.is_directory(ec)) continue;
+        auto meta_path = entry.path() / "checkpoint.json";
+        if (std::filesystem::exists(meta_path, ec)) {
+          std::ifstream ifs(meta_path);
+          if (ifs.is_open()) {
+            std::stringstream ss;
+            ss << ifs.rdbuf();
+            std::string content = ss.str();
+            uint64_t cid = parse_json_uint(content, "\"id\"");
+            if (cid > 0) {
+              SessionInfo info;
+              info.id = cid;
+              info.name = parse_json_str(content, "\"name\"");
+              info.pid =
+                  static_cast<pid_t>(parse_json_uint(content, "\"pid\""));
+              info.virtual_cores = static_cast<int>(
+                  parse_json_uint(content, "\"virtual_cores\"", 2));
+              info.memory_limit_bytes =
+                  parse_json_uint(content, "\"memory_limit_bytes\"");
+              info.memory_rss_bytes = 0;
+              info.ksm_dedup_bytes = 0;
+              info.cgroup_path = collapse_home_path(
+                  parse_json_str(content, "\"cgroup_path\""));
+              info.command =
+                  collapse_home_path(parse_json_str(content, "\"command\""));
+              uint64_t ts = parse_json_uint(content, "\"timestamp\"");
+              info.start_time = std::chrono::system_clock::time_point(
+                  std::chrono::milliseconds(ts));
+              info.state = SessionState::CHECKPOINTED;
+              info.last_cpu_ticks = 0;
+              info.last_active_time = std::chrono::steady_clock::now();
+              sessions_.push_back(info);
+              if (cid >= next_id_) {
+                next_id_ = cid + 1;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
 
 SessionRegistry::~SessionRegistry() = default;
 
@@ -201,7 +296,8 @@ uint64_t SessionRegistry::register_session(const SessionRegistration& req) {
   info.id = next_id_++;
   info.pid = req.pid;
   info.name = derive_session_name(req.name, req.command, info.id);
-  info.state = (req.pid > 0) ? SessionState::RUNNING_NORMAL : SessionState::DEAD;
+  info.state =
+      (req.pid > 0) ? SessionState::RUNNING_NORMAL : SessionState::DEAD;
   info.virtual_cores = (req.virtual_cores > 0) ? req.virtual_cores : 2;
   info.memory_limit_bytes = req.memory_limit_bytes;
   info.memory_rss_bytes = 0;
@@ -396,7 +492,8 @@ void SessionRegistry::refresh_telemetry() {
 
       // 4. Read KSM dedup
       s.ksm_dedup_bytes = 0;
-      const std::filesystem::path ksm_pages_path = proc_pid / "ksm_merging_pages";
+      const std::filesystem::path ksm_pages_path =
+          proc_pid / "ksm_merging_pages";
       std::ifstream ksm_file(ksm_pages_path);
       if (ksm_file.is_open()) {
         uint64_t ksm_pages = 0;
@@ -452,83 +549,128 @@ void SessionRegistry::refresh_telemetry() {
 
       // 6. CPU ticks & Inactivity tracking for auto-freeze
       if (s.state != SessionState::DEAD) {
-        const std::filesystem::path stat_path = proc_pid / "stat";
-        std::ifstream stat_file(stat_path);
-        if (stat_file.is_open()) {
-          std::string stat_content;
-          if (std::getline(stat_file, stat_content)) {
-            auto paren = stat_content.rfind(')');
-            if (paren != std::string::npos && paren + 1 < stat_content.size()) {
-              std::string_view rest(stat_content.data() + paren + 1,
-                                     stat_content.size() - (paren + 1));
-              uint64_t utime = 0;
-              uint64_t stime = 0;
-              size_t token_idx = 0;
-              size_t i = 0;
-              while (i < rest.size()) {
-                while (i < rest.size() && (rest[i] == ' ' || rest[i] == '\t')) {
-                  i++;
+        uint64_t total_ticks = 0;
+        bool got_cpu_usage = false;
+
+        // Try reading multithreaded slice CPU usage from cgroups v2 cpu.stat
+        // first
+        if (!s.cgroup_path.empty()) {
+          const std::filesystem::path cpustat_path =
+              std::filesystem::path(s.cgroup_path) / "cpu.stat";
+          std::ifstream cpustat_file(cpustat_path);
+          if (cpustat_file.is_open()) {
+            std::string line;
+            while (std::getline(cpustat_file, line)) {
+              if (line.starts_with("usage_usec")) {
+                size_t idx = 10;
+                while (idx < line.size() &&
+                       std::isspace(static_cast<unsigned char>(line[idx]))) {
+                  idx++;
                 }
-                if (i >= rest.size()) break;
-                size_t tok_start = i;
-                while (i < rest.size() && rest[i] != ' ' && rest[i] != '\t') {
-                  i++;
+                if (idx < line.size()) {
+                  std::from_chars(line.data() + idx, line.data() + line.size(),
+                                  total_ticks);
+                  got_cpu_usage = true;
                 }
-                if (token_idx == 11) {
-                  std::from_chars(rest.data() + tok_start, rest.data() + i,
-                                  utime);
-                } else if (token_idx == 12) {
-                  std::from_chars(rest.data() + tok_start, rest.data() + i,
-                                  stime);
-                  break;
-                }
-                token_idx++;
+                break;
               }
+            }
+          }
+        }
 
-              uint64_t total_ticks = utime + stime;
-              if (total_ticks > s.last_cpu_ticks) {
-                s.last_cpu_ticks = total_ticks;
-                s.last_active_time = now_steady;
-                if (s.state == SessionState::FROZEN) {
-                  s.state = SessionState::RUNNING_NORMAL;
-                }
-              } else if (total_ticks == s.last_cpu_ticks &&
-                         auto_freeze_enabled_) {
-                if (s.state == SessionState::RUNNING_NORMAL ||
-                    s.state == SessionState::WAITING_IO) {
-                  auto elapsed_ms =
-                      std::chrono::duration_cast<std::chrono::milliseconds>(
-                          now_steady - s.last_active_time)
-                          .count();
-                  if (elapsed_ms >= static_cast<int64_t>(idle_timeout_ms_)) {
-                    bool frozen = false;
-                    if (!s.cgroup_path.empty()) {
-                      const std::filesystem::path freeze_file =
-                          std::filesystem::path(s.cgroup_path) / "cgroup.freeze";
-                      std::error_code ec;
-                      if (std::filesystem::exists(freeze_file, ec)) {
-                        std::ofstream ofs(freeze_file);
-                        if (ofs.is_open()) {
-                          ofs << "1\n";
-                          ofs.flush();
-                          if (!ofs.fail()) {
-                            frozen = true;
-                          }
-                        }
-                      }
-                    }
-
-                    if (!frozen && s.pid > 0) {
-                      if (::kill(s.pid, SIGSTOP) == 0) {
-                        frozen = true;
-                      } else if (procfs_root_ != "/proc") {
-                        frozen = true;
-                      }
-                    }
-
-                    s.state = SessionState::FROZEN;
-                    newly_frozen.emplace_back(s.id, s.pid);
+        // Fallback: parse /proc/<pid>/stat utime + stime
+        if (!got_cpu_usage) {
+          const std::filesystem::path stat_path = proc_pid / "stat";
+          std::ifstream stat_file(stat_path);
+          if (stat_file.is_open()) {
+            std::string stat_content;
+            if (std::getline(stat_file, stat_content)) {
+              auto paren = stat_content.rfind(')');
+              if (paren != std::string::npos &&
+                  paren + 1 < stat_content.size()) {
+                std::string_view rest(stat_content.data() + paren + 1,
+                                      stat_content.size() - (paren + 1));
+                uint64_t utime = 0;
+                uint64_t stime = 0;
+                size_t token_idx = 0;
+                size_t i = 0;
+                while (i < rest.size()) {
+                  while (i < rest.size() &&
+                         (rest[i] == ' ' || rest[i] == '\t')) {
+                    i++;
                   }
+                  if (i >= rest.size()) break;
+                  size_t tok_start = i;
+                  while (i < rest.size() && rest[i] != ' ' && rest[i] != '\t') {
+                    i++;
+                  }
+                  if (token_idx == 11) {
+                    std::from_chars(rest.data() + tok_start, rest.data() + i,
+                                    utime);
+                  } else if (token_idx == 12) {
+                    std::from_chars(rest.data() + tok_start, rest.data() + i,
+                                    stime);
+                    break;
+                  }
+                  token_idx++;
+                }
+                total_ticks = utime + stime;
+                got_cpu_usage = true;
+              }
+            }
+          }
+        }
+
+        if (got_cpu_usage) {
+          if (total_ticks > s.last_cpu_ticks) {
+            s.last_cpu_ticks = total_ticks;
+            s.last_active_time = now_steady;
+            if (s.state == SessionState::FROZEN) {
+              s.state = SessionState::RUNNING_NORMAL;
+            }
+          } else if (total_ticks == s.last_cpu_ticks && auto_freeze_enabled_) {
+            if (s.state == SessionState::RUNNING_NORMAL ||
+                s.state == SessionState::WAITING_IO) {
+              auto elapsed_ms =
+                  std::chrono::duration_cast<std::chrono::milliseconds>(
+                      now_steady - s.last_active_time)
+                      .count();
+              if (elapsed_ms >= static_cast<int64_t>(idle_timeout_ms_)) {
+                bool frozen = false;
+                if (!s.cgroup_path.empty()) {
+                  const std::filesystem::path freeze_file =
+                      std::filesystem::path(s.cgroup_path) / "cgroup.freeze";
+                  std::error_code ec;
+                  if (std::filesystem::exists(freeze_file, ec)) {
+                    std::ofstream ofs(freeze_file);
+                    if (ofs.is_open()) {
+                      ofs << "1\n";
+                      ofs.flush();
+                      if (!ofs.fail()) {
+                        frozen = true;
+                      }
+                    }
+                  }
+                }
+
+                if (!frozen && s.pid > 0) {
+                  if (::kill(s.pid, SIGSTOP) == 0) {
+                    frozen = true;
+                  } else if (errno == ESRCH) {
+                    s.state = SessionState::DEAD;
+                    s.memory_rss_bytes = 0;
+                    s.ksm_dedup_bytes = 0;
+                    if (dead_since_.find(s.id) == dead_since_.end()) {
+                      dead_since_[s.id] = now_steady;
+                    }
+                  } else if (procfs_root_ != "/proc") {
+                    frozen = true;
+                  }
+                }
+
+                if (frozen) {
+                  s.state = SessionState::FROZEN;
+                  newly_frozen.emplace_back(s.id, s.pid);
                 }
               }
             }
@@ -571,8 +713,7 @@ void SessionRegistry::refresh_telemetry() {
   }
 }
 
-size_t SessionRegistry::prune_dead_sessions(
-    std::chrono::milliseconds max_age) {
+size_t SessionRegistry::prune_dead_sessions(std::chrono::milliseconds max_age) {
   std::lock_guard<std::mutex> lock(mutex_);
   auto now = std::chrono::steady_clock::now();
   size_t count_before = sessions_.size();
@@ -707,6 +848,41 @@ bool SessionRegistry::thaw_session(uint64_t id) {
   return true;
 }
 
+bool SessionRegistry::touch_session(uint64_t id) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto it = std::find_if(sessions_.begin(), sessions_.end(),
+                         [id](const SessionInfo& s) { return s.id == id; });
+  if (it == sessions_.end()) {
+    return false;
+  }
+  it->last_active_time = std::chrono::steady_clock::now();
+  if (it->state == SessionState::FROZEN) {
+    bool thawed = false;
+    if (!it->cgroup_path.empty()) {
+      const std::filesystem::path freeze_file =
+          std::filesystem::path(it->cgroup_path) / "cgroup.freeze";
+      std::error_code ec;
+      if (std::filesystem::exists(freeze_file, ec)) {
+        std::ofstream ofs(freeze_file);
+        if (ofs.is_open()) {
+          ofs << "0\n";
+          ofs.flush();
+          if (!ofs.fail()) {
+            thawed = true;
+          }
+        }
+      }
+    }
+    if (!thawed && it->pid > 0) {
+      if (::kill(it->pid, SIGCONT) == 0) {
+        thawed = true;
+      }
+    }
+    it->state = SessionState::RUNNING_NORMAL;
+  }
+  return true;
+}
+
 bool SessionRegistry::kill_session(uint64_t id, int signal) {
   std::lock_guard<std::mutex> lock(mutex_);
   auto it = std::find_if(sessions_.begin(), sessions_.end(),
@@ -724,6 +900,25 @@ bool SessionRegistry::kill_session(uint64_t id, int signal) {
       dead_since_[it->id] = std::chrono::steady_clock::now();
     }
     return true;
+  }
+
+  // Unfreeze before sending signal if session is frozen
+  if (it->state == SessionState::FROZEN) {
+    if (!it->cgroup_path.empty()) {
+      const std::filesystem::path freeze_file =
+          std::filesystem::path(it->cgroup_path) / "cgroup.freeze";
+      std::error_code ec;
+      if (std::filesystem::exists(freeze_file, ec)) {
+        std::ofstream ofs(freeze_file);
+        if (ofs.is_open()) {
+          ofs << "0\n";
+          ofs.flush();
+        }
+      }
+    }
+    if (it->pid > 0) {
+      (void)::kill(it->pid, SIGCONT);
+    }
   }
 
   // 1. Terminate entire cgroup subtree atomically if cgroup.kill exists
@@ -986,6 +1181,47 @@ bool SessionRegistry::restore_session(uint64_t id, std::string* msg) {
   std::lock_guard<std::mutex> lock(mutex_);
   auto it = std::find_if(sessions_.begin(), sessions_.end(),
                          [id](const SessionInfo& s) { return s.id == id; });
+  if (it == sessions_.end()) {
+    // If daemon restarted, attempt to reload checkpoint metadata from disk
+    if (checkpoint_mgr_ && checkpoint_mgr_->has_checkpoint(id)) {
+      std::filesystem::path meta_file =
+          std::filesystem::path(checkpoint_mgr_->base_dir()) /
+          std::to_string(id) / "checkpoint.json";
+      std::ifstream ifs(meta_file);
+      if (ifs.is_open()) {
+        std::stringstream ss;
+        ss << ifs.rdbuf();
+        std::string content = ss.str();
+        SessionInfo info;
+        info.id = id;
+        info.name = parse_json_str(content, "\"name\"");
+        info.pid = static_cast<pid_t>(parse_json_uint(content, "\"pid\""));
+        info.virtual_cores =
+            static_cast<int>(parse_json_uint(content, "\"virtual_cores\"", 2));
+        info.memory_limit_bytes =
+            parse_json_uint(content, "\"memory_limit_bytes\"");
+        info.memory_rss_bytes = 0;
+        info.ksm_dedup_bytes = 0;
+        info.cgroup_path =
+            collapse_home_path(parse_json_str(content, "\"cgroup_path\""));
+        info.command =
+            collapse_home_path(parse_json_str(content, "\"command\""));
+        uint64_t ts = parse_json_uint(content, "\"timestamp\"");
+        info.start_time = std::chrono::system_clock::time_point(
+            std::chrono::milliseconds(ts));
+        info.state = SessionState::CHECKPOINTED;
+        info.last_cpu_ticks = 0;
+        info.last_active_time = std::chrono::steady_clock::now();
+        sessions_.push_back(info);
+        it = std::find_if(sessions_.begin(), sessions_.end(),
+                          [id](const SessionInfo& s) { return s.id == id; });
+        if (id >= next_id_) {
+          next_id_ = id + 1;
+        }
+      }
+    }
+  }
+
   if (it == sessions_.end()) {
     if (msg != nullptr) {
       *msg = "Session " + std::to_string(id) + " not found";

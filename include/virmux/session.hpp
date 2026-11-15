@@ -134,7 +134,8 @@ class SessionRegistry {
   /**
    * @brief Configure transparent inactivity auto-freeze engine.
    * @param enabled Whether auto-freeze is active.
-   * @param idle_timeout_ms Inactivity idle threshold in milliseconds (default: 500).
+   * @param idle_timeout_ms Inactivity idle threshold in milliseconds (default:
+   * 500).
    */
   void set_auto_freeze(bool enabled, uint64_t idle_timeout_ms = 500);
 
@@ -149,14 +150,16 @@ class SessionRegistry {
   [[nodiscard]] uint64_t idle_timeout_ms() const;
 
   /**
-   * @brief Register callback invoked when a session is auto-frozen due to inactivity.
+   * @brief Register callback invoked when a session is auto-frozen due to
+   * inactivity.
    * @param cb Callback function taking session ID and process PID.
    */
   void set_on_auto_freeze(std::function<void(uint64_t id, pid_t pid)> cb);
 
   /**
    * @brief Prune sessions in DEAD state that have exceeded retention duration.
-   * @param max_age Retention duration threshold (0 to prune all DEAD sessions immediately).
+   * @param max_age Retention duration threshold (0 to prune all DEAD sessions
+   * immediately).
    * @return Number of pruned sessions.
    */
   size_t prune_dead_sessions(
@@ -175,6 +178,13 @@ class SessionRegistry {
    * @return true if thawed, false on failure or session dead/missing.
    */
   bool thaw_session(uint64_t id);
+
+  /**
+   * @brief Touch session: updates active timestamp and auto-thaws if frozen.
+   * @param id Session ID.
+   * @return true if session exists, false if missing.
+   */
+  bool touch_session(uint64_t id);
 
   /**
    * @brief Kill session via signal.
@@ -230,7 +240,8 @@ class SessionRegistry {
   std::string procfs_root_;
   uint64_t next_id_{1};
   std::vector<SessionInfo> sessions_;
-  std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> dead_since_;
+  std::unordered_map<uint64_t, std::chrono::steady_clock::time_point>
+      dead_since_;
   bool auto_freeze_enabled_{false};
   uint64_t idle_timeout_ms_{500};
   std::function<void(uint64_t id, pid_t pid)> on_auto_freeze_;

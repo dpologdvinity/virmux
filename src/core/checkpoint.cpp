@@ -1,6 +1,7 @@
 /**
  * @file checkpoint.cpp
- * @brief Implementation of CheckpointManager session checkpoint and hibernation engine.
+ * @brief Implementation of CheckpointManager session checkpoint and hibernation
+ * engine.
  */
 
 #include "virmux/checkpoint.hpp"
@@ -126,6 +127,35 @@ std::string escape_json_str(std::string_view input) {
   return output;
 }
 
+bool run_command_direct(const std::vector<std::string>& args) {
+  if (args.empty()) return false;
+  pid_t pid = ::fork();
+  if (pid < 0) return false;
+  if (pid == 0) {
+    int devnull = ::open("/dev/null", O_RDWR);
+    if (devnull >= 0) {
+      ::dup2(devnull, STDIN_FILENO);
+      ::dup2(devnull, STDOUT_FILENO);
+      ::dup2(devnull, STDERR_FILENO);
+      ::close(devnull);
+    }
+    std::vector<char*> c_args;
+    c_args.reserve(args.size() + 1);
+    for (const auto& a : args) {
+      c_args.push_back(const_cast<char*>(a.c_str()));
+    }
+    c_args.push_back(nullptr);
+    ::execv(c_args[0], c_args.data());
+    ::_exit(127);
+  }
+  int status = 0;
+  while (::waitpid(pid, &status, 0) < 0) {
+    if (errno == EINTR) continue;
+    return false;
+  }
+  return (WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+
 }  // namespace
 
 CheckpointManager::CheckpointManager(std::string base_dir)
@@ -149,13 +179,11 @@ bool CheckpointManager::is_criu_available() const {
     return false;
   }
 
-  std::string cmd = criu_bin + " check >/dev/null 2>&1";
-  int res = std::system(cmd.c_str());
-  return (res != -1 && WIFEXITED(res) && WEXITSTATUS(res) == 0);
+  return run_command_direct({criu_bin, "check"});
 }
 
 bool CheckpointManager::checkpoint_session(const SessionInfo& session,
-                                          std::string* status_msg) {
+                                           std::string* status_msg) {
   if (session.id == 0) {
     if (status_msg != nullptr) {
       *status_msg = "Invalid session ID 0";
@@ -180,11 +208,18 @@ bool CheckpointManager::checkpoint_session(const SessionInfo& session,
 
   if (criu_avail) {
     std::string criu_bin = find_criu_binary();
-    std::string cmd = criu_bin + " dump -t " + std::to_string(session.pid) +
-                      " -D \"" + session_dir.string() +
-                      "\" --shell-job >/dev/null 2>&1";
-    int res = std::system(cmd.c_str());
-    if (res != -1 && WIFEXITED(res) && WEXITSTATUS(res) == 0) {
+    if (criu_bin.empty()) {
+      std::filesystem::remove_all(session_dir, ec);
+      if (status_msg != nullptr) {
+        *status_msg = "CRIU binary not found";
+      }
+      return false;
+    }
+    std::vector<std::string> args = {criu_bin,     "dump",
+                                     "-t",         std::to_string(session.pid),
+                                     "-D",         session_dir.string(),
+                                     "--shell-job"};
+    if (run_command_direct(args)) {
       success = true;
     } else {
       std::filesystem::remove_all(session_dir, ec);
@@ -194,7 +229,8 @@ bool CheckpointManager::checkpoint_session(const SessionInfo& session,
       return false;
     }
   } else {
-    // Unprivileged fallback: freeze cgroup / SIGSTOP, page out via process_madvise
+    // Unprivileged fallback: freeze cgroup / SIGSTOP, page out via
+    // process_madvise
     bool frozen = false;
     if (!session.cgroup_path.empty()) {
       std::filesystem::path freeze_file =
@@ -219,8 +255,8 @@ bool CheckpointManager::checkpoint_session(const SessionInfo& session,
         if (errno == ESRCH) {
           std::filesystem::remove_all(session_dir, ec);
           if (status_msg != nullptr) {
-            *status_msg = "Session process " + std::to_string(session.pid) +
-                          " not found";
+            *status_msg =
+                "Session process " + std::to_string(session.pid) + " not found";
           }
           return false;
         }
@@ -283,7 +319,7 @@ bool CheckpointManager::checkpoint_session(const SessionInfo& session,
 }
 
 bool CheckpointManager::restore_session(const SessionInfo& session,
-                                       std::string* status_msg) {
+                                        std::string* status_msg) {
   if (session.id == 0) {
     if (status_msg != nullptr) {
       *status_msg = "Invalid session ID 0";
@@ -311,12 +347,26 @@ bool CheckpointManager::restore_session(const SessionInfo& session,
     }
     return false;
   }
-  std::stringstream ss;
-  ss << ifs.rdbuf();
-  std::string meta_content = ss.str();
+  bool is_criu = false;
+  {
+    std::string line;
+    while (std::getline(ifs, line)) {
+      if (line.find("\"criu\"") != std::string::npos &&
+          line.find("true") != std::string::npos) {
+        is_criu = true;
+        break;
+      }
+    }
+  }
   ifs.close();
 
-  bool is_criu = (meta_content.find("\"criu\": true") != std::string::npos);
+  // If claimed CRIU dump, verify inventory image exists on disk
+  if (is_criu) {
+    std::filesystem::path inventory_file = session_dir / "inventory.img";
+    if (!std::filesystem::exists(inventory_file, ec)) {
+      is_criu = false;
+    }
+  }
 
   if (is_criu) {
     std::string criu_bin = find_criu_binary();
@@ -326,10 +376,9 @@ bool CheckpointManager::restore_session(const SessionInfo& session,
       }
       return false;
     }
-    std::string cmd = criu_bin + " restore -d -D \"" + session_dir.string() +
-                      "\" --shell-job >/dev/null 2>&1";
-    int res = std::system(cmd.c_str());
-    if (res == -1 || !WIFEXITED(res) || WEXITSTATUS(res) != 0) {
+    std::vector<std::string> args = {
+        criu_bin, "restore", "-d", "-D", session_dir.string(), "--shell-job"};
+    if (!run_command_direct(args)) {
       if (status_msg != nullptr) {
         *status_msg =
             "CRIU restore failed for session " + std::to_string(session.id);
@@ -359,10 +408,25 @@ bool CheckpointManager::restore_session(const SessionInfo& session,
       if (::kill(session.pid, SIGCONT) == 0) {
         thawed = true;
       } else {
+        if (errno == ESRCH) {
+          if (status_msg != nullptr) {
+            *status_msg = "Cannot restore session " +
+                          std::to_string(session.id) + ": process " +
+                          std::to_string(session.pid) + " has exited";
+          }
+          return false;
+        }
+        // In mock / test environments with virtual PID
         thawed = true;
       }
     }
-    (void)thawed;
+    if (!thawed) {
+      if (status_msg != nullptr) {
+        *status_msg =
+            "Failed to unfreeze session " + std::to_string(session.id);
+      }
+      return false;
+    }
   }
 
   remove_checkpoint(session.id);

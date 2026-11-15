@@ -316,6 +316,12 @@ int cmd_daemon(int argc, char* const argv[]) {
   DaemonConfig cfg;
   cfg.auto_freeze_enabled = auto_freeze;
   cfg.idle_timeout_ms = idle_ms;
+  if (auto_freeze && idle_ms > 0) {
+    int target_interval = static_cast<int>(idle_ms / 2);
+    if (target_interval < 50) target_interval = 50;
+    cfg.telemetry_interval_ms =
+        std::min(cfg.telemetry_interval_ms, target_interval);
+  }
 
   if (foreground) {
     SupervisorDaemon daemon(cfg);

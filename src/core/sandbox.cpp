@@ -158,13 +158,14 @@ uint64_t count_user_threads() {
   for (const auto& entry : std::filesystem::directory_iterator("/proc", ec)) {
     if (ec) break;
     const auto filename = entry.path().filename().native();
-    if (filename.empty() || !std::isdigit(static_cast<unsigned char>(filename[0]))) {
+    if (filename.empty() ||
+        !std::isdigit(static_cast<unsigned char>(filename[0]))) {
       continue;
     }
     auto status_path = entry.path() / "status";
     int fd = ::open(status_path.c_str(), O_RDONLY | O_CLOEXEC);
     if (fd < 0) continue;
-    char buf[1024];
+    char buf[4096];
     ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
     ::close(fd);
     if (n <= 0) continue;
@@ -327,12 +328,16 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
   std::string slice_name = "virmux-run-" + std::to_string(::getpid()) + "-" +
                            std::to_string(seq) + ".slice";
   CgroupSlice slice(slice_name);
+  bool cgroup_pids_active = false;
   slice.setup("", cfg.memory_limit_bytes, cfg.cpuset_cores);
   if (slice.is_valid() && cfg.max_pids > 0) {
-    slice.set_pids_max(cfg.max_pids);
+    cgroup_pids_active = slice.set_pids_max(cfg.max_pids);
   }
 
-  uint64_t baseline_threads = (cfg.max_pids > 0) ? count_user_threads() : 0;
+  // Only scan procfs and compute fallback RLIMIT_NPROC if cgroups pids.max is
+  // unavailable
+  uint64_t baseline_threads =
+      (cfg.max_pids > 0 && !cgroup_pids_active) ? count_user_threads() : 0;
 
   pid_t pid = ::fork();
   if (pid < 0) {
@@ -379,8 +384,9 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
       slice.attach_pid(0);
     }
 
-    // Fork-bomb fallback: enforce RLIMIT_NPROC ceiling if configured
-    if (cfg.max_pids > 0) {
+    // Fork-bomb fallback: enforce RLIMIT_NPROC ceiling if configured and cgroup
+    // unavailable
+    if (cfg.max_pids > 0 && !cgroup_pids_active) {
       rlim_t limit = static_cast<rlim_t>(baseline_threads + cfg.max_pids);
       struct rlimit cur_rl;
       if (::getrlimit(RLIMIT_NPROC, &cur_rl) == 0 && limit > cur_rl.rlim_max) {

@@ -4,7 +4,6 @@
  */
 
 #include "virmux/daemon.hpp"
-#include "virmux/sandbox.hpp"
 
 #include <fcntl.h>
 #include <poll.h>
@@ -27,6 +26,7 @@
 
 #include "virmux/cli_stats.hpp"
 #include "virmux/memory_manager.hpp"
+#include "virmux/sandbox.hpp"
 
 namespace virmux {
 
@@ -387,7 +387,8 @@ bool SupervisorDaemon::init() {
     return true;
   }
 
-  // Protect supervisor daemon from kernel OOM killer if permissions permit (-900)
+  // Protect supervisor daemon from kernel OOM killer if permissions permit
+  // (-900)
   set_process_oom_score(0, -900);
 
   registry_.set_auto_freeze(config_.auto_freeze_enabled,
@@ -443,8 +444,8 @@ bool SupervisorDaemon::init() {
       // Stale socket from dead daemon: safe to unlink
       ::unlink(socket_path_.c_str());
     } else {
-      // Socket exists but connect failed with transient error (e.g. EAGAIN, EINPROGRESS)
-      // Do not unlink active socket
+      // Socket exists but connect failed with transient error (e.g. EAGAIN,
+      // EINPROGRESS) Do not unlink active socket
       return false;
     }
   }
@@ -679,6 +680,9 @@ void SupervisorDaemon::handle_client_request(int client_fd, uint16_t msg_type,
       uint64_t id = 0;
       int sig = SIGTERM;
       parse_kill_payload(payload, id, sig);
+      if (id > 0) {
+        registry_.touch_session(id);
+      }
       if (id > 0 && registry_.kill_session(id, sig)) {
         send_ipc_message(client_fd, MSG_KILL_SESSION_RESP, "OK", 500);
       } else {
