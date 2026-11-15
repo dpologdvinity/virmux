@@ -1,6 +1,7 @@
 /**
  * @file bench.cpp
- * @brief Implementation of synthetic benchmark workloads, input latency probe, and telemetry sampler.
+ * @brief Implementation of synthetic benchmark workloads, input latency probe,
+ * and telemetry sampler.
  */
 
 #include "virmux/bench.hpp"
@@ -51,7 +52,8 @@ WorkloadType workload_type_from_string(std::string_view sv) {
   std::string lower;
   lower.reserve(sv.size());
   for (char c : sv) {
-    lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    lower.push_back(
+        static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
   }
   if (lower == "browser") {
     return WorkloadType::BROWSER;
@@ -71,7 +73,8 @@ WorkloadType workload_type_from_string(std::string_view sv) {
 namespace {
 
 bool check_should_stop(const std::chrono::steady_clock::time_point& start_time,
-                       int duration_seconds, const std::atomic<bool>* stop_flag) {
+                       int duration_seconds,
+                       const std::atomic<bool>* stop_flag) {
   if (stop_flag && stop_flag->load(std::memory_order_relaxed)) {
     return true;
   }
@@ -105,9 +108,10 @@ int run_browser_workload(int duration_seconds, uint64_t target_alloc_mb,
       }
       std::vector<char> chunk(kChunkSize);
       // Fill chunk with pseudo-DOM HTML structure for realistic anonymous pages
-      const std::string node_prefix =
-          "<div class=\"dom-node\" id=\"node_" + std::to_string(i) +
-          "\"><span>Content block for virtual DOM tree layout element</span></div>\n";
+      const std::string node_prefix = "<div class=\"dom-node\" id=\"node_" +
+                                      std::to_string(i) +
+                                      "\"><span>Content block for virtual DOM "
+                                      "tree layout element</span></div>\n";
       size_t pos = 0;
       while (pos + node_prefix.size() <= kChunkSize) {
         std::memcpy(chunk.data() + pos, node_prefix.data(), node_prefix.size());
@@ -163,7 +167,8 @@ int run_compiler_workload(int duration_seconds, uint64_t target_alloc_mb,
       uint64_t hash_accumulator = 0x811c9dc5ULL;
       const std::string synthetic_code =
           "int compute_block_" + std::to_string(tid) +
-          "(int a, int b) { int sum = 0; for (int i = 0; i < 100; ++i) sum += (a * i + b) ^ 0x5a; return sum; }";
+          "(int a, int b) { int sum = 0; for (int i = 0; i < 100; ++i) sum += "
+          "(a * i + b) ^ 0x5a; return sum; }";
 
       while (!check_should_stop(start_time, duration_seconds, stop_flag)) {
         // Token parsing and symbol hashing
@@ -175,9 +180,11 @@ int run_compiler_workload(int duration_seconds, uint64_t target_alloc_mb,
         // CPU burst: integer and floating point math loop
         double math_burst = 1.0;
         for (int k = 0; k < 2000; ++k) {
-          math_burst = std::sin(math_burst + static_cast<double>(k) * 0.001) * 1.0001;
+          math_burst =
+              std::sin(math_burst + static_cast<double>(k) * 0.001) * 1.0001;
         }
-        volatile double dummy = math_burst + static_cast<double>(hash_accumulator);
+        volatile double dummy =
+            math_burst + static_cast<double>(hash_accumulator);
         (void)dummy;
 
         if (duration_seconds <= 0 && stop_flag == nullptr) {
@@ -207,7 +214,8 @@ int run_model_workload(int duration_seconds, uint64_t target_alloc_mb,
 
   const size_t working_buf_bytes =
       target_alloc_mb > 0
-          ? std::min<size_t>(target_alloc_mb * 1024ULL * 1024ULL, 64ULL * 1024ULL * 1024ULL)
+          ? std::min<size_t>(target_alloc_mb * 1024ULL * 1024ULL,
+                             64ULL * 1024ULL * 1024ULL)
           : (4ULL * 1024ULL * 1024ULL);
 
   while (!check_should_stop(start_time, duration_seconds, stop_flag)) {
@@ -237,7 +245,8 @@ int run_model_workload(int duration_seconds, uint64_t target_alloc_mb,
         volatile uint8_t v = working_buf[working_buf.size() / 2];
         (void)v;
       }
-    } catch (const std::bad_alloc&) {}
+    } catch (const std::bad_alloc&) {
+    }
 
     if (duration_seconds <= 0 && stop_flag == nullptr) {
       break;
@@ -322,7 +331,8 @@ int run_synthetic_workload(WorkloadType type, int duration_seconds,
     case WorkloadType::BROWSER:
       return run_browser_workload(duration_seconds, target_alloc_mb, stop_flag);
     case WorkloadType::COMPILER:
-      return run_compiler_workload(duration_seconds, target_alloc_mb, stop_flag);
+      return run_compiler_workload(duration_seconds, target_alloc_mb,
+                                   stop_flag);
     case WorkloadType::MODEL:
       return run_model_workload(duration_seconds, target_alloc_mb, stop_flag);
     case WorkloadType::BUILD:
@@ -347,7 +357,8 @@ InputLatencyProbe::~InputLatencyProbe() {
 
 InputLatencyProbe::InputLatencyProbe(InputLatencyProbe&& other) noexcept {
   other.stop();
-  std::scoped_lock lock(samples_mutex_, other.samples_mutex_, io_mutex_, other.io_mutex_);
+  std::scoped_lock lock(samples_mutex_, other.samples_mutex_, io_mutex_,
+                        other.io_mutex_);
   force_pipe_fallback_ = other.force_pipe_fallback_;
   is_pty_ = other.is_pty_;
   master_fd_ = other.master_fd_;
@@ -357,12 +368,14 @@ InputLatencyProbe::InputLatencyProbe(InputLatencyProbe&& other) noexcept {
   other.slave_fd_ = -1;
 }
 
-InputLatencyProbe& InputLatencyProbe::operator=(InputLatencyProbe&& other) noexcept {
+InputLatencyProbe& InputLatencyProbe::operator=(
+    InputLatencyProbe&& other) noexcept {
   if (this != &other) {
     stop();
     close_descriptors();
     other.stop();
-    std::scoped_lock lock(samples_mutex_, other.samples_mutex_, io_mutex_, other.io_mutex_);
+    std::scoped_lock lock(samples_mutex_, other.samples_mutex_, io_mutex_,
+                          other.io_mutex_);
     force_pipe_fallback_ = other.force_pipe_fallback_;
     is_pty_ = other.is_pty_;
     master_fd_ = other.master_fd_;
@@ -440,9 +453,11 @@ double InputLatencyProbe::measure_sample() {
   const int read_fd = is_pty_ ? master_fd_ : slave_fd_;
 
   char drain_buf[128];
-  while (::read(read_fd, drain_buf, sizeof(drain_buf)) > 0) {}
+  while (::read(read_fd, drain_buf, sizeof(drain_buf)) > 0) {
+  }
   if (is_pty_) {
-    while (::read(slave_fd_, drain_buf, sizeof(drain_buf)) > 0) {}
+    while (::read(slave_fd_, drain_buf, sizeof(drain_buf)) > 0) {
+    }
   }
 
   const auto t0 = std::chrono::steady_clock::now();
@@ -466,7 +481,8 @@ double InputLatencyProbe::measure_sample() {
           std::chrono::duration<double, std::milli>(t1 - t0).count();
 
       if (is_pty_) {
-        while (::read(slave_fd_, drain_buf, sizeof(drain_buf)) > 0) {}
+        while (::read(slave_fd_, drain_buf, sizeof(drain_buf)) > 0) {
+        }
       }
 
       std::lock_guard<std::mutex> lock(samples_mutex_);
@@ -560,13 +576,9 @@ size_t InputLatencyProbe::sample_count() const {
   return samples_.size();
 }
 
-bool InputLatencyProbe::is_running() const {
-  return running_.load();
-}
+bool InputLatencyProbe::is_running() const { return running_.load(); }
 
-bool InputLatencyProbe::is_pty() const {
-  return is_pty_;
-}
+bool InputLatencyProbe::is_pty() const { return is_pty_; }
 
 void InputLatencyProbe::reset() {
   std::lock_guard<std::mutex> lock(samples_mutex_);
@@ -584,9 +596,7 @@ TelemetrySampler::TelemetrySampler(std::string procfs_root,
       mem_telemetry_(procfs_root_, "/sys/block"),
       ksm_controller_(ksm_sysfs_root_) {}
 
-TelemetrySampler::~TelemetrySampler() {
-  stop();
-}
+TelemetrySampler::~TelemetrySampler() { stop(); }
 
 TelemetrySampler::TelemetrySampler(TelemetrySampler&& other) noexcept {
   other.stop();
@@ -610,7 +620,8 @@ TelemetrySampler::TelemetrySampler(TelemetrySampler&& other) noexcept {
   sample_count_ = other.sample_count_;
 }
 
-TelemetrySampler& TelemetrySampler::operator=(TelemetrySampler&& other) noexcept {
+TelemetrySampler& TelemetrySampler::operator=(
+    TelemetrySampler&& other) noexcept {
   if (this != &other) {
     stop();
     other.stop();
@@ -780,9 +791,7 @@ size_t TelemetrySampler::sample_count() const {
   return sample_count_;
 }
 
-bool TelemetrySampler::is_running() const {
-  return running_.load();
-}
+bool TelemetrySampler::is_running() const { return running_.load(); }
 
 void TelemetrySampler::set_target_pids(const std::vector<pid_t>& pids) {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -811,7 +820,8 @@ std::string_view trim_ws(std::string_view s) {
   return s;
 }
 
-std::optional<std::string_view> extract_json_obj(std::string_view json, std::string_view key) {
+std::optional<std::string_view> extract_json_obj(std::string_view json,
+                                                 std::string_view key) {
   std::string quoted = "\"" + std::string(key) + "\"";
   size_t pos = json.find(quoted);
   if (pos == std::string_view::npos) {
@@ -841,7 +851,8 @@ std::optional<std::string_view> extract_json_obj(std::string_view json, std::str
   return std::nullopt;
 }
 
-std::string parse_str_field(std::string_view obj, std::string_view key, const std::string& def = "") {
+std::string parse_str_field(std::string_view obj, std::string_view key,
+                            const std::string& def = "") {
   std::string quoted = "\"" + std::string(key) + "\"";
   size_t pos = obj.find(quoted);
   if (pos == std::string_view::npos) {
@@ -863,7 +874,8 @@ std::string parse_str_field(std::string_view obj, std::string_view key, const st
   return std::string(obj.substr(val_start, val_end - val_start));
 }
 
-double parse_double_field(std::string_view obj, std::string_view key, double def = 0.0) {
+double parse_double_field(std::string_view obj, std::string_view key,
+                          double def = 0.0) {
   std::string quoted = "\"" + std::string(key) + "\"";
   size_t pos = obj.find(quoted);
   if (pos == std::string_view::npos) {
@@ -874,24 +886,28 @@ double parse_double_field(std::string_view obj, std::string_view key, double def
     return def;
   }
   pos++;
-  while (pos < obj.size() && std::isspace(static_cast<unsigned char>(obj[pos]))) {
+  while (pos < obj.size() &&
+         std::isspace(static_cast<unsigned char>(obj[pos]))) {
     pos++;
   }
   size_t end = pos;
-  while (end < obj.size() && (std::isdigit(static_cast<unsigned char>(obj[end])) ||
-                              obj[end] == '.' || obj[end] == '-' ||
-                              obj[end] == 'e' || obj[end] == 'E' || obj[end] == '+')) {
+  while (end < obj.size() &&
+         (std::isdigit(static_cast<unsigned char>(obj[end])) ||
+          obj[end] == '.' || obj[end] == '-' || obj[end] == 'e' ||
+          obj[end] == 'E' || obj[end] == '+')) {
     end++;
   }
   if (end > pos) {
     try {
       return std::stod(std::string(obj.substr(pos, end - pos)));
-    } catch (...) {}
+    } catch (...) {
+    }
   }
   return def;
 }
 
-uint64_t parse_uint64_field(std::string_view obj, std::string_view key, uint64_t def = 0) {
+uint64_t parse_uint64_field(std::string_view obj, std::string_view key,
+                            uint64_t def = 0) {
   std::string quoted = "\"" + std::string(key) + "\"";
   size_t pos = obj.find(quoted);
   if (pos == std::string_view::npos) {
@@ -902,23 +918,27 @@ uint64_t parse_uint64_field(std::string_view obj, std::string_view key, uint64_t
     return def;
   }
   pos++;
-  while (pos < obj.size() && std::isspace(static_cast<unsigned char>(obj[pos]))) {
+  while (pos < obj.size() &&
+         std::isspace(static_cast<unsigned char>(obj[pos]))) {
     pos++;
   }
   size_t end = pos;
-  while (end < obj.size() && std::isdigit(static_cast<unsigned char>(obj[end]))) {
+  while (end < obj.size() &&
+         std::isdigit(static_cast<unsigned char>(obj[end]))) {
     end++;
   }
   if (end > pos) {
     try {
       return std::stoull(std::string(obj.substr(pos, end - pos)));
-    } catch (...) {}
+    } catch (...) {
+    }
   }
   return def;
 }
 
 int parse_int_field(std::string_view obj, std::string_view key, int def = 0) {
-  return static_cast<int>(parse_double_field(obj, key, static_cast<double>(def)));
+  return static_cast<int>(
+      parse_double_field(obj, key, static_cast<double>(def)));
 }
 
 BenchmarkResult parse_result_block(std::string_view obj) {
@@ -933,7 +953,8 @@ BenchmarkResult parse_result_block(std::string_view obj) {
   res.p99_latency_ms = parse_double_field(obj, "p99_latency_ms", 0.0);
   res.min_latency_ms = parse_double_field(obj, "min_latency_ms", 0.0);
   res.max_latency_ms = parse_double_field(obj, "max_latency_ms", 0.0);
-  res.latency_samples = static_cast<size_t>(parse_uint64_field(obj, "latency_samples", 0));
+  res.latency_samples =
+      static_cast<size_t>(parse_uint64_field(obj, "latency_samples", 0));
   res.oom_killed_count = parse_int_field(obj, "oom_killed_count", 0);
   res.successful_tasks = parse_int_field(obj, "successful_tasks", 0);
   res.failed_tasks = parse_int_field(obj, "failed_tasks", 0);
@@ -958,15 +979,20 @@ std::string format_comparison_table(const BenchmarkComparison& comp) {
     oss << std::string(kWidth, '=') << "\n";
     oss << "  Execution Mode:             Virmux Managed\n";
     oss << "  Concurrent Tasks:           " << m.task_count << "\n";
-    oss << "  Total Wall-Clock Time:      " << std::fixed << std::setprecision(2)
-        << m.wall_time_sec << " s\n";
-    oss << "  Peak Host RAM (RSS):        " << format_bytes(m.peak_rss_bytes) << "\n";
-    oss << "  Peak Swap Allocated:        " << format_bytes(m.peak_swap_bytes) << "\n";
-    oss << "  KSM Memory Saved:           " << format_bytes(m.peak_ksm_bytes_saved) << "\n";
-    oss << "  Host Terminal Input Lag:    " << std::fixed << std::setprecision(2)
-        << m.avg_latency_ms << " ms (p99: " << m.p99_latency_ms << " ms)\n";
+    oss << "  Total Wall-Clock Time:      " << std::fixed
+        << std::setprecision(2) << m.wall_time_sec << " s\n";
+    oss << "  Peak Host RAM (RSS):        " << format_bytes(m.peak_rss_bytes)
+        << "\n";
+    oss << "  Peak Swap Allocated:        " << format_bytes(m.peak_swap_bytes)
+        << "\n";
+    oss << "  KSM Memory Saved:           "
+        << format_bytes(m.peak_ksm_bytes_saved) << "\n";
+    oss << "  Host Terminal Input Lag:    " << std::fixed
+        << std::setprecision(2) << m.avg_latency_ms
+        << " ms (p99: " << m.p99_latency_ms << " ms)\n";
     oss << "  OOM Termination Count:      " << m.oom_killed_count << "\n";
-    oss << "  Tasks Completed / Total:    " << m.successful_tasks << "/" << m.task_count << "\n";
+    oss << "  Tasks Completed / Total:    " << m.successful_tasks << "/"
+        << m.task_count << "\n";
     oss << std::string(kWidth, '=') << "\n";
     return oss.str();
   }
@@ -978,15 +1004,20 @@ std::string format_comparison_table(const BenchmarkComparison& comp) {
     oss << std::string(kWidth, '=') << "\n";
     oss << "  Execution Mode:             Unmanaged Baseline\n";
     oss << "  Concurrent Tasks:           " << b.task_count << "\n";
-    oss << "  Total Wall-Clock Time:      " << std::fixed << std::setprecision(2)
-        << b.wall_time_sec << " s\n";
-    oss << "  Peak Host RAM (RSS):        " << format_bytes(b.peak_rss_bytes) << "\n";
-    oss << "  Peak Swap Allocated:        " << format_bytes(b.peak_swap_bytes) << "\n";
-    oss << "  KSM Memory Saved:           " << format_bytes(b.peak_ksm_bytes_saved) << "\n";
-    oss << "  Host Terminal Input Lag:    " << std::fixed << std::setprecision(2)
-        << b.avg_latency_ms << " ms (p99: " << b.p99_latency_ms << " ms)\n";
+    oss << "  Total Wall-Clock Time:      " << std::fixed
+        << std::setprecision(2) << b.wall_time_sec << " s\n";
+    oss << "  Peak Host RAM (RSS):        " << format_bytes(b.peak_rss_bytes)
+        << "\n";
+    oss << "  Peak Swap Allocated:        " << format_bytes(b.peak_swap_bytes)
+        << "\n";
+    oss << "  KSM Memory Saved:           "
+        << format_bytes(b.peak_ksm_bytes_saved) << "\n";
+    oss << "  Host Terminal Input Lag:    " << std::fixed
+        << std::setprecision(2) << b.avg_latency_ms
+        << " ms (p99: " << b.p99_latency_ms << " ms)\n";
     oss << "  OOM Termination Count:      " << b.oom_killed_count << "\n";
-    oss << "  Tasks Completed / Total:    " << b.successful_tasks << "/" << b.task_count << "\n";
+    oss << "  Tasks Completed / Total:    " << b.successful_tasks << "/"
+        << b.task_count << "\n";
     oss << std::string(kWidth, '=') << "\n";
     return oss.str();
   }
@@ -996,10 +1027,11 @@ std::string format_comparison_table(const BenchmarkComparison& comp) {
 
   char buf[256];
   oss << std::string(kWidth, '=') << "\n";
-  oss << "                       VIRMUX 12-TERMINAL GAUNTLET BENCHMARK REPORT\n";
+  oss << "                       VIRMUX 12-TERMINAL GAUNTLET BENCHMARK "
+         "REPORT\n";
   oss << std::string(kWidth, '=') << "\n";
-  std::snprintf(buf, sizeof(buf), "%-28s %-24s %-24s %s\n",
-                "Metric", "Baseline (Unmanaged)", "Virmux Managed", "Delta / Gain");
+  std::snprintf(buf, sizeof(buf), "%-28s %-24s %-24s %s\n", "Metric",
+                "Baseline (Unmanaged)", "Virmux Managed", "Delta / Gain");
   oss << buf;
   oss << std::string(kWidth, '-') << "\n";
 
@@ -1015,10 +1047,8 @@ std::string format_comparison_table(const BenchmarkComparison& comp) {
       delta_str = "N/A";
     }
     std::snprintf(buf, sizeof(buf), "%-28s %-24s %-24s %s\n",
-                  "Peak Host RAM (RSS)",
-                  format_bytes(b.peak_rss_bytes).c_str(),
-                  format_bytes(m.peak_rss_bytes).c_str(),
-                  delta_str.c_str());
+                  "Peak Host RAM (RSS)", format_bytes(b.peak_rss_bytes).c_str(),
+                  format_bytes(m.peak_rss_bytes).c_str(), delta_str.c_str());
     oss << buf;
   }
 
@@ -1036,8 +1066,7 @@ std::string format_comparison_table(const BenchmarkComparison& comp) {
     std::snprintf(buf, sizeof(buf), "%-28s %-24s %-24s %s\n",
                   "Peak Swap Allocated",
                   format_bytes(b.peak_swap_bytes).c_str(),
-                  format_bytes(m.peak_swap_bytes).c_str(),
-                  delta_str.c_str());
+                  format_bytes(m.peak_swap_bytes).c_str(), delta_str.c_str());
     oss << buf;
   }
 
@@ -1047,16 +1076,17 @@ std::string format_comparison_table(const BenchmarkComparison& comp) {
     std::snprintf(buf, sizeof(buf), "%-28s %-24s %-24s %s\n",
                   "KSM Memory Saved",
                   format_bytes(b.peak_ksm_bytes_saved).c_str(),
-                  format_bytes(m.peak_ksm_bytes_saved).c_str(),
-                  gain.c_str());
+                  format_bytes(m.peak_ksm_bytes_saved).c_str(), gain.c_str());
     oss << buf;
   }
 
   // 4. Input Latency
   {
     char b_lat[64], m_lat[64], delta_lat[64];
-    std::snprintf(b_lat, sizeof(b_lat), "%.2f ms (p99: %.2f)", b.avg_latency_ms, b.p99_latency_ms);
-    std::snprintf(m_lat, sizeof(m_lat), "%.2f ms (p99: %.2f)", m.avg_latency_ms, m.p99_latency_ms);
+    std::snprintf(b_lat, sizeof(b_lat), "%.2f ms (p99: %.2f)", b.avg_latency_ms,
+                  b.p99_latency_ms);
+    std::snprintf(m_lat, sizeof(m_lat), "%.2f ms (p99: %.2f)", m.avg_latency_ms,
+                  m.p99_latency_ms);
     double lat_mult = comp.latency_improvement_x();
     std::snprintf(delta_lat, sizeof(delta_lat), "%.1fx faster", lat_mult);
     std::snprintf(buf, sizeof(buf), "%-28s %-24s %-24s %s\n",
@@ -1095,9 +1125,12 @@ std::string format_comparison_table(const BenchmarkComparison& comp) {
   // 7. Tasks Completed / Total
   {
     char b_tasks[64], m_tasks[64], delta_tasks[64];
-    std::snprintf(b_tasks, sizeof(b_tasks), "%d/%d", b.successful_tasks, b.task_count);
-    std::snprintf(m_tasks, sizeof(m_tasks), "%d/%d", m.successful_tasks, m.task_count);
-    double pass_rate = m.task_count > 0 ? (100.0 * m.successful_tasks / m.task_count) : 0.0;
+    std::snprintf(b_tasks, sizeof(b_tasks), "%d/%d", b.successful_tasks,
+                  b.task_count);
+    std::snprintf(m_tasks, sizeof(m_tasks), "%d/%d", m.successful_tasks,
+                  m.task_count);
+    double pass_rate =
+        m.task_count > 0 ? (100.0 * m.successful_tasks / m.task_count) : 0.0;
     std::snprintf(delta_tasks, sizeof(delta_tasks), "%.1f%% pass", pass_rate);
     std::snprintf(buf, sizeof(buf), "%-28s %-24s %-24s %s\n",
                   "Tasks Completed / Total", b_tasks, m_tasks, delta_tasks);
@@ -1124,14 +1157,17 @@ std::string format_comparison_json(const BenchmarkComparison& comp) {
       << comp.baseline.wall_time_sec << ",\n";
   oss << "    \"peak_rss_bytes\": " << comp.baseline.peak_rss_bytes << ",\n";
   oss << "    \"peak_swap_bytes\": " << comp.baseline.peak_swap_bytes << ",\n";
-  oss << "    \"peak_ksm_bytes_saved\": " << comp.baseline.peak_ksm_bytes_saved << ",\n";
+  oss << "    \"peak_ksm_bytes_saved\": " << comp.baseline.peak_ksm_bytes_saved
+      << ",\n";
   oss << "    \"avg_latency_ms\": " << comp.baseline.avg_latency_ms << ",\n";
   oss << "    \"p99_latency_ms\": " << comp.baseline.p99_latency_ms << ",\n";
   oss << "    \"min_latency_ms\": " << comp.baseline.min_latency_ms << ",\n";
   oss << "    \"max_latency_ms\": " << comp.baseline.max_latency_ms << ",\n";
   oss << "    \"latency_samples\": " << comp.baseline.latency_samples << ",\n";
-  oss << "    \"oom_killed_count\": " << comp.baseline.oom_killed_count << ",\n";
-  oss << "    \"successful_tasks\": " << comp.baseline.successful_tasks << ",\n";
+  oss << "    \"oom_killed_count\": " << comp.baseline.oom_killed_count
+      << ",\n";
+  oss << "    \"successful_tasks\": " << comp.baseline.successful_tasks
+      << ",\n";
   oss << "    \"failed_tasks\": " << comp.baseline.failed_tasks << "\n";
   oss << "  },\n";
   oss << "  \"managed\": {\n";
@@ -1140,7 +1176,8 @@ std::string format_comparison_json(const BenchmarkComparison& comp) {
   oss << "    \"wall_time_sec\": " << comp.managed.wall_time_sec << ",\n";
   oss << "    \"peak_rss_bytes\": " << comp.managed.peak_rss_bytes << ",\n";
   oss << "    \"peak_swap_bytes\": " << comp.managed.peak_swap_bytes << ",\n";
-  oss << "    \"peak_ksm_bytes_saved\": " << comp.managed.peak_ksm_bytes_saved << ",\n";
+  oss << "    \"peak_ksm_bytes_saved\": " << comp.managed.peak_ksm_bytes_saved
+      << ",\n";
   oss << "    \"avg_latency_ms\": " << comp.managed.avg_latency_ms << ",\n";
   oss << "    \"p99_latency_ms\": " << comp.managed.p99_latency_ms << ",\n";
   oss << "    \"min_latency_ms\": " << comp.managed.min_latency_ms << ",\n";
@@ -1153,14 +1190,16 @@ std::string format_comparison_json(const BenchmarkComparison& comp) {
   oss << "  \"summary\": {\n";
   oss << "    \"rss_reduction_pct\": " << comp.rss_reduction_pct() << ",\n";
   oss << "    \"swap_reduction_pct\": " << comp.swap_reduction_pct() << ",\n";
-  oss << "    \"latency_improvement_x\": " << comp.latency_improvement_x() << ",\n";
+  oss << "    \"latency_improvement_x\": " << comp.latency_improvement_x()
+      << ",\n";
   oss << "    \"time_improvement_x\": " << comp.time_improvement_x() << "\n";
   oss << "  }\n";
   oss << "}\n";
   return oss.str();
 }
 
-std::optional<BenchmarkComparison> parse_comparison_json(std::string_view json) {
+std::optional<BenchmarkComparison> parse_comparison_json(
+    std::string_view json) {
   auto trimmed = trim_ws(json);
   if (trimmed.empty() || trimmed.front() != '{' || trimmed.back() != '}') {
     return std::nullopt;
@@ -1185,9 +1224,7 @@ std::optional<BenchmarkComparison> parse_comparison_json(std::string_view json) 
 
 BenchmarkRunner::BenchmarkRunner(bool quick) : quick_(quick) {}
 
-BenchmarkRunner::~BenchmarkRunner() {
-  stop();
-}
+BenchmarkRunner::~BenchmarkRunner() { stop(); }
 
 BenchmarkRunner::BenchmarkRunner(BenchmarkRunner&& other) noexcept
     : quick_(other.quick_), stop_flag_(other.stop_flag_.load()) {}
@@ -1203,14 +1240,41 @@ BenchmarkRunner& BenchmarkRunner::operator=(BenchmarkRunner&& other) noexcept {
 
 void BenchmarkRunner::stop() {
   stop_flag_.store(true);
+  reap_children();
 }
 
-std::vector<BenchmarkTaskConfig> BenchmarkRunner::build_tasks(int count, int duration_sec) const {
+void BenchmarkRunner::reap_children() {
+  std::lock_guard<std::mutex> lock(pids_mutex_);
+  for (pid_t p : active_pids_) {
+    if (p > 0 && ::kill(p, 0) == 0) {
+      ::kill(-p, SIGTERM);
+      ::kill(p, SIGTERM);
+    }
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  for (pid_t p : active_pids_) {
+    if (p > 0 && ::kill(p, 0) == 0) {
+      ::kill(-p, SIGKILL);
+      ::kill(p, SIGKILL);
+    }
+    if (p > 0) {
+      for (int retry = 0; retry < 20; ++retry) {
+        if (::waitpid(p, nullptr, WNOHANG) > 0 || ::kill(p, 0) < 0) {
+          break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      }
+    }
+  }
+}
+
+std::vector<BenchmarkTaskConfig> BenchmarkRunner::build_tasks(
+    int count, int duration_sec) const {
   const WorkloadType types[] = {
-      WorkloadType::BROWSER,  WorkloadType::COMPILER, WorkloadType::MODEL,
-      WorkloadType::BUILD,    WorkloadType::BROWSER,  WorkloadType::COMPILER,
-      WorkloadType::BROWSER,  WorkloadType::COMPILER, WorkloadType::MODEL,
-      WorkloadType::BUILD,    WorkloadType::BROWSER,  WorkloadType::COMPILER,
+      WorkloadType::BROWSER, WorkloadType::COMPILER, WorkloadType::MODEL,
+      WorkloadType::BUILD,   WorkloadType::BROWSER,  WorkloadType::COMPILER,
+      WorkloadType::BROWSER, WorkloadType::COMPILER, WorkloadType::MODEL,
+      WorkloadType::BUILD,   WorkloadType::BROWSER,  WorkloadType::COMPILER,
   };
 
   std::vector<BenchmarkTaskConfig> tasks;
@@ -1243,7 +1307,7 @@ std::vector<BenchmarkTaskConfig> BenchmarkRunner::build_tasks(int count, int dur
         break;
       case WorkloadType::BUILD:
         cfg.name = "build_" + std::to_string(i);
-        cfg.memory_limit_bytes = 536870912ULL;   // 512 MiB
+        cfg.memory_limit_bytes = 536870912ULL;  // 512 MiB
         cfg.is_heavy = false;
         cfg.target_alloc_mb = 0;
         break;
@@ -1256,13 +1320,22 @@ std::vector<BenchmarkTaskConfig> BenchmarkRunner::build_tasks(int count, int dur
 }
 
 BenchmarkResult BenchmarkRunner::execute_suite(
-    const std::vector<BenchmarkTaskConfig>& tasks, bool managed, int duration_sec) {
+    const std::vector<BenchmarkTaskConfig>& tasks, bool managed,
+    int duration_sec) {
   (void)duration_sec;
-  stop_flag_.store(false);
 
   BenchmarkResult res;
   res.mode = managed ? "managed" : "baseline";
   res.task_count = static_cast<int>(tasks.size());
+
+  if (stop_flag_.load(std::memory_order_relaxed)) {
+    return res;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(pids_mutex_);
+    active_pids_.clear();
+  }
 
   InputLatencyProbe probe;
   TelemetrySampler telemetry;
@@ -1270,33 +1343,10 @@ BenchmarkResult BenchmarkRunner::execute_suite(
   telemetry.start(30);
   probe.start(20);
 
-  std::vector<pid_t> child_pids;
-  std::mutex pids_mutex;
-
   struct ProcessCleaner {
-    std::vector<pid_t>& pids;
-    std::mutex& mtx;
-    std::atomic<bool>& stop;
-
-    ~ProcessCleaner() {
-      stop.store(true);
-      std::lock_guard<std::mutex> lock(mtx);
-      for (pid_t p : pids) {
-        if (p > 0 && ::kill(p, 0) == 0) {
-          ::kill(p, SIGTERM);
-        }
-      }
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-      for (pid_t p : pids) {
-        if (p > 0 && ::kill(p, 0) == 0) {
-          ::kill(p, SIGKILL);
-        }
-        if (p > 0) {
-          ::waitpid(p, nullptr, WNOHANG);
-        }
-      }
-    }
-  } cleaner{child_pids, pids_mutex, stop_flag_};
+    BenchmarkRunner& runner;
+    ~ProcessCleaner() { runner.reap_children(); }
+  } cleaner{*this};
 
   std::atomic<int> success_count{0};
   std::atomic<int> failed_count{0};
@@ -1310,8 +1360,8 @@ BenchmarkResult BenchmarkRunner::execute_suite(
   workers.reserve(tasks.size());
 
   for (const auto& task : tasks) {
-    workers.emplace_back([this, task, managed, &gate, &child_pids, &pids_mutex,
-                          &telemetry, &success_count, &failed_count, &oom_count]() {
+    workers.emplace_back([this, task, managed, &gate, &telemetry,
+                          &success_count, &failed_count, &oom_count]() {
       if (stop_flag_.load(std::memory_order_relaxed)) {
         return;
       }
@@ -1319,7 +1369,8 @@ BenchmarkResult BenchmarkRunner::execute_suite(
       std::unique_ptr<ScopedToken> token;
       if (managed && task.is_heavy) {
         while (!stop_flag_.load(std::memory_order_relaxed)) {
-          token = std::make_unique<ScopedToken>(gate, std::chrono::milliseconds(100));
+          token = std::make_unique<ScopedToken>(gate,
+                                                std::chrono::milliseconds(100));
           if (token->acquired()) {
             break;
           }
@@ -1362,18 +1413,23 @@ BenchmarkResult BenchmarkRunner::execute_suite(
       }
 
       {
-        std::lock_guard<std::mutex> lock(pids_mutex);
-        child_pids.push_back(pid);
+        std::lock_guard<std::mutex> lock(pids_mutex_);
+        active_pids_.push_back(pid);
       }
       telemetry.add_target_pid(pid);
 
       int status = 0;
-      pid_t wr = ::waitpid(pid, &status, 0);
+      pid_t wr = 0;
+      while ((wr = ::waitpid(pid, &status, 0)) < 0 && errno == EINTR) {
+        if (stop_flag_.load(std::memory_order_relaxed)) {
+          break;
+        }
+      }
 
-      {
-        std::lock_guard<std::mutex> lock(pids_mutex);
-        auto it = std::find(child_pids.begin(), child_pids.end(), pid);
-        if (it != child_pids.end()) {
+      if (wr > 0) {
+        std::lock_guard<std::mutex> lock(pids_mutex_);
+        auto it = std::find(active_pids_.begin(), active_pids_.end(), pid);
+        if (it != active_pids_.end()) {
           *it = -1;
         }
       }
@@ -1444,6 +1500,9 @@ BenchmarkComparison BenchmarkRunner::run_gauntlet(int duration_sec, int tasks) {
   int tcount = tasks > 0 ? tasks : (quick_ ? 4 : 12);
   BenchmarkComparison comp;
   comp.baseline = run_baseline(dur, tcount);
+  if (stop_flag_.load(std::memory_order_relaxed)) {
+    return comp;
+  }
   comp.managed = run_managed(dur, tcount);
   return comp;
 }

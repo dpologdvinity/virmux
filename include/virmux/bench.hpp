@@ -1,6 +1,7 @@
 /**
  * @file bench.hpp
- * @brief Benchmark workload generators, input latency probe, and telemetry sampler.
+ * @brief Benchmark workload generators, input latency probe, and telemetry
+ * sampler.
  */
 
 #pragma once
@@ -70,13 +71,15 @@ int run_synthetic_workload(WorkloadType type, int duration_seconds,
                            std::atomic<bool>* stop_flag = nullptr);
 
 /**
- * @brief High-resolution input latency probe measuring PTY or pipe round-trip time.
+ * @brief High-resolution input latency probe measuring PTY or pipe round-trip
+ * time.
  */
 class InputLatencyProbe {
  public:
   /**
    * @brief Construct a new InputLatencyProbe.
-   * @param force_pipe_fallback If true, bypass openpty() and use anonymous pipe.
+   * @param force_pipe_fallback If true, bypass openpty() and use anonymous
+   * pipe.
    */
   explicit InputLatencyProbe(bool force_pipe_fallback = false);
 
@@ -91,7 +94,8 @@ class InputLatencyProbe {
   InputLatencyProbe& operator=(InputLatencyProbe&&) noexcept;
 
   /**
-   * @brief Start background sampling thread measuring latency every interval_ms.
+   * @brief Start background sampling thread measuring latency every
+   * interval_ms.
    */
   void start(int interval_ms = 50);
 
@@ -164,14 +168,16 @@ class InputLatencyProbe {
 };
 
 /**
- * @brief Real-time telemetry sampler monitoring host and process memory, swap, and KSM stats.
+ * @brief Real-time telemetry sampler monitoring host and process memory, swap,
+ * and KSM stats.
  */
 class TelemetrySampler {
  public:
   /**
    * @brief Construct a new TelemetrySampler instance.
    * @param procfs_root Root path for procfs (defaults to "/proc").
-   * @param ksm_sysfs_root Root path for KSM sysfs (defaults to "/sys/kernel/mm/ksm").
+   * @param ksm_sysfs_root Root path for KSM sysfs (defaults to
+   * "/sys/kernel/mm/ksm").
    */
   explicit TelemetrySampler(std::string procfs_root = "/proc",
                             std::string ksm_sysfs_root = "/sys/kernel/mm/ksm");
@@ -202,12 +208,14 @@ class TelemetrySampler {
   void sample();
 
   /**
-   * @brief Current RSS bytes (sum of tracked PIDs, or host used RAM if none tracked).
+   * @brief Current RSS bytes (sum of tracked PIDs, or host used RAM if none
+   * tracked).
    */
   [[nodiscard]] uint64_t current_rss_bytes() const;
 
   /**
-   * @brief Current swap bytes (sum of tracked PIDs, or host used swap if none tracked).
+   * @brief Current swap bytes (sum of tracked PIDs, or host used swap if none
+   * tracked).
    */
   [[nodiscard]] uint64_t current_swap_bytes() const;
 
@@ -331,14 +339,16 @@ struct BenchmarkResult {
 };
 
 /**
- * @brief Side-by-side comparison of unmanaged baseline vs Virmux-managed benchmark results.
+ * @brief Side-by-side comparison of unmanaged baseline vs Virmux-managed
+ * benchmark results.
  */
 struct BenchmarkComparison {
   BenchmarkResult baseline;
   BenchmarkResult managed;
 
   /**
-   * @brief Percentage reduction in peak RSS memory usage ((1 - managed / baseline) * 100).
+   * @brief Percentage reduction in peak RSS memory usage ((1 - managed /
+   * baseline) * 100).
    */
   [[nodiscard]] double rss_reduction_pct() const noexcept {
     if (baseline.peak_rss_bytes == 0) {
@@ -350,7 +360,8 @@ struct BenchmarkComparison {
   }
 
   /**
-   * @brief Percentage reduction in peak swap memory usage ((1 - managed / baseline) * 100).
+   * @brief Percentage reduction in peak swap memory usage ((1 - managed /
+   * baseline) * 100).
    */
   [[nodiscard]] double swap_reduction_pct() const noexcept {
     if (baseline.peak_swap_bytes == 0) {
@@ -362,7 +373,8 @@ struct BenchmarkComparison {
   }
 
   /**
-   * @brief Ratio of baseline input latency to managed input latency (baseline / managed).
+   * @brief Ratio of baseline input latency to managed input latency (baseline /
+   * managed).
    */
   [[nodiscard]] double latency_improvement_x() const noexcept {
     if (managed.avg_latency_ms <= 0.0001) {
@@ -372,7 +384,8 @@ struct BenchmarkComparison {
   }
 
   /**
-   * @brief Ratio of baseline completion time to managed completion time (baseline / managed).
+   * @brief Ratio of baseline completion time to managed completion time
+   * (baseline / managed).
    */
   [[nodiscard]] double time_improvement_x() const noexcept {
     if (managed.wall_time_sec <= 0.0001) {
@@ -385,21 +398,25 @@ struct BenchmarkComparison {
 /**
  * @brief Format side-by-side ASCII/ANSI terminal comparison table.
  */
-[[nodiscard]] std::string format_comparison_table(const BenchmarkComparison& comp);
+[[nodiscard]] std::string format_comparison_table(
+    const BenchmarkComparison& comp);
 
 /**
  * @brief Format benchmark comparison into structured JSON string.
  */
-[[nodiscard]] std::string format_comparison_json(const BenchmarkComparison& comp);
+[[nodiscard]] std::string format_comparison_json(
+    const BenchmarkComparison& comp);
 
 /**
  * @brief Parse structured JSON string into BenchmarkComparison instance.
  * @return BenchmarkComparison on success, or std::nullopt on syntax error.
  */
-[[nodiscard]] std::optional<BenchmarkComparison> parse_comparison_json(std::string_view json);
+[[nodiscard]] std::optional<BenchmarkComparison> parse_comparison_json(
+    std::string_view json);
 
 /**
- * @brief Benchmark runner orchestrating synthetic workload tasks in baseline and managed modes.
+ * @brief Benchmark runner orchestrating synthetic workload tasks in baseline
+ * and managed modes.
  */
 class BenchmarkRunner {
  public:
@@ -457,10 +474,14 @@ class BenchmarkRunner {
  private:
   bool quick_{false};
   std::atomic<bool> stop_flag_{false};
+  std::vector<pid_t> active_pids_;
+  mutable std::mutex pids_mutex_;
 
-  std::vector<BenchmarkTaskConfig> build_tasks(int count, int duration_sec) const;
+  std::vector<BenchmarkTaskConfig> build_tasks(int count,
+                                               int duration_sec) const;
   BenchmarkResult execute_suite(const std::vector<BenchmarkTaskConfig>& tasks,
-                               bool managed, int duration_sec);
+                                bool managed, int duration_sec);
+  void reap_children();
 };
 
 }  // namespace virmux

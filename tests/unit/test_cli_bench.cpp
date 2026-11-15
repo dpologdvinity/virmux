@@ -1,6 +1,7 @@
 /**
  * @file test_cli_bench.cpp
- * @brief Unit tests for CLI bench runner, table/JSON formatting, and calculation helpers.
+ * @brief Unit tests for CLI bench runner, table/JSON formatting, and
+ * calculation helpers.
  */
 
 extern "C" {
@@ -103,36 +104,57 @@ void test_json_format_and_parse_roundtrip(void) {
   auto parsed = virmux::parse_comparison_json(json);
   TEST_ASSERT_TRUE(parsed.has_value());
 
-  TEST_ASSERT_EQUAL_STRING(comp.baseline.mode.c_str(), parsed->baseline.mode.c_str());
+  TEST_ASSERT_EQUAL_STRING(comp.baseline.mode.c_str(),
+                           parsed->baseline.mode.c_str());
   TEST_ASSERT_EQUAL_INT(comp.baseline.task_count, parsed->baseline.task_count);
-  TEST_ASSERT_TRUE(std::abs(comp.baseline.wall_time_sec - parsed->baseline.wall_time_sec) < 0.001);
-  TEST_ASSERT_EQUAL_UINT64(comp.baseline.peak_rss_bytes, parsed->baseline.peak_rss_bytes);
-  TEST_ASSERT_EQUAL_UINT64(comp.baseline.peak_swap_bytes, parsed->baseline.peak_swap_bytes);
-  TEST_ASSERT_EQUAL_UINT64(comp.baseline.peak_ksm_bytes_saved, parsed->baseline.peak_ksm_bytes_saved);
-  TEST_ASSERT_TRUE(std::abs(comp.baseline.avg_latency_ms - parsed->baseline.avg_latency_ms) < 0.01);
-  TEST_ASSERT_TRUE(std::abs(comp.baseline.p99_latency_ms - parsed->baseline.p99_latency_ms) < 0.01);
-  TEST_ASSERT_EQUAL_INT(comp.baseline.oom_killed_count, parsed->baseline.oom_killed_count);
-  TEST_ASSERT_EQUAL_INT(comp.baseline.successful_tasks, parsed->baseline.successful_tasks);
-  TEST_ASSERT_EQUAL_INT(comp.baseline.failed_tasks, parsed->baseline.failed_tasks);
+  TEST_ASSERT_TRUE(std::abs(comp.baseline.wall_time_sec -
+                            parsed->baseline.wall_time_sec) < 0.001);
+  TEST_ASSERT_EQUAL_UINT64(comp.baseline.peak_rss_bytes,
+                           parsed->baseline.peak_rss_bytes);
+  TEST_ASSERT_EQUAL_UINT64(comp.baseline.peak_swap_bytes,
+                           parsed->baseline.peak_swap_bytes);
+  TEST_ASSERT_EQUAL_UINT64(comp.baseline.peak_ksm_bytes_saved,
+                           parsed->baseline.peak_ksm_bytes_saved);
+  TEST_ASSERT_TRUE(std::abs(comp.baseline.avg_latency_ms -
+                            parsed->baseline.avg_latency_ms) < 0.01);
+  TEST_ASSERT_TRUE(std::abs(comp.baseline.p99_latency_ms -
+                            parsed->baseline.p99_latency_ms) < 0.01);
+  TEST_ASSERT_EQUAL_INT(comp.baseline.oom_killed_count,
+                        parsed->baseline.oom_killed_count);
+  TEST_ASSERT_EQUAL_INT(comp.baseline.successful_tasks,
+                        parsed->baseline.successful_tasks);
+  TEST_ASSERT_EQUAL_INT(comp.baseline.failed_tasks,
+                        parsed->baseline.failed_tasks);
 
-  TEST_ASSERT_EQUAL_STRING(comp.managed.mode.c_str(), parsed->managed.mode.c_str());
+  TEST_ASSERT_EQUAL_STRING(comp.managed.mode.c_str(),
+                           parsed->managed.mode.c_str());
   TEST_ASSERT_EQUAL_INT(comp.managed.task_count, parsed->managed.task_count);
-  TEST_ASSERT_TRUE(std::abs(comp.managed.wall_time_sec - parsed->managed.wall_time_sec) < 0.001);
-  TEST_ASSERT_EQUAL_UINT64(comp.managed.peak_rss_bytes, parsed->managed.peak_rss_bytes);
-  TEST_ASSERT_EQUAL_UINT64(comp.managed.peak_swap_bytes, parsed->managed.peak_swap_bytes);
-  TEST_ASSERT_EQUAL_UINT64(comp.managed.peak_ksm_bytes_saved, parsed->managed.peak_ksm_bytes_saved);
-  TEST_ASSERT_TRUE(std::abs(comp.managed.avg_latency_ms - parsed->managed.avg_latency_ms) < 0.01);
-  TEST_ASSERT_TRUE(std::abs(comp.managed.p99_latency_ms - parsed->managed.p99_latency_ms) < 0.01);
-  TEST_ASSERT_EQUAL_INT(comp.managed.oom_killed_count, parsed->managed.oom_killed_count);
-  TEST_ASSERT_EQUAL_INT(comp.managed.successful_tasks, parsed->managed.successful_tasks);
-  TEST_ASSERT_EQUAL_INT(comp.managed.failed_tasks, parsed->managed.failed_tasks);
+  TEST_ASSERT_TRUE(std::abs(comp.managed.wall_time_sec -
+                            parsed->managed.wall_time_sec) < 0.001);
+  TEST_ASSERT_EQUAL_UINT64(comp.managed.peak_rss_bytes,
+                           parsed->managed.peak_rss_bytes);
+  TEST_ASSERT_EQUAL_UINT64(comp.managed.peak_swap_bytes,
+                           parsed->managed.peak_swap_bytes);
+  TEST_ASSERT_EQUAL_UINT64(comp.managed.peak_ksm_bytes_saved,
+                           parsed->managed.peak_ksm_bytes_saved);
+  TEST_ASSERT_TRUE(std::abs(comp.managed.avg_latency_ms -
+                            parsed->managed.avg_latency_ms) < 0.01);
+  TEST_ASSERT_TRUE(std::abs(comp.managed.p99_latency_ms -
+                            parsed->managed.p99_latency_ms) < 0.01);
+  TEST_ASSERT_EQUAL_INT(comp.managed.oom_killed_count,
+                        parsed->managed.oom_killed_count);
+  TEST_ASSERT_EQUAL_INT(comp.managed.successful_tasks,
+                        parsed->managed.successful_tasks);
+  TEST_ASSERT_EQUAL_INT(comp.managed.failed_tasks,
+                        parsed->managed.failed_tasks);
 }
 
 void test_json_parse_invalid(void) {
   TEST_ASSERT_FALSE(virmux::parse_comparison_json("").has_value());
   TEST_ASSERT_FALSE(virmux::parse_comparison_json("invalid json").has_value());
   TEST_ASSERT_FALSE(virmux::parse_comparison_json("{}").has_value());
-  TEST_ASSERT_FALSE(virmux::parse_comparison_json("{\"random_key\": 123}").has_value());
+  TEST_ASSERT_FALSE(
+      virmux::parse_comparison_json("{\"random_key\": 123}").has_value());
 }
 
 void test_format_comparison_table(void) {
@@ -160,7 +182,8 @@ void test_format_comparison_table(void) {
 
   const std::string table = virmux::format_comparison_table(comp);
   TEST_ASSERT_TRUE(!table.empty());
-  TEST_ASSERT_TRUE(table.find("12-TERMINAL GAUNTLET BENCHMARK REPORT") != std::string::npos);
+  TEST_ASSERT_TRUE(table.find("12-TERMINAL GAUNTLET BENCHMARK REPORT") !=
+                   std::string::npos);
   TEST_ASSERT_TRUE(table.find("Peak Host RAM (RSS)") != std::string::npos);
   TEST_ASSERT_TRUE(table.find("Peak Swap Allocated") != std::string::npos);
   TEST_ASSERT_TRUE(table.find("KSM Memory Saved") != std::string::npos);
@@ -178,7 +201,8 @@ void test_format_comparison_table(void) {
   // Test empty report
   virmux::BenchmarkComparison empty_comp;
   const std::string empty_table = virmux::format_comparison_table(empty_comp);
-  TEST_ASSERT_TRUE(empty_table.find("No benchmark results recorded") != std::string::npos);
+  TEST_ASSERT_TRUE(empty_table.find("No benchmark results recorded") !=
+                   std::string::npos);
 }
 
 void test_cli_arg_parsing(void) {
@@ -213,7 +237,8 @@ void test_cli_arg_parsing(void) {
   // Unknown option for run
   {
     char* argv[] = {const_cast<char*>("virmux"), const_cast<char*>("bench"),
-                    const_cast<char*>("run"), const_cast<char*>("--bad-option")};
+                    const_cast<char*>("run"),
+                    const_cast<char*>("--bad-option")};
     TEST_ASSERT_EQUAL_INT(1, virmux::cmd_bench(4, argv));
   }
 
@@ -243,9 +268,10 @@ void test_cli_arg_parsing(void) {
 
   // Non-existent report file
   {
-    char* argv[] = {const_cast<char*>("virmux"), const_cast<char*>("bench"),
-                    const_cast<char*>("report"), const_cast<char*>("--input"),
-                    const_cast<char*>("/tmp/virmux_nonexistent_report_12345.json")};
+    char* argv[] = {
+        const_cast<char*>("virmux"), const_cast<char*>("bench"),
+        const_cast<char*>("report"), const_cast<char*>("--input"),
+        const_cast<char*>("/tmp/virmux_nonexistent_report_12345.json")};
     TEST_ASSERT_EQUAL_INT(1, virmux::cmd_bench(5, argv));
   }
 }
@@ -282,16 +308,11 @@ void test_cli_run_and_report_file_roundtrip(void) {
   std::filesystem::remove(tmp_file, ec);
 
   char* argv_run[] = {
-      const_cast<char*>("virmux"),
-      const_cast<char*>("bench"),
-      const_cast<char*>("run"),
-      const_cast<char*>("--quick"),
-      const_cast<char*>("--tasks"),
-      const_cast<char*>("2"),
-      const_cast<char*>("--duration"),
-      const_cast<char*>("1"),
-      const_cast<char*>("--output"),
-      const_cast<char*>(tmp_file.c_str()),
+      const_cast<char*>("virmux"),     const_cast<char*>("bench"),
+      const_cast<char*>("run"),        const_cast<char*>("--quick"),
+      const_cast<char*>("--tasks"),    const_cast<char*>("2"),
+      const_cast<char*>("--duration"), const_cast<char*>("1"),
+      const_cast<char*>("--output"),   const_cast<char*>(tmp_file.c_str()),
   };
 
   int rc_run = virmux::cmd_bench(10, argv_run);
@@ -301,10 +322,8 @@ void test_cli_run_and_report_file_roundtrip(void) {
 
   // Now report using the file
   char* argv_report[] = {
-      const_cast<char*>("virmux"),
-      const_cast<char*>("bench"),
-      const_cast<char*>("report"),
-      const_cast<char*>("--input"),
+      const_cast<char*>("virmux"),         const_cast<char*>("bench"),
+      const_cast<char*>("report"),         const_cast<char*>("--input"),
       const_cast<char*>(tmp_file.c_str()),
   };
 
@@ -312,6 +331,32 @@ void test_cli_run_and_report_file_roundtrip(void) {
   TEST_ASSERT_EQUAL_INT(0, rc_report);
 
   std::filesystem::remove(tmp_file, ec);
+}
+
+void test_runner_stop_cancellation(void) {
+  virmux::BenchmarkRunner runner;
+  runner.set_quick(false);
+
+  auto start_time = std::chrono::steady_clock::now();
+
+  std::thread stopper([&runner]() {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    runner.stop();
+  });
+
+  // Request 10-second run; should abort early via runner.stop()
+  auto result = runner.run_baseline(10, 2);
+
+  if (stopper.joinable()) {
+    stopper.join();
+  }
+
+  auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - start_time)
+                        .count();
+
+  // Run should have aborted well before 10 seconds (typically < 1000ms)
+  TEST_ASSERT_TRUE(elapsed_ms < 3000);
 }
 
 int main(void) {
@@ -323,5 +368,6 @@ int main(void) {
   RUN_TEST(test_cli_arg_parsing);
   RUN_TEST(test_quick_runner_execution);
   RUN_TEST(test_cli_run_and_report_file_roundtrip);
+  RUN_TEST(test_runner_stop_cancellation);
   return UNITY_END();
 }
