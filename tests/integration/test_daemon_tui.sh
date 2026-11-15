@@ -215,9 +215,17 @@ if kill -0 "$WORKER_PID" 2>/dev/null; then
   exit 1
 fi
 
-if [[ -n "$CHILD_WORKERS" ]] && kill -0 $CHILD_WORKERS 2>/dev/null; then
-  log_error "Child worker process $CHILD_WORKERS still running after session kill"
-  exit 1
+if [[ -n "$CHILD_WORKERS" ]]; then
+  for _ in {1..20}; do
+    if ! kill -0 $CHILD_WORKERS 2>/dev/null; then
+      break
+    fi
+    sleep 0.05
+  done
+  if kill -0 $CHILD_WORKERS 2>/dev/null; then
+    log_error "Child worker process $CHILD_WORKERS still running after session kill"
+    exit 1
+  fi
 fi
 WORKER_PID=""
 CHILD_WORKERS=""
