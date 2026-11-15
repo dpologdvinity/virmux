@@ -22,6 +22,7 @@ virmux_core_lib = static_library(
     'src/core/cgroup.cpp',
     'src/sched/gate.cpp',
     'src/core/sandbox.cpp',
+    'src/core/checkpoint.cpp',
     'src/memory/cleanse.cpp',
     'src/memory/ksm.cpp',
     'src/memory/compactor.cpp',
@@ -288,6 +289,30 @@ test_tui_exe = executable(
 
 test('test_tui', test_tui_exe)
 
+test_fault_isolation_exe = executable(
+  'test_fault_isolation',
+  'tests/unit/test_fault_isolation.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_fault_isolation', test_fault_isolation_exe)
+
+test_idle_autofreeze_exe = executable(
+  'test_idle_autofreeze',
+  'tests/unit/test_idle_autofreeze.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_idle_autofreeze', test_idle_autofreeze_exe)
+
+test_checkpoint_exe = executable(
+  'test_checkpoint',
+  'tests/unit/test_checkpoint.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_checkpoint', test_checkpoint_exe)
+
 virmux_exe = executable(
   'virmux',
   'cli/main.cpp',
@@ -339,6 +364,18 @@ test(
 )
 
 test(
+  'test_cli_checkpoint_help',
+  virmux_exe,
+  args: ['checkpoint', '--help'],
+)
+
+test(
+  'test_cli_restore_help',
+  virmux_exe,
+  args: ['restore', '--help'],
+)
+
+test(
   'integration_virmux_run',
   find_program('bash'),
   args: [
@@ -376,6 +413,17 @@ test(
   find_program('bash'),
   args: [
     meson.current_source_dir() / 'tests/integration/test_daemon_tui.sh',
+    meson.current_build_dir(),
+  ],
+  depends: [virmux_exe, virmux_intercept_lib],
+  timeout: 120,
+)
+
+test(
+  'integration_fault_isolation',
+  find_program('bash'),
+  args: [
+    meson.current_source_dir() / 'tests/integration/test_fault_isolation.sh',
     meson.current_build_dir(),
   ],
   depends: [virmux_exe, virmux_intercept_lib],

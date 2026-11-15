@@ -176,6 +176,17 @@ bool CgroupSlice::set_cpuset(const std::string& cores_str) {
     return true;
 }
 
+bool CgroupSlice::set_pids_max(uint64_t max_pids) {
+    if (path_.empty()) {
+        return false;
+    }
+    std::string val = (max_pids == 0) ? "max\n" : (std::to_string(max_pids) + "\n");
+    if (!write_file("pids.max", val)) {
+        return false;
+    }
+    return true;
+}
+
 bool CgroupSlice::attach_pid(pid_t pid) {
     if (!valid_ || path_.empty()) {
         return false;

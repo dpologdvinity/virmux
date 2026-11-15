@@ -26,6 +26,7 @@
 
 #include "virmux/cli_stats.hpp"
 #include "virmux/memory_manager.hpp"
+#include "virmux/sandbox.hpp"
 
 namespace virmux {
 
@@ -350,6 +351,14 @@ SupervisorDaemon::SupervisorDaemon(DaemonConfig config)
     : config_(std::move(config)),
       socket_path_(config_.socket_path.empty() ? resolve_socket_path()
                                                : config_.socket_path) {
+  registry_.set_auto_freeze(config_.auto_freeze_enabled,
+                            config_.idle_timeout_ms);
+  registry_.set_on_auto_freeze([this](uint64_t /*id*/, pid_t pid) {
+    if (pid > 0) {
+      (void)compactor_.compact_pid(pid);
+    }
+  });
+
   if (::pipe2(wake_pipe_, O_CLOEXEC | O_NONBLOCK) < 0) {
     wake_pipe_[0] = -1;
     wake_pipe_[1] = -1;
@@ -377,6 +386,18 @@ bool SupervisorDaemon::init() {
   if (server_fd_ >= 0) {
     return true;
   }
+
+  // Protect supervisor daemon from kernel OOM killer if permissions permit
+  // (-900)
+  set_process_oom_score(0, -900);
+
+  registry_.set_auto_freeze(config_.auto_freeze_enabled,
+                            config_.idle_timeout_ms);
+  registry_.set_on_auto_freeze([this](uint64_t /*id*/, pid_t pid) {
+    if (pid > 0) {
+      (void)compactor_.compact_pid(pid);
+    }
+  });
 
   stop_requested_.store(false);
   running_.store(false);
@@ -423,8 +444,8 @@ bool SupervisorDaemon::init() {
       // Stale socket from dead daemon: safe to unlink
       ::unlink(socket_path_.c_str());
     } else {
-      // Socket exists but connect failed with transient error (e.g. EAGAIN, EINPROGRESS)
-      // Do not unlink active socket
+      // Socket exists but connect failed with transient error (e.g. EAGAIN,
+      // EINPROGRESS) Do not unlink active socket
       return false;
     }
   }
@@ -598,6 +619,12 @@ bool SupervisorDaemon::is_running() const { return running_.load(); }
 
 SessionRegistry& SupervisorDaemon::registry() { return registry_; }
 
+ProcessCompactor& SupervisorDaemon::compactor() { return compactor_; }
+
+const ProcessCompactor& SupervisorDaemon::compactor() const {
+  return compactor_;
+}
+
 const std::string& SupervisorDaemon::socket_path() const {
   return socket_path_;
 }
@@ -653,6 +680,9 @@ void SupervisorDaemon::handle_client_request(int client_fd, uint16_t msg_type,
       uint64_t id = 0;
       int sig = SIGTERM;
       parse_kill_payload(payload, id, sig);
+      if (id > 0) {
+        registry_.touch_session(id);
+      }
       if (id > 0 && registry_.kill_session(id, sig)) {
         send_ipc_message(client_fd, MSG_KILL_SESSION_RESP, "OK", 500);
       } else {
@@ -667,6 +697,32 @@ void SupervisorDaemon::handle_client_request(int client_fd, uint16_t msg_type,
       KsmStats ksm = mgr.get_ksm_stats();
       std::string stats_json = format_stats_json(host, ksm);
       send_ipc_message(client_fd, MSG_GET_STATS_RESP, stats_json, 1000);
+      break;
+    }
+    case MSG_CHECKPOINT_SESSION_REQ: {
+      uint64_t id = parse_session_id(payload);
+      std::string status_msg;
+      if (id > 0 && registry_.checkpoint_session(id, &status_msg)) {
+        std::string resp = status_msg.empty() ? "OK" : status_msg;
+        send_ipc_message(client_fd, MSG_CHECKPOINT_SESSION_RESP, resp, 5000);
+      } else {
+        std::string err =
+            status_msg.empty() ? "Failed to checkpoint session" : status_msg;
+        send_ipc_message(client_fd, MSG_ERROR_RESP, err, 5000);
+      }
+      break;
+    }
+    case MSG_RESTORE_SESSION_REQ: {
+      uint64_t id = parse_session_id(payload);
+      std::string status_msg;
+      if (id > 0 && registry_.restore_session(id, &status_msg)) {
+        std::string resp = status_msg.empty() ? "OK" : status_msg;
+        send_ipc_message(client_fd, MSG_RESTORE_SESSION_RESP, resp, 5000);
+      } else {
+        std::string err =
+            status_msg.empty() ? "Failed to restore session" : status_msg;
+        send_ipc_message(client_fd, MSG_ERROR_RESP, err, 5000);
+      }
       break;
     }
     default: {
@@ -848,6 +904,84 @@ bool DaemonClient::kill_session(uint64_t id, int signal, int timeout_ms) {
   bool ok = recv_ipc_message(fd, resp_type, resp_payload, timeout_ms);
   ::close(fd);
   return ok && (resp_type == MSG_KILL_SESSION_RESP);
+}
+
+bool DaemonClient::checkpoint_session(uint64_t id, std::string* msg,
+                                      int timeout_ms) {
+  int fd = connect_socket(timeout_ms);
+  if (fd < 0) {
+    if (msg != nullptr) {
+      *msg = "Failed to connect to daemon socket";
+    }
+    return false;
+  }
+  std::string payload = std::to_string(id);
+  if (!send_ipc_message(fd, MSG_CHECKPOINT_SESSION_REQ, payload, timeout_ms)) {
+    ::close(fd);
+    if (msg != nullptr) {
+      *msg = "Failed to send checkpoint request";
+    }
+    return false;
+  }
+  uint16_t resp_type = 0;
+  std::string resp_payload;
+  bool ok = recv_ipc_message(fd, resp_type, resp_payload, timeout_ms);
+  ::close(fd);
+  if (!ok) {
+    if (msg != nullptr) {
+      *msg = "Timeout or error receiving response from daemon";
+    }
+    return false;
+  }
+  if (resp_type == MSG_CHECKPOINT_SESSION_RESP) {
+    if (msg != nullptr) {
+      *msg = resp_payload;
+    }
+    return true;
+  }
+  if (msg != nullptr) {
+    *msg = resp_payload.empty() ? "Failed to checkpoint session" : resp_payload;
+  }
+  return false;
+}
+
+bool DaemonClient::restore_session(uint64_t id, std::string* msg,
+                                   int timeout_ms) {
+  int fd = connect_socket(timeout_ms);
+  if (fd < 0) {
+    if (msg != nullptr) {
+      *msg = "Failed to connect to daemon socket";
+    }
+    return false;
+  }
+  std::string payload = std::to_string(id);
+  if (!send_ipc_message(fd, MSG_RESTORE_SESSION_REQ, payload, timeout_ms)) {
+    ::close(fd);
+    if (msg != nullptr) {
+      *msg = "Failed to send restore request";
+    }
+    return false;
+  }
+  uint16_t resp_type = 0;
+  std::string resp_payload;
+  bool ok = recv_ipc_message(fd, resp_type, resp_payload, timeout_ms);
+  ::close(fd);
+  if (!ok) {
+    if (msg != nullptr) {
+      *msg = "Timeout or error receiving response from daemon";
+    }
+    return false;
+  }
+  if (resp_type == MSG_RESTORE_SESSION_RESP) {
+    if (msg != nullptr) {
+      *msg = resp_payload;
+    }
+    return true;
+  }
+  if (msg != nullptr) {
+    *msg = resp_payload.empty() ? "Failed to restore session" : resp_payload;
+  }
+  return false;
 }
 
 std::string DaemonClient::get_stats(int timeout_ms) {

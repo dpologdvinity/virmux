@@ -11,10 +11,12 @@
 #include "virmux/sandbox.hpp"
 
 #include <fcntl.h>
+#include <sys/resource.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
@@ -149,6 +151,42 @@ std::string expand_home_path(const std::string& path) {
 
 static std::atomic<uint64_t> s_sandbox_counter{0};
 
+uint64_t count_user_threads() {
+  uint64_t count = 0;
+  uid_t uid = ::getuid();
+  std::error_code ec;
+  for (const auto& entry : std::filesystem::directory_iterator("/proc", ec)) {
+    if (ec) break;
+    const auto filename = entry.path().filename().native();
+    if (filename.empty() ||
+        !std::isdigit(static_cast<unsigned char>(filename[0]))) {
+      continue;
+    }
+    auto status_path = entry.path() / "status";
+    int fd = ::open(status_path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) continue;
+    char buf[4096];
+    ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
+    ::close(fd);
+    if (n <= 0) continue;
+    buf[n] = '\0';
+    const char* uid_ptr = std::strstr(buf, "Uid:\t");
+    if (!uid_ptr) continue;
+    long proc_uid = std::strtol(uid_ptr + 5, nullptr, 10);
+    if (static_cast<uid_t>(proc_uid) != uid) continue;
+    const char* th_ptr = std::strstr(buf, "Threads:\t");
+    if (th_ptr) {
+      long th = std::strtol(th_ptr + 9, nullptr, 10);
+      if (th > 0) {
+        count += static_cast<uint64_t>(th);
+      }
+    } else {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 }  // anonymous namespace
 
 AdmissionGate& get_default_admission_gate() {
@@ -156,20 +194,30 @@ AdmissionGate& get_default_admission_gate() {
   return default_gate;
 }
 
-void set_worker_oom_score(pid_t child_pid) {
+bool set_process_oom_score(pid_t pid, int score) {
+  int clamped = std::clamp(score, -1000, 1000);
   char path[64];
-  if (child_pid <= 0) {
+  if (pid == 0) {
     std::snprintf(path, sizeof(path), "/proc/self/oom_score_adj");
   } else {
     std::snprintf(path, sizeof(path), "/proc/%d/oom_score_adj",
-                  static_cast<int>(child_pid));
+                  static_cast<int>(pid));
   }
   int fd = ::open(path, O_WRONLY | O_CLOEXEC);
-  if (fd >= 0) {
-    const char val[] = "800\n";
-    (void)::write(fd, val, sizeof(val) - 1);
-    ::close(fd);
+  if (fd < 0) {
+    return false;
   }
+  std::string val = std::to_string(clamped) + "\n";
+  ssize_t written = ::write(fd, val.data(), val.size());
+  ::close(fd);
+  if (written < 0 || static_cast<size_t>(written) != val.size()) {
+    return false;
+  }
+  return true;
+}
+
+void set_worker_oom_score(pid_t child_pid) {
+  (void)set_process_oom_score(child_pid, 800);
 }
 
 int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
@@ -280,7 +328,16 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
   std::string slice_name = "virmux-run-" + std::to_string(::getpid()) + "-" +
                            std::to_string(seq) + ".slice";
   CgroupSlice slice(slice_name);
+  bool cgroup_pids_active = false;
   slice.setup("", cfg.memory_limit_bytes, cfg.cpuset_cores);
+  if (slice.is_valid() && cfg.max_pids > 0) {
+    cgroup_pids_active = slice.set_pids_max(cfg.max_pids);
+  }
+
+  // Only scan procfs and compute fallback RLIMIT_NPROC if cgroups pids.max is
+  // unavailable
+  uint64_t baseline_threads =
+      (cfg.max_pids > 0 && !cgroup_pids_active) ? count_user_threads() : 0;
 
   pid_t pid = ::fork();
   if (pid < 0) {
@@ -327,8 +384,20 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
       slice.attach_pid(0);
     }
 
+    // Fork-bomb fallback: enforce RLIMIT_NPROC ceiling if configured and cgroup
+    // unavailable
+    if (cfg.max_pids > 0 && !cgroup_pids_active) {
+      rlim_t limit = static_cast<rlim_t>(baseline_threads + cfg.max_pids);
+      struct rlimit cur_rl;
+      if (::getrlimit(RLIMIT_NPROC, &cur_rl) == 0 && limit > cur_rl.rlim_max) {
+        limit = cur_rl.rlim_max;
+      }
+      struct rlimit rl{limit, limit};
+      (void)::setrlimit(RLIMIT_NPROC, &rl);
+    }
+
     // 3. Set oom_score_adj to sacrificial priority (+800)
-    set_worker_oom_score(0);
+    set_process_oom_score(0, 800);
 
     // 4. Scratch environment variables (TMPDIR, TEMP, TMP)
     if (scratch && scratch->is_valid()) {
@@ -392,7 +461,9 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
   }
 
   if (session_id > 0) {
-    client.unregister_session(session_id, 200);
+    if (WIFEXITED(status)) {
+      client.unregister_session(session_id, 200);
+    }
   }
 
   // Cleanup scratch space and ephemeral overlay workspace

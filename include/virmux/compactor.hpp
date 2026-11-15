@@ -68,6 +68,19 @@ class ProcessCompactor {
   [[nodiscard]] ReclaimResult reclaim_memory(
       pid_t target_pid,
       ReclaimAdvice advice = ReclaimAdvice::Pageout);
+
+  /**
+   * @brief Compact anonymous heap pages for a process into swap/zram via process_madvise.
+   * Alias for reclaim_memory(target_pid, advice).
+   * @param target_pid Process ID to compact.
+   * @param advice Reclaim advice mode (default: Pageout).
+   * @return ReclaimResult containing status and reclaimed bytes.
+   */
+  [[nodiscard]] ReclaimResult compact_pid(
+      pid_t target_pid,
+      ReclaimAdvice advice = ReclaimAdvice::Pageout) {
+    return reclaim_memory(target_pid, advice);
+  }
 };
 
 }  // namespace virmux

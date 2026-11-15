@@ -84,6 +84,8 @@ std::string format_state_col(SessionState state) {
       return "WAITING";
     case SessionState::FROZEN:
       return "FROZEN";
+    case SessionState::CHECKPOINTED:
+      return "CHKPT";
     case SessionState::DEAD:
       return "DEAD";
   }
@@ -154,6 +156,9 @@ void print_daemon_usage(std::ostream& out) {
       << "Options:\n"
       << "  --foreground    Run daemon in foreground (default: background "
          "daemon)\n"
+      << "  --auto-freeze   Enable automatic freezing of inactive sessions\n"
+      << "  --idle-ms <MS>  Inactivity idle timeout threshold in ms (default: "
+         "500)\n"
       << "  -h, --help      Show this help message\n";
 }
 
@@ -187,6 +192,22 @@ void print_kill_usage(std::ostream& out) {
   out << "Usage:\n"
       << "  virmux kill <SESSION_ID | PID>\n\n"
       << "Terminate a virtualized session and its process tree.\n\n"
+      << "Options:\n"
+      << "  -h, --help   Show this help message\n";
+}
+
+void print_checkpoint_usage(std::ostream& out) {
+  out << "Usage:\n"
+      << "  virmux checkpoint <SESSION_ID | PID>\n\n"
+      << "Checkpoint an active virtualized session.\n\n"
+      << "Options:\n"
+      << "  -h, --help   Show this help message\n";
+}
+
+void print_restore_usage(std::ostream& out) {
+  out << "Usage:\n"
+      << "  virmux restore <SESSION_ID | PID>\n\n"
+      << "Restore a checkpointed session back to running state.\n\n"
       << "Options:\n"
       << "  -h, --help   Show this help message\n";
 }
@@ -248,6 +269,8 @@ std::string format_session_json(const std::vector<SessionInfo>& sessions) {
 int cmd_daemon(int argc, char* const argv[]) {
   int start_idx = parse_subcmd_start(argc, argv, "daemon");
   bool foreground = false;
+  bool auto_freeze = false;
+  uint64_t idle_ms = 500;
 
   for (int i = start_idx; i < argc; ++i) {
     std::string_view arg = argv[i];
@@ -257,6 +280,32 @@ int cmd_daemon(int argc, char* const argv[]) {
     }
     if (arg == "--foreground") {
       foreground = true;
+    } else if (arg == "--auto-freeze") {
+      auto_freeze = true;
+    } else if (arg == "--idle-ms") {
+      if (i + 1 >= argc) {
+        std::cerr << "Error: --idle-ms requires an argument\n";
+        return 1;
+      }
+      std::string_view val_sv = argv[++i];
+      uint64_t val = 0;
+      auto [p, ec] =
+          std::from_chars(val_sv.data(), val_sv.data() + val_sv.size(), val);
+      if (ec != std::errc() || val == 0) {
+        std::cerr << "Error: invalid --idle-ms value '" << val_sv << "'\n";
+        return 1;
+      }
+      idle_ms = val;
+    } else if (arg.starts_with("--idle-ms=")) {
+      std::string_view val_sv = arg.substr(10);
+      uint64_t val = 0;
+      auto [p, ec] =
+          std::from_chars(val_sv.data(), val_sv.data() + val_sv.size(), val);
+      if (ec != std::errc() || val == 0) {
+        std::cerr << "Error: invalid --idle-ms value '" << val_sv << "'\n";
+        return 1;
+      }
+      idle_ms = val;
     } else {
       std::cerr << "Error: unrecognized option '" << arg << "'\n";
       print_daemon_usage(std::cerr);
@@ -264,8 +313,18 @@ int cmd_daemon(int argc, char* const argv[]) {
     }
   }
 
+  DaemonConfig cfg;
+  cfg.auto_freeze_enabled = auto_freeze;
+  cfg.idle_timeout_ms = idle_ms;
+  if (auto_freeze && idle_ms > 0) {
+    int target_interval = static_cast<int>(idle_ms / 2);
+    if (target_interval < 50) target_interval = 50;
+    cfg.telemetry_interval_ms =
+        std::min(cfg.telemetry_interval_ms, target_interval);
+  }
+
   if (foreground) {
-    SupervisorDaemon daemon;
+    SupervisorDaemon daemon(cfg);
     if (!daemon.init()) {
       std::cerr << "Error: failed to initialize supervisor daemon (already "
                    "running?)\n";
@@ -337,7 +396,7 @@ int cmd_daemon(int argc, char* const argv[]) {
     }
   }
 
-  SupervisorDaemon daemon;
+  SupervisorDaemon daemon(cfg);
   if (!daemon.init()) {
     char fail = '0';
     (void)::write(pipe_fds[1], &fail, 1);
@@ -550,6 +609,120 @@ int cmd_kill(int argc, char* const argv[]) {
   }
 
   std::cout << "Session " << session_id << " killed successfully.\n";
+  return 0;
+}
+
+int cmd_checkpoint(int argc, char* const argv[]) {
+  int start_idx = parse_subcmd_start(argc, argv, "checkpoint");
+  std::string_view target_arg;
+
+  for (int i = start_idx; i < argc; ++i) {
+    std::string_view arg = argv[i];
+    if (arg == "-h" || arg == "--help") {
+      print_checkpoint_usage(std::cout);
+      return 0;
+    }
+    if (arg.starts_with("-")) {
+      std::cerr << "Error: unrecognized option '" << arg << "'\n";
+      print_checkpoint_usage(std::cerr);
+      return 1;
+    }
+    if (target_arg.empty()) {
+      target_arg = arg;
+    } else {
+      std::cerr << "Error: unexpected extra argument '" << arg << "'\n";
+      print_checkpoint_usage(std::cerr);
+      return 1;
+    }
+  }
+
+  if (target_arg.empty()) {
+    std::cerr << "Error: missing session ID or PID\n";
+    print_checkpoint_usage(std::cerr);
+    return 1;
+  }
+
+  uint64_t val = 0;
+  if (!parse_session_or_pid(target_arg, val)) {
+    std::cerr << "Error: invalid session ID or PID: '" << target_arg << "'\n";
+    return 1;
+  }
+
+  DaemonClient client;
+  if (!client.is_alive(500)) {
+    std::cerr << "Error: supervisor daemon is not running or unreachable\n";
+    return 1;
+  }
+
+  uint64_t session_id = resolve_target_session_id(client, val);
+  std::string status_msg;
+  if (!client.checkpoint_session(session_id, &status_msg)) {
+    std::cerr << "Error: "
+              << (status_msg.empty() ? ("failed to checkpoint session " +
+                                        std::to_string(session_id))
+                                     : status_msg)
+              << "\n";
+    return 1;
+  }
+
+  std::cout << "Session " << session_id << " checkpointed successfully.\n";
+  return 0;
+}
+
+int cmd_restore(int argc, char* const argv[]) {
+  int start_idx = parse_subcmd_start(argc, argv, "restore");
+  std::string_view target_arg;
+
+  for (int i = start_idx; i < argc; ++i) {
+    std::string_view arg = argv[i];
+    if (arg == "-h" || arg == "--help") {
+      print_restore_usage(std::cout);
+      return 0;
+    }
+    if (arg.starts_with("-")) {
+      std::cerr << "Error: unrecognized option '" << arg << "'\n";
+      print_restore_usage(std::cerr);
+      return 1;
+    }
+    if (target_arg.empty()) {
+      target_arg = arg;
+    } else {
+      std::cerr << "Error: unexpected extra argument '" << arg << "'\n";
+      print_restore_usage(std::cerr);
+      return 1;
+    }
+  }
+
+  if (target_arg.empty()) {
+    std::cerr << "Error: missing session ID or PID\n";
+    print_restore_usage(std::cerr);
+    return 1;
+  }
+
+  uint64_t val = 0;
+  if (!parse_session_or_pid(target_arg, val)) {
+    std::cerr << "Error: invalid session ID or PID: '" << target_arg << "'\n";
+    return 1;
+  }
+
+  DaemonClient client;
+  if (!client.is_alive(500)) {
+    std::cerr << "Error: supervisor daemon is not running or unreachable\n";
+    return 1;
+  }
+
+  uint64_t session_id = resolve_target_session_id(client, val);
+  std::string status_msg;
+  if (!client.restore_session(session_id, &status_msg)) {
+    std::cerr << "Error: "
+              << (status_msg.empty() ? ("failed to restore session " +
+                                        std::to_string(session_id))
+                                     : status_msg)
+              << "\n";
+    return 1;
+  }
+
+  std::cout << "Session " << session_id << " restored successfully.\n";
   return 0;
 }
 
