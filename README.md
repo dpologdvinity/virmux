@@ -3,6 +3,8 @@
 > **Virtual Resource Multiplexer in C++20/C for Linux & WSL2.**  
 > High-Density Memory Deduplication, CPU Slicing, Workspace Isolation, and Admission Scheduling for Heavy Concurrent Workloads.
 
+[![CI](https://github.com/dpologdvinity/virmux/actions/workflows/ci.yml/badge.svg)](https://github.com/dpologdvinity/virmux/actions/workflows/ci.yml)
+[![Sanitizers](https://github.com/dpologdvinity/virmux/actions/workflows/sanitizers.yml/badge.svg)](https://github.com/dpologdvinity/virmux/actions/workflows/sanitizers.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Standard: C++20 / C17](https://img.shields.io/badge/Standard-C%2B%2B20%20%7C%20C17-blue.svg)](https://en.wikipedia.org/wiki/C%2B%2B20)
 [![Platform: Linux / WSL2](https://img.shields.io/badge/Platform-Linux%20%7C%20WSL2-orange.svg)](https://learn.microsoft.com/en-us/windows/wsl/)

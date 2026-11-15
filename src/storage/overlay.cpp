@@ -124,7 +124,8 @@ bool OverlayWorkspace::setup() {
     return false;
   }
 
-  // Reject paths containing commas or colons which corrupt overlay mount options
+  // Reject paths containing commas or colons which corrupt overlay mount
+  // options
   if (config_.lower_dir.find(',') != std::string::npos ||
       config_.lower_dir.find(':') != std::string::npos) {
     return false;

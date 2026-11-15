@@ -10,8 +10,6 @@ namespace virmux {
 /**
  * @brief Returns the semantic version string of virmux.
  */
-const char* version_string() noexcept {
-    return "0.1.0";
-}
+const char* version_string() noexcept { return "0.1.0"; }
 
-} // namespace virmux
+}  // namespace virmux

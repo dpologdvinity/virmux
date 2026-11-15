@@ -1,19 +1,21 @@
 /**
  * @file test_ipc.cpp
- * @brief Unit tests for IPC binary framing, socket path resolution, and Unix socket transport.
+ * @brief Unit tests for IPC binary framing, socket path resolution, and Unix
+ * socket transport.
  */
 
 extern "C" {
 #include "unity/unity.h"
 }
 
+#include <sys/socket.h>
+#include <unistd.h>
+
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
-#include <sys/socket.h>
-#include <unistd.h>
 
 #include "virmux/ipc.hpp"
 #include "virmux/raii.hpp"
@@ -22,7 +24,8 @@ void setUp(void) {}
 void tearDown(void) {}
 
 /**
- * @brief Test 1: Verify header packing size is exactly 12 bytes and magic encoding is correct.
+ * @brief Test 1: Verify header packing size is exactly 12 bytes and magic
+ * encoding is correct.
  */
 void test_ipc_header_size_and_endianness(void) {
   TEST_ASSERT_EQUAL_UINT32(12, sizeof(virmux::IpcHeader));
@@ -57,7 +60,8 @@ void test_ipc_header_size_and_endianness(void) {
 }
 
 /**
- * @brief Test 2: Verify socket path resolution with env override, user runtime dir, and /tmp fallback.
+ * @brief Test 2: Verify socket path resolution with env override, user runtime
+ * dir, and /tmp fallback.
  */
 void test_resolve_socket_path(void) {
   const char* orig_env = std::getenv("VIRMUX_SOCKET");
@@ -67,7 +71,8 @@ void test_resolve_socket_path(void) {
   // Test environment variable override
   const std::string custom_socket = "/tmp/virmux_custom_override.sock";
   ::setenv("VIRMUX_SOCKET", custom_socket.c_str(), 1);
-  TEST_ASSERT_EQUAL_STRING(custom_socket.c_str(), virmux::resolve_socket_path().c_str());
+  TEST_ASSERT_EQUAL_STRING(custom_socket.c_str(),
+                           virmux::resolve_socket_path().c_str());
 
   // Test resolution without environment variable
   ::unsetenv("VIRMUX_SOCKET");
@@ -83,7 +88,8 @@ void test_resolve_socket_path(void) {
     expected = "/tmp/virmux-" + std::to_string(uid) + ".sock";
   }
 
-  TEST_ASSERT_EQUAL_STRING(expected.c_str(), virmux::resolve_socket_path().c_str());
+  TEST_ASSERT_EQUAL_STRING(expected.c_str(),
+                           virmux::resolve_socket_path().c_str());
 
   // Restore original environment
   if (had_env) {
@@ -118,7 +124,8 @@ void test_ipc_send_recv_socketpair(void) {
   // 2. Small text payload (e.g. MSG_ACK_RESP)
   {
     std::string text_msg = "virmux session registration acknowledged";
-    bool sent = virmux::send_ipc_message(fd1.get(), virmux::MSG_ACK_RESP, text_msg, 1000);
+    bool sent = virmux::send_ipc_message(fd1.get(), virmux::MSG_ACK_RESP,
+                                         text_msg, 1000);
     TEST_ASSERT_TRUE(sent);
 
     uint16_t msg_type = 0;
@@ -136,7 +143,8 @@ void test_ipc_send_recv_socketpair(void) {
       binary_data[i] = static_cast<char>((i * 31 + 7) & 0xFF);
     }
 
-    bool sent = virmux::send_ipc_message(fd0.get(), virmux::MSG_LIST_SESSIONS_RESP, binary_data, 1000);
+    bool sent = virmux::send_ipc_message(
+        fd0.get(), virmux::MSG_LIST_SESSIONS_RESP, binary_data, 1000);
     TEST_ASSERT_TRUE(sent);
 
     uint16_t msg_type = 0;
@@ -145,7 +153,8 @@ void test_ipc_send_recv_socketpair(void) {
     TEST_ASSERT_TRUE(recvd);
     TEST_ASSERT_EQUAL_UINT16(virmux::MSG_LIST_SESSIONS_RESP, msg_type);
     TEST_ASSERT_EQUAL_UINT32(binary_data.size(), payload.size());
-    TEST_ASSERT_EQUAL_MEMORY(binary_data.data(), payload.data(), binary_data.size());
+    TEST_ASSERT_EQUAL_MEMORY(binary_data.data(), payload.data(),
+                             binary_data.size());
   }
 }
 
@@ -163,7 +172,8 @@ void test_ipc_timeout_on_empty_socket(void) {
   auto t0 = std::chrono::steady_clock::now();
   bool recvd = virmux::recv_ipc_message(fd0.get(), msg_type, payload, 60);
   auto t1 = std::chrono::steady_clock::now();
-  auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+  auto elapsed_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
 
   TEST_ASSERT_FALSE(recvd);
   TEST_ASSERT_TRUE(elapsed_ms >= 50);
@@ -219,7 +229,8 @@ void test_ipc_oversized_payload_rejected(void) {
 
   // Case B: Sending a payload exceeding 16 MiB
   std::string_view oversized_view("", virmux::IPC_MAX_PAYLOAD + 1);
-  bool sent = virmux::send_ipc_message(fd0.get(), virmux::MSG_PING, oversized_view, 500);
+  bool sent = virmux::send_ipc_message(fd0.get(), virmux::MSG_PING,
+                                       oversized_view, 500);
   TEST_ASSERT_FALSE(sent);
 }
 
@@ -248,7 +259,8 @@ void test_ipc_invalid_version_rejected(void) {
 }
 
 /**
- * @brief Additional Test: Verify graceful handling of closed sockets and invalid fds.
+ * @brief Additional Test: Verify graceful handling of closed sockets and
+ * invalid fds.
  */
 void test_ipc_socket_disconnect_and_invalid_fd(void) {
   int fds[2];
@@ -259,9 +271,11 @@ void test_ipc_socket_disconnect_and_invalid_fd(void) {
   uint16_t msg_type = 0;
   std::string payload;
   // Recv on peer-closed socket returns false immediately
-  TEST_ASSERT_FALSE(virmux::recv_ipc_message(fd0.get(), msg_type, payload, 100));
+  TEST_ASSERT_FALSE(
+      virmux::recv_ipc_message(fd0.get(), msg_type, payload, 100));
   // Send on peer-closed socket fails cleanly without SIGPIPE crashing process
-  TEST_ASSERT_FALSE(virmux::send_ipc_message(fd0.get(), virmux::MSG_PING, "ping", 100));
+  TEST_ASSERT_FALSE(
+      virmux::send_ipc_message(fd0.get(), virmux::MSG_PING, "ping", 100));
 
   // Invalid fd checks
   TEST_ASSERT_FALSE(virmux::recv_ipc_message(-1, msg_type, payload, 100));
@@ -277,7 +291,8 @@ void test_ipc_fragmented_stream_reassembly(void) {
   virmux::ScopedFd fd0(fds[0]);
   virmux::ScopedFd fd1(fds[1]);
 
-  std::string test_payload = "fragmented_stream_test_payload_1234567890_abcdefghij";
+  std::string test_payload =
+      "fragmented_stream_test_payload_1234567890_abcdefghij";
   virmux::IpcHeader hdr{};
   hdr.magic = virmux::IPC_MAGIC;
   hdr.version = virmux::IPC_VERSION;

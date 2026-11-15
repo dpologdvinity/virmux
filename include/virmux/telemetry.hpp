@@ -1,19 +1,22 @@
 /**
  * @file telemetry.hpp
- * @brief Memory telemetry for process-level consumption, host meminfo, and zram statistics.
+ * @brief Memory telemetry for process-level consumption, host meminfo, and zram
+ * statistics.
  */
 
 #pragma once
 
+#include <sys/types.h>
+
 #include <cstdint>
 #include <string>
-#include <sys/types.h>
 #include <vector>
 
 namespace virmux {
 
 /**
- * @brief Process-level memory consumption statistics from smaps_rollup or status.
+ * @brief Process-level memory consumption statistics from smaps_rollup or
+ * status.
  */
 struct ProcessMemoryStats {
   pid_t pid{0};
@@ -60,7 +63,8 @@ class MemoryTelemetry {
   /**
    * @brief Construct a new MemoryTelemetry instance.
    * @param procfs_root Procfs root directory path (defaults to "/proc").
-   * @param sysfs_block_root Sysfs block root directory path (defaults to "/sys/block").
+   * @param sysfs_block_root Sysfs block root directory path (defaults to
+   * "/sys/block").
    */
   explicit MemoryTelemetry(std::string procfs_root = "/proc",
                            std::string sysfs_block_root = "/sys/block");
@@ -68,7 +72,8 @@ class MemoryTelemetry {
   /**
    * @brief Read memory statistics for a specific process ID.
    * @param pid Process ID to query.
-   * @return Populated ProcessMemoryStats, or zeroed metrics if process not found.
+   * @return Populated ProcessMemoryStats, or zeroed metrics if process not
+   * found.
    */
   [[nodiscard]] ProcessMemoryStats read_process_stats(pid_t pid) const;
 
@@ -79,7 +84,8 @@ class MemoryTelemetry {
   [[nodiscard]] HostMemoryStats read_host_stats() const;
 
   /**
-   * @brief Read telemetry metrics for all available zram devices in sysfs block root.
+   * @brief Read telemetry metrics for all available zram devices in sysfs block
+   * root.
    * @return Vector of ZramDeviceStats sorted alphabetically by device name.
    */
   [[nodiscard]] std::vector<ZramDeviceStats> read_zram_stats() const;

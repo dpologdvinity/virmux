@@ -122,9 +122,9 @@ std::string format_stats_json(const HostMemoryStats& host,
     for (size_t i = 0; i < host.zram_devices.size(); ++i) {
       const auto& dev = host.zram_devices[i];
       char ratio_buf[32];
-      auto [r_ptr, r_ec] = std::to_chars(
-          ratio_buf, ratio_buf + sizeof(ratio_buf) - 1, dev.compression_ratio,
-          std::chars_format::fixed, 2);
+      auto [r_ptr, r_ec] =
+          std::to_chars(ratio_buf, ratio_buf + sizeof(ratio_buf) - 1,
+                        dev.compression_ratio, std::chars_format::fixed, 2);
       if (r_ec == std::errc{}) {
         *r_ptr = '\0';
       } else {

@@ -1,8 +1,9 @@
 #pragma once
 
+#include <sys/types.h>
+
 #include <cstddef>
 #include <cstdint>
-#include <sys/types.h>
 #include <utility>
 #include <vector>
 
@@ -28,8 +29,9 @@ struct ReclaimResult {
 };
 
 /**
- * @brief ProcessCompactor leverages Linux 5.10+ pidfd_open and process_madvise(2)
- * to advise and reclaim memory ranges of target processes into swap/zram.
+ * @brief ProcessCompactor leverages Linux 5.10+ pidfd_open and
+ * process_madvise(2) to advise and reclaim memory ranges of target processes
+ * into swap/zram.
  */
 class ProcessCompactor {
  public:
@@ -37,7 +39,8 @@ class ProcessCompactor {
 
   /**
    * @brief Check whether pidfd_open and process_madvise syscalls are available.
-   * @return true if both syscalls are supported by the host kernel, false otherwise.
+   * @return true if both syscalls are supported by the host kernel, false
+   * otherwise.
    */
   [[nodiscard]] static bool is_supported() noexcept;
 
@@ -51,34 +54,34 @@ class ProcessCompactor {
    * @param target_pid Process ID to compact.
    * @param ranges Vector of (start_address, length) pairs.
    * @param advice Reclaim advice mode.
-   * @return ReclaimResult containing status, bytes advised, range count, and error code.
+   * @return ReclaimResult containing status, bytes advised, range count, and
+   * error code.
    */
   [[nodiscard]] ReclaimResult reclaim_ranges(
-      pid_t target_pid,
-      const std::vector<std::pair<uintptr_t, size_t>>& ranges,
+      pid_t target_pid, const std::vector<std::pair<uintptr_t, size_t>>& ranges,
       ReclaimAdvice advice = ReclaimAdvice::Pageout);
 
   /**
-   * @brief Scan /proc/<target_pid>/maps and advise all anonymous and writable ranges.
+   * @brief Scan /proc/<target_pid>/maps and advise all anonymous and writable
+   * ranges.
    *
    * @param target_pid Process ID to compact.
    * @param advice Reclaim advice mode.
-   * @return ReclaimResult containing status, bytes advised, range count, and error code.
+   * @return ReclaimResult containing status, bytes advised, range count, and
+   * error code.
    */
   [[nodiscard]] ReclaimResult reclaim_memory(
-      pid_t target_pid,
-      ReclaimAdvice advice = ReclaimAdvice::Pageout);
+      pid_t target_pid, ReclaimAdvice advice = ReclaimAdvice::Pageout);
 
   /**
-   * @brief Compact anonymous heap pages for a process into swap/zram via process_madvise.
-   * Alias for reclaim_memory(target_pid, advice).
+   * @brief Compact anonymous heap pages for a process into swap/zram via
+   * process_madvise. Alias for reclaim_memory(target_pid, advice).
    * @param target_pid Process ID to compact.
    * @param advice Reclaim advice mode (default: Pageout).
    * @return ReclaimResult containing status and reclaimed bytes.
    */
   [[nodiscard]] ReclaimResult compact_pid(
-      pid_t target_pid,
-      ReclaimAdvice advice = ReclaimAdvice::Pageout) {
+      pid_t target_pid, ReclaimAdvice advice = ReclaimAdvice::Pageout) {
     return reclaim_memory(target_pid, advice);
   }
 };

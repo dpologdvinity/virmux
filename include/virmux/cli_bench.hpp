@@ -11,7 +11,8 @@ namespace virmux {
  * @brief Executes the `virmux bench` CLI subcommand.
  *
  * Subcommands:
- *   - `virmux bench run [--tasks 12] [--duration 5] [--quick] [--mode all|managed|baseline] [--output <path>] [--json]`
+ *   - `virmux bench run [--tasks 12] [--duration 5] [--quick] [--mode
+ * all|managed|baseline] [--output <path>] [--json]`
  *   - `virmux bench report [--input <path>]`
  *   - `virmux bench --help`
  *

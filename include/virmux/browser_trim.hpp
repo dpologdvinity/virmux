@@ -13,12 +13,13 @@ namespace virmux {
 /**
  * @brief Check if a binary path or name corresponds to a headless browser.
  *
- * Matches if the path or executable name contains "chrome", "chromium", or "headless_shell".
+ * Matches if the path or executable name contains "chrome", "chromium", or
+ * "headless_shell".
  *
  * @param path File path or binary name to inspect.
  * @return true if target binary is identified as a browser, false otherwise.
  */
-[[nodiscard]] bool is_browser_binary(const char *path) noexcept;
+[[nodiscard]] bool is_browser_binary(const char* path) noexcept;
 
 /**
  * @brief Augment argument vector with ultra-slim browser profile flags.
@@ -29,6 +30,6 @@ namespace virmux {
  * @param argv Null-terminated argument vector.
  * @return Vector of string arguments including injected slim flags.
  */
-[[nodiscard]] std::vector<std::string> inject_slim_flags(char *const argv[]);
+[[nodiscard]] std::vector<std::string> inject_slim_flags(char* const argv[]);
 
-} // namespace virmux
+}  // namespace virmux

@@ -92,10 +92,10 @@ void fix_permissions_recursive(const std::filesystem::path& path) noexcept {
   if (std::filesystem::is_symlink(path, ec)) {
     return;
   }
-  std::filesystem::permissions(
-      path, std::filesystem::perms::owner_all,
-      std::filesystem::perm_options::add | std::filesystem::perm_options::nofollow,
-      ec);
+  std::filesystem::permissions(path, std::filesystem::perms::owner_all,
+                               std::filesystem::perm_options::add |
+                                   std::filesystem::perm_options::nofollow,
+                               ec);
   if (!std::filesystem::is_directory(path, ec)) {
     return;
   }
@@ -105,11 +105,11 @@ void fix_permissions_recursive(const std::filesystem::path& path) noexcept {
     if (entry.is_symlink(ec)) {
       continue;
     }
-    std::filesystem::permissions(
-        entry.path(), std::filesystem::perms::owner_all,
-        std::filesystem::perm_options::add |
-            std::filesystem::perm_options::nofollow,
-        ec);
+    std::filesystem::permissions(entry.path(),
+                                 std::filesystem::perms::owner_all,
+                                 std::filesystem::perm_options::add |
+                                     std::filesystem::perm_options::nofollow,
+                                 ec);
     if (entry.is_directory(ec)) {
       fix_permissions_recursive(entry.path());
     }

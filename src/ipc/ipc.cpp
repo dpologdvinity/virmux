@@ -1,21 +1,24 @@
 #include "virmux/ipc.hpp"
 
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
-#include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 namespace virmux {
 
 namespace {
 
 /**
- * @brief Poll a file descriptor for read or write readiness with deadline enforcement.
+ * @brief Poll a file descriptor for read or write readiness with deadline
+ * enforcement.
  */
-bool poll_fd(int fd, short events, int timeout_ms, std::chrono::steady_clock::time_point deadline) {
+bool poll_fd(int fd, short events, int timeout_ms,
+             std::chrono::steady_clock::time_point deadline) {
   int wait_ms = 0;
   if (timeout_ms < 0) {
     wait_ms = -1;
@@ -26,7 +29,9 @@ bool poll_fd(int fd, short events, int timeout_ms, std::chrono::steady_clock::ti
     if (now >= deadline) {
       return false;
     }
-    auto rem = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+    auto rem =
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now)
+            .count();
     wait_ms = (rem <= 0) ? 0 : static_cast<int>(rem);
   }
 
@@ -37,7 +42,8 @@ bool poll_fd(int fd, short events, int timeout_ms, std::chrono::steady_clock::ti
   while (true) {
     int ret = ::poll(&pfd, 1, wait_ms);
     if (ret > 0) {
-      if ((events & POLLOUT) && (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))) {
+      if ((events & POLLOUT) &&
+          (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))) {
         return false;
       }
       if ((events & POLLIN) && (pfd.revents & (POLLERR | POLLNVAL))) {
@@ -54,7 +60,9 @@ bool poll_fd(int fd, short events, int timeout_ms, std::chrono::steady_clock::ti
         if (now >= deadline) {
           return false;
         }
-        auto rem = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+        auto rem = std::chrono::duration_cast<std::chrono::milliseconds>(
+                       deadline - now)
+                       .count();
         wait_ms = (rem <= 0) ? 0 : static_cast<int>(rem);
       }
       continue;
@@ -92,7 +100,8 @@ bool send_all(int fd, const void* buffer, size_t length, int timeout_ms,
 }
 
 /**
- * @brief Receive exactly length bytes into buffer, handling partial reads and timeouts.
+ * @brief Receive exactly length bytes into buffer, handling partial reads and
+ * timeouts.
  */
 bool recv_all(int fd, void* buffer, size_t length, int timeout_ms,
               std::chrono::steady_clock::time_point deadline) {
@@ -139,13 +148,15 @@ std::string resolve_socket_path() {
   return "/tmp/virmux-" + std::to_string(uid) + ".sock";
 }
 
-bool send_ipc_message(int fd, uint16_t msg_type, std::string_view payload, int timeout_ms) {
+bool send_ipc_message(int fd, uint16_t msg_type, std::string_view payload,
+                      int timeout_ms) {
   if (fd < 0 || payload.size() > IPC_MAX_PAYLOAD) {
     return false;
   }
 
   auto start = std::chrono::steady_clock::now();
-  auto deadline = start + std::chrono::milliseconds(timeout_ms < 0 ? 0 : timeout_ms);
+  auto deadline =
+      start + std::chrono::milliseconds(timeout_ms < 0 ? 0 : timeout_ms);
 
   IpcHeader hdr{};
   hdr.magic = IPC_MAGIC;
@@ -166,20 +177,23 @@ bool send_ipc_message(int fd, uint16_t msg_type, std::string_view payload, int t
   return true;
 }
 
-bool recv_ipc_message(int fd, uint16_t& out_type, std::string& out_payload, int timeout_ms) {
+bool recv_ipc_message(int fd, uint16_t& out_type, std::string& out_payload,
+                      int timeout_ms) {
   if (fd < 0) {
     return false;
   }
 
   auto start = std::chrono::steady_clock::now();
-  auto deadline = start + std::chrono::milliseconds(timeout_ms < 0 ? 0 : timeout_ms);
+  auto deadline =
+      start + std::chrono::milliseconds(timeout_ms < 0 ? 0 : timeout_ms);
 
   IpcHeader hdr{};
   if (!recv_all(fd, &hdr, sizeof(hdr), timeout_ms, deadline)) {
     return false;
   }
 
-  if (hdr.magic != IPC_MAGIC || hdr.version != IPC_VERSION || hdr.payload_len > IPC_MAX_PAYLOAD) {
+  if (hdr.magic != IPC_MAGIC || hdr.version != IPC_VERSION ||
+      hdr.payload_len > IPC_MAX_PAYLOAD) {
     return false;
   }
 
@@ -196,7 +210,8 @@ bool recv_ipc_message(int fd, uint16_t& out_type, std::string& out_payload, int 
     return false;
   }
 
-  if (!recv_all(fd, out_payload.data(), hdr.payload_len, timeout_ms, deadline)) {
+  if (!recv_all(fd, out_payload.data(), hdr.payload_len, timeout_ms,
+                deadline)) {
     out_payload.clear();
     return false;
   }

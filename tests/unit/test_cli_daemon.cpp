@@ -191,7 +191,7 @@ void test_cmd_missing_and_invalid_args(void) {
   TEST_ASSERT_EQUAL_INT(1, virmux::cmd_checkpoint(2, chkpt_no_args));
 
   char* restore_no_args[] = {const_cast<char*>("virmux"),
-                            const_cast<char*>("restore")};
+                             const_cast<char*>("restore")};
   TEST_ASSERT_EQUAL_INT(1, virmux::cmd_restore(2, restore_no_args));
 
   // Invalid session ID (non-numeric)
@@ -232,10 +232,9 @@ void test_cmd_missing_and_invalid_args(void) {
                                 const_cast<char*>("--idle-ms")};
   TEST_ASSERT_EQUAL_INT(1, virmux::cmd_daemon(3, daemon_idle_no_arg));
 
-  char* daemon_idle_bad_arg[] = {const_cast<char*>("virmux"),
-                                 const_cast<char*>("daemon"),
-                                 const_cast<char*>("--idle-ms"),
-                                 const_cast<char*>("not_a_number")};
+  char* daemon_idle_bad_arg[] = {
+      const_cast<char*>("virmux"), const_cast<char*>("daemon"),
+      const_cast<char*>("--idle-ms"), const_cast<char*>("not_a_number")};
   TEST_ASSERT_EQUAL_INT(1, virmux::cmd_daemon(4, daemon_idle_bad_arg));
 
   char* daemon_idle_zero[] = {const_cast<char*>("virmux"),

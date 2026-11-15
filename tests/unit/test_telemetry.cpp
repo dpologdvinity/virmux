@@ -1,6 +1,7 @@
 /**
  * @file test_telemetry.cpp
- * @brief Unit tests for MemoryTelemetry (process memory, host meminfo, and zram statistics).
+ * @brief Unit tests for MemoryTelemetry (process memory, host meminfo, and zram
+ * statistics).
  */
 
 extern "C" {
@@ -52,7 +53,8 @@ struct TempDir {
 }  // namespace
 
 void test_process_stats_nonexistent_or_invalid_pid(void) {
-  virmux::MemoryTelemetry tele("/tmp/nonexistent_proc_999999", "/tmp/nonexistent_sys_999999");
+  virmux::MemoryTelemetry tele("/tmp/nonexistent_proc_999999",
+                               "/tmp/nonexistent_sys_999999");
 
   // Negative PID
   auto stats_neg = tele.read_process_stats(-100);
@@ -84,7 +86,8 @@ void test_process_stats_mock_smaps_rollup(void) {
   std::filesystem::create_directories(pid_dir);
 
   const std::string mock_smaps =
-      "55a73e6a0000-7ffd551f3000 ---p 00000000 00:00 0                          [rollup]\n"
+      "55a73e6a0000-7ffd551f3000 ---p 00000000 00:00 0                         "
+      " [rollup]\n"
       "Rss:                2048 kB\n"
       "Pss:                1024 kB\n"
       "Pss_Dirty:           512 kB\n"
@@ -203,7 +206,8 @@ void test_host_stats_mock_meminfo(void) {
   write_file(zram_dir / "disksize", "104857600\n");
   write_file(zram_dir / "mm_stat", " 2048000  1024000  1050000 0 0 0 0 0 0\n");
 
-  virmux::MemoryTelemetry tele(temp_proc.path.string(), temp_sysfs.path.string());
+  virmux::MemoryTelemetry tele(temp_proc.path.string(),
+                               temp_sysfs.path.string());
   auto host_stats = tele.read_host_stats();
 
   TEST_ASSERT_EQUAL_UINT64(16384000ULL * 1024, host_stats.mem_total_bytes);
@@ -236,15 +240,18 @@ void test_zram_stats_mock_multiple_devices(void) {
   write_file(zram0_dir / "comp_algorithm", "[lzo-rle] lzo zstd\n");
   write_file(zram0_dir / "disksize", "1073741824\n");
   write_file(zram0_dir / "mm_stat",
-             " 209715200   52428800   55000000        0   60000000        0        0        0        0\n");
+             " 209715200   52428800   55000000        0   60000000        0    "
+             "    0        0        0\n");
 
-  // Setup zram1 with algorithm without brackets and 0 compressed data size (divide-by-zero check)
+  // Setup zram1 with algorithm without brackets and 0 compressed data size
+  // (divide-by-zero check)
   std::filesystem::path zram1_dir = temp_sysfs.path / "zram1";
   std::filesystem::create_directories(zram1_dir);
   write_file(zram1_dir / "comp_algorithm", "zstd\n");
   write_file(zram1_dir / "disksize", "2147483648\n");
   write_file(zram1_dir / "mm_stat",
-             "       0        0        0        0        0        0        0        0        0\n");
+             "       0        0        0        0        0        0        0   "
+             "     0        0\n");
 
   // Non-zram directory to verify filtering
   std::filesystem::path sda_dir = temp_sysfs.path / "sda";
@@ -278,7 +285,8 @@ void test_zram_stats_mock_multiple_devices(void) {
 }
 
 void test_zram_stats_nonexistent_directory(void) {
-  virmux::MemoryTelemetry tele("/tmp/dummy_proc", "/tmp/virmux_nonexistent_sysfs_12345");
+  virmux::MemoryTelemetry tele("/tmp/dummy_proc",
+                               "/tmp/virmux_nonexistent_sysfs_12345");
   auto zrams = tele.read_zram_stats();
   TEST_ASSERT_TRUE(zrams.empty());
 

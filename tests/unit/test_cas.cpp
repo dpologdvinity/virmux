@@ -268,17 +268,20 @@ void test_cas_stats_persistence_and_true_lru(void) {
     virmux::CasStore cas1(temp_dir);
     std::string obj1(100, 'X');
     std::string key1 = virmux::sha256_hash(obj1);
-    cas1.put_bytes(key1, std::span<const uint8_t>(
-                             reinterpret_cast<const uint8_t*>(obj1.data()), 100));
+    cas1.put_bytes(key1,
+                   std::span<const uint8_t>(
+                       reinterpret_cast<const uint8_t*>(obj1.data()), 100));
 
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
     std::string obj2(100, 'Y');
     std::string key2 = virmux::sha256_hash(obj2);
-    cas1.put_bytes(key2, std::span<const uint8_t>(
-                             reinterpret_cast<const uint8_t*>(obj2.data()), 100));
+    cas1.put_bytes(key2,
+                   std::span<const uint8_t>(
+                       reinterpret_cast<const uint8_t*>(obj2.data()), 100));
 
-    // Touch obj1 via get() -> updates last_write_time so obj1 is newer than obj2
+    // Touch obj1 via get() -> updates last_write_time so obj1 is newer than
+    // obj2
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     TEST_ASSERT_TRUE(cas1.get(key1, dest));
     TEST_ASSERT_FALSE(cas1.get("nonexistent_key", dest));
@@ -292,7 +295,8 @@ void test_cas_stats_persistence_and_true_lru(void) {
     TEST_ASSERT_EQUAL_UINT64(1, stats.misses);
     TEST_ASSERT_EQUAL_UINT(2, stats.object_count);
 
-    // Prune to 150 bytes: obj2 should be evicted (LRU), obj1 remains because touched
+    // Prune to 150 bytes: obj2 should be evicted (LRU), obj1 remains because
+    // touched
     std::string key1 = virmux::sha256_hash(std::string(100, 'X'));
     std::string key2 = virmux::sha256_hash(std::string(100, 'Y'));
 
@@ -314,8 +318,9 @@ void test_cas_overwrite_atomic(void) {
   std::string payload2 = "updated content with different length";
 
   TEST_ASSERT_TRUE(cas.put_bytes(
-      key, std::span<const uint8_t>(
-               reinterpret_cast<const uint8_t*>(payload1.data()), payload1.size())));
+      key,
+      std::span<const uint8_t>(
+          reinterpret_cast<const uint8_t*>(payload1.data()), payload1.size())));
 
   std::string dest1 = temp_dir + "/dest1.txt";
   TEST_ASSERT_TRUE(cas.get(key, dest1));
@@ -326,8 +331,9 @@ void test_cas_overwrite_atomic(void) {
 
   // Overwrite existing key
   TEST_ASSERT_TRUE(cas.put_bytes(
-      key, std::span<const uint8_t>(
-               reinterpret_cast<const uint8_t*>(payload2.data()), payload2.size())));
+      key,
+      std::span<const uint8_t>(
+          reinterpret_cast<const uint8_t*>(payload2.data()), payload2.size())));
 
   std::string dest2 = temp_dir + "/dest2.txt";
   TEST_ASSERT_TRUE(cas.get(key, dest2));

@@ -14,6 +14,7 @@
 #include <atomic>
 #include <cctype>
 #include <cerrno>
+#include <charconv>
 #include <chrono>
 #include <csignal>
 #include <cstdint>
@@ -123,13 +124,12 @@ bool parse_session_or_pid(std::string_view str, uint64_t& out_val) {
       return false;
     }
   }
-  char* end_ptr = nullptr;
-  errno = 0;
-  unsigned long long v = std::strtoull(std::string(str).c_str(), &end_ptr, 10);
-  if (errno != 0 || end_ptr == nullptr || *end_ptr != '\0' || v == 0) {
+  uint64_t v = 0;
+  auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), v);
+  if (ec != std::errc{} || ptr != str.data() + str.size() || v == 0) {
     return false;
   }
-  out_val = static_cast<uint64_t>(v);
+  out_val = v;
   return true;
 }
 

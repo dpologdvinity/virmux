@@ -1,6 +1,7 @@
 /**
  * @file checkpoint.hpp
- * @brief Session checkpoint and restore subsystem (CRIU and deep freeze pageout fallback).
+ * @brief Session checkpoint and restore subsystem (CRIU and deep freeze pageout
+ * fallback).
  */
 
 #pragma once
@@ -20,7 +21,8 @@ class CheckpointManager {
   /**
    * @brief Construct CheckpointManager with base directory.
    * Resolves $VIRMUX_CHECKPOINT_DIR, else /run/user/<UID>/virmux/checkpoints,
-   * fallback /tmp/virmux-<UID>/checkpoints. Enforces directory permissions 0700.
+   * fallback /tmp/virmux-<UID>/checkpoints. Enforces directory permissions
+   * 0700.
    */
   explicit CheckpointManager(std::string base_dir = "");
   ~CheckpointManager() = default;
@@ -42,9 +44,11 @@ class CheckpointManager {
 
   /**
    * @brief Checkpoint session to disk.
-   * If CRIU is available with necessary capabilities, executes criu dump into <base_dir>/<session_id>/.
-   * If unprivileged / CRIU unavailable: executes deep freeze fallback (freezes cgroup / SIGSTOP,
-   * invokes process_madvise(MADV_PAGEOUT) to compress memory to swap/zram, writes checkpoint.json metadata).
+   * If CRIU is available with necessary capabilities, executes criu dump into
+   * <base_dir>/<session_id>/. If unprivileged / CRIU unavailable: executes deep
+   * freeze fallback (freezes cgroup / SIGSTOP, invokes
+   * process_madvise(MADV_PAGEOUT) to compress memory to swap/zram, writes
+   * checkpoint.json metadata).
    *
    * @param session Target session info snapshot.
    * @param status_msg Optional output status message.

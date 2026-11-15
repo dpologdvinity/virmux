@@ -54,8 +54,8 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]);
 AdmissionGate& get_default_admission_gate();
 
 /**
- * @brief Configure process OOM killer adjustment score (/proc/<pid>/oom_score_adj).
- * Clamps score to [-1000, 1000].
+ * @brief Configure process OOM killer adjustment score
+ * (/proc/<pid>/oom_score_adj). Clamps score to [-1000, 1000].
  * @param pid Process ID to configure (0 for current calling process).
  * @param score OOM score adjustment value between -1000 and 1000.
  * @return true on success, false on permission or path error without throwing.

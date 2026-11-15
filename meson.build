@@ -85,6 +85,7 @@ virmux_intercept_lib = shared_library(
   ['src/intercept/interceptor.cpp', 'src/intercept/browser_trim.cpp'],
   include_directories: inc,
   dependencies: [dl_dep],
+  override_options: ['b_sanitize=none'],
   install: true,
 )
 
@@ -94,7 +95,7 @@ test_version_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_version', test_version_exe)
+test('test_version', test_version_exe, suite: 'unit')
 
 test_interceptor_exe = executable(
   'test_interceptor',
@@ -107,6 +108,7 @@ test(
   test_interceptor_exe,
   env: ['LD_PRELOAD=' + virmux_intercept_lib.full_path()],
   depends: [virmux_intercept_lib],
+  suite: 'unit',
 )
 
 test_interceptor_mem_exe = executable(
@@ -121,6 +123,7 @@ test(
   test_interceptor_mem_exe,
   env: ['LD_PRELOAD=' + virmux_intercept_lib.full_path(), 'VIRMUX_KSM_AUTO_MERGE=1'],
   depends: [virmux_intercept_lib],
+  suite: 'unit',
 )
 
 test_browser_trim_exe = executable(
@@ -134,6 +137,7 @@ test(
   test_browser_trim_exe,
   env: ['LD_PRELOAD=' + virmux_intercept_lib.full_path()],
   depends: [virmux_intercept_lib],
+  suite: 'unit',
 )
 
 test_cgroup_exe = executable(
@@ -142,7 +146,7 @@ test_cgroup_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_cgroup', test_cgroup_exe)
+test('test_cgroup', test_cgroup_exe, suite: 'unit')
 
 test_gate_exe = executable(
   'test_gate',
@@ -150,7 +154,7 @@ test_gate_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_gate', test_gate_exe)
+test('test_gate', test_gate_exe, suite: 'unit')
 
 test_sandbox_exe = executable(
   'test_sandbox',
@@ -162,6 +166,7 @@ test(
   'test_sandbox',
   test_sandbox_exe,
   depends: [virmux_intercept_lib],
+  suite: 'unit',
 )
 
 test_cleanse_exe = executable(
@@ -170,7 +175,7 @@ test_cleanse_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_cleanse', test_cleanse_exe)
+test('test_cleanse', test_cleanse_exe, suite: 'unit')
 
 test_ksm_exe = executable(
   'test_ksm',
@@ -178,7 +183,7 @@ test_ksm_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_ksm', test_ksm_exe)
+test('test_ksm', test_ksm_exe, suite: 'unit')
 
 test_compactor_exe = executable(
   'test_compactor',
@@ -186,7 +191,7 @@ test_compactor_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_compactor', test_compactor_exe)
+test('test_compactor', test_compactor_exe, suite: 'unit')
 
 test_telemetry_exe = executable(
   'test_telemetry',
@@ -194,7 +199,7 @@ test_telemetry_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_telemetry', test_telemetry_exe)
+test('test_telemetry', test_telemetry_exe, suite: 'unit')
 
 test_memory_manager_exe = executable(
   'test_memory_manager',
@@ -202,7 +207,7 @@ test_memory_manager_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_memory_manager', test_memory_manager_exe)
+test('test_memory_manager', test_memory_manager_exe, suite: 'unit')
 
 test_cli_stats_exe = executable(
   'test_cli_stats',
@@ -210,7 +215,7 @@ test_cli_stats_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_cli_stats', test_cli_stats_exe)
+test('test_cli_stats', test_cli_stats_exe, suite: 'unit')
 
 test_cli_cas_exe = executable(
   'test_cli_cas',
@@ -218,7 +223,7 @@ test_cli_cas_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_cli_cas', test_cli_cas_exe)
+test('test_cli_cas', test_cli_cas_exe, suite: 'unit')
 
 test_cas_exe = executable(
   'test_cas',
@@ -226,7 +231,7 @@ test_cas_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_cas', test_cas_exe)
+test('test_cas', test_cas_exe, suite: 'unit')
 
 test_scratch_exe = executable(
   'test_scratch',
@@ -234,7 +239,7 @@ test_scratch_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_scratch', test_scratch_exe)
+test('test_scratch', test_scratch_exe, suite: 'unit')
 
 test_overlay_exe = executable(
   'test_overlay',
@@ -242,7 +247,7 @@ test_overlay_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_overlay', test_overlay_exe)
+test('test_overlay', test_overlay_exe, suite: 'unit')
 
 test_sandbox_overlay_exe = executable(
   'test_sandbox_overlay',
@@ -250,7 +255,7 @@ test_sandbox_overlay_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_sandbox_overlay', test_sandbox_overlay_exe)
+test('test_sandbox_overlay', test_sandbox_overlay_exe, suite: 'unit')
 
 test_ipc_exe = executable(
   'test_ipc',
@@ -258,7 +263,7 @@ test_ipc_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_ipc', test_ipc_exe)
+test('test_ipc', test_ipc_exe, suite: 'unit')
 
 test_session_exe = executable(
   'test_session',
@@ -266,7 +271,7 @@ test_session_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_session', test_session_exe)
+test('test_session', test_session_exe, suite: 'unit')
 
 test_daemon_exe = executable(
   'test_daemon',
@@ -274,7 +279,7 @@ test_daemon_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_daemon', test_daemon_exe)
+test('test_daemon', test_daemon_exe, suite: 'unit')
 
 test_cli_daemon_exe = executable(
   'test_cli_daemon',
@@ -282,7 +287,7 @@ test_cli_daemon_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_cli_daemon', test_cli_daemon_exe)
+test('test_cli_daemon', test_cli_daemon_exe, suite: 'unit')
 
 test_tui_exe = executable(
   'test_tui',
@@ -290,7 +295,7 @@ test_tui_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_tui', test_tui_exe)
+test('test_tui', test_tui_exe, suite: 'unit')
 
 test_fault_isolation_exe = executable(
   'test_fault_isolation',
@@ -298,7 +303,7 @@ test_fault_isolation_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_fault_isolation', test_fault_isolation_exe)
+test('test_fault_isolation', test_fault_isolation_exe, suite: 'unit')
 
 test_idle_autofreeze_exe = executable(
   'test_idle_autofreeze',
@@ -306,7 +311,7 @@ test_idle_autofreeze_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_idle_autofreeze', test_idle_autofreeze_exe)
+test('test_idle_autofreeze', test_idle_autofreeze_exe, suite: 'unit', timeout: 60)
 
 test_checkpoint_exe = executable(
   'test_checkpoint',
@@ -314,7 +319,7 @@ test_checkpoint_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_checkpoint', test_checkpoint_exe)
+test('test_checkpoint', test_checkpoint_exe, suite: 'unit')
 
 test_bench_exe = executable(
   'test_bench',
@@ -322,7 +327,7 @@ test_bench_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_bench', test_bench_exe)
+test('test_bench', test_bench_exe, suite: 'unit', timeout: 60)
 
 test_cli_bench_exe = executable(
   'test_cli_bench',
@@ -330,7 +335,7 @@ test_cli_bench_exe = executable(
   dependencies: [virmux_core_dep, unity_dep],
 )
 
-test('test_cli_bench', test_cli_bench_exe)
+test('test_cli_bench', test_cli_bench_exe, suite: 'unit')
 
 virmux_exe = executable(
   'virmux',
@@ -344,72 +349,84 @@ test(
   virmux_exe,
   args: ['run', '--cores', '3', '--', '/bin/sh', '-c', 'echo "hello from virmux"'],
   depends: [virmux_intercept_lib],
+  suite: 'cli',
 )
 
 test(
   'test_cli_version',
   virmux_exe,
   args: ['--version'],
+  suite: 'cli',
 )
 
 test(
   'test_cli_help',
   virmux_exe,
   args: ['--help'],
+  suite: 'cli',
 )
 
 test(
   'test_cli_run_help',
   virmux_exe,
   args: ['run', '--help'],
+  suite: 'cli',
 )
 
 test(
   'test_cli_stats_help',
   virmux_exe,
   args: ['stats', '--help'],
+  suite: 'cli',
 )
 
 test(
   'test_cli_pack_help',
   virmux_exe,
   args: ['pack', '--help'],
+  suite: 'cli',
 )
 
 test(
   'test_cli_cas_help',
   virmux_exe,
   args: ['cas', '--help'],
+  suite: 'cli',
 )
 
 test(
   'test_cli_checkpoint_help',
   virmux_exe,
   args: ['checkpoint', '--help'],
+  suite: 'cli',
 )
 
 test(
   'test_cli_restore_help',
   virmux_exe,
   args: ['restore', '--help'],
+  suite: 'cli',
 )
 
 test(
   'test_cli_bench_help',
   virmux_exe,
   args: ['bench', '--help'],
+  suite: 'cli',
 )
 
 test(
   'test_cli_bench_run_help',
   virmux_exe,
   args: ['bench', 'run', '--help'],
+  suite: 'cli',
 )
 
 test(
   'test_cli_bench_report_help',
   virmux_exe,
   args: ['bench', 'report', '--help'],
+  suite: 'cli',
 )
 
 test(
@@ -421,6 +438,7 @@ test(
   ],
   depends: [virmux_exe, virmux_intercept_lib],
   timeout: 120,
+  suite: 'integration',
 )
 
 test(
@@ -432,6 +450,7 @@ test(
   ],
   depends: [virmux_exe, virmux_intercept_lib],
   timeout: 120,
+  suite: 'integration',
 )
 
 test(
@@ -443,6 +462,7 @@ test(
   ],
   depends: [virmux_exe, virmux_intercept_lib],
   timeout: 120,
+  suite: 'integration',
 )
 
 test(
@@ -454,6 +474,7 @@ test(
   ],
   depends: [virmux_exe, virmux_intercept_lib],
   timeout: 120,
+  suite: 'integration',
 )
 
 test(
@@ -465,6 +486,7 @@ test(
   ],
   depends: [virmux_exe, virmux_intercept_lib],
   timeout: 120,
+  suite: 'integration',
 )
 
 test(
@@ -476,5 +498,6 @@ test(
   ],
   depends: [virmux_exe, virmux_intercept_lib],
   timeout: 120,
+  suite: 'integration',
 )
 
