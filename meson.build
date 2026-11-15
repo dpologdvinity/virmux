@@ -14,6 +14,7 @@ tests_inc = include_directories('tests', 'tests/unity')
 
 threads_dep = dependency('threads')
 ncurses_dep = dependency('ncursesw', required: true)
+util_dep = meson.get_compiler('cpp').find_library('util', required: false)
 
 virmux_core_lib = static_library(
   'virmux_core',
@@ -23,6 +24,7 @@ virmux_core_lib = static_library(
     'src/sched/gate.cpp',
     'src/core/sandbox.cpp',
     'src/core/checkpoint.cpp',
+    'src/bench/bench.cpp',
     'src/memory/cleanse.cpp',
     'src/memory/ksm.cpp',
     'src/memory/compactor.cpp',
@@ -41,14 +43,14 @@ virmux_core_lib = static_library(
     'src/tui/tui.cpp',
   ],
   include_directories: inc,
-  dependencies: [threads_dep, ncurses_dep],
+  dependencies: [threads_dep, ncurses_dep, util_dep],
   install: false,
 )
 
 virmux_core_dep = declare_dependency(
   include_directories: inc,
   link_with: virmux_core_lib,
-  dependencies: [threads_dep, ncurses_dep],
+  dependencies: [threads_dep, ncurses_dep, util_dep],
 )
 
 unity_lib = static_library(
@@ -312,6 +314,14 @@ test_checkpoint_exe = executable(
 )
 
 test('test_checkpoint', test_checkpoint_exe)
+
+test_bench_exe = executable(
+  'test_bench',
+  'tests/unit/test_bench.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_bench', test_bench_exe)
 
 virmux_exe = executable(
   'virmux',

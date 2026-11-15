@@ -31,7 +31,7 @@
 
 ## Tasks
 
-- [ ] **Task 1: Benchmark Workload Generator & Input Latency Probe**
+- [x] **Task 1: Benchmark Workload Generator & Input Latency Probe**
   - Implement `include/virmux/bench.hpp` and `src/bench/bench.cpp`.
   - Implement synthetic benchmark workers:
     - `Browser`: 1.5 GB anonymous page allocation with text/DOM rendering loops.
