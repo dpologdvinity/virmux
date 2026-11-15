@@ -443,6 +443,11 @@ class BenchmarkRunner {
   [[nodiscard]] bool is_quick() const noexcept { return quick_; }
 
   /**
+   * @brief Asynchronously request stop (sets atomic flag, async-signal-safe).
+   */
+  void request_stop() noexcept;
+
+  /**
    * @brief Signal the runner to terminate any running tasks immediately.
    */
   void stop();

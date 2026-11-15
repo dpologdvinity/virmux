@@ -25,19 +25,22 @@ namespace {
 static std::atomic<BenchmarkRunner*> s_active_bench_runner{nullptr};
 
 void bench_signal_handler(int /*sig*/) {
-  BenchmarkRunner* runner = s_active_bench_runner.load();
+  BenchmarkRunner* runner =
+      s_active_bench_runner.load(std::memory_order_relaxed);
   if (runner) {
-    runner->stop();
+    runner->request_stop();
   }
 }
 
 void print_bench_usage(std::ostream& out) {
   out << "Usage:\n"
       << "  virmux bench <SUBCOMMAND> [OPTIONS]\n\n"
-      << "12-Terminal Gauntlet stress benchmark suite and telemetry reporter.\n\n"
+      << "12-Terminal Gauntlet stress benchmark suite and telemetry "
+         "reporter.\n\n"
       << "Commands:\n"
       << "  run [OPTIONS]       Execute synthetic workload benchmark gauntlet\n"
-      << "  report [OPTIONS]    Format and display benchmark results from JSON file\n\n"
+      << "  report [OPTIONS]    Format and display benchmark results from JSON "
+         "file\n\n"
       << "Options:\n"
       << "  -h, --help          Show this help message\n";
 }
@@ -47,10 +50,13 @@ void print_bench_run_usage(std::ostream& out) {
       << "  virmux bench run [OPTIONS]\n\n"
       << "Execute the 12-terminal gauntlet stress benchmark suite.\n\n"
       << "Options:\n"
-      << "  --tasks <N>         Number of concurrent benchmark tasks (default: 12)\n"
+      << "  --tasks <N>         Number of concurrent benchmark tasks (default: "
+         "12)\n"
       << "  --duration <N>      Run duration in seconds per task (default: 5)\n"
-      << "  --quick             Execute fast benchmark suite with reduced load\n"
-      << "  --mode <MODE>       Benchmark mode: all, managed, baseline (default: all)\n"
+      << "  --quick             Execute fast benchmark suite with reduced "
+         "load\n"
+      << "  --mode <MODE>       Benchmark mode: all, managed, baseline "
+         "(default: all)\n"
       << "  --output <PATH>     Save benchmark results to JSON file\n"
       << "  --json              Output benchmark results in JSON format\n"
       << "  -h, --help          Show this help message\n";
@@ -61,7 +67,8 @@ void print_bench_report_usage(std::ostream& out) {
       << "  virmux bench report [OPTIONS] [FILE]\n\n"
       << "Format and display benchmark comparison results from a JSON file.\n\n"
       << "Options:\n"
-      << "  --input <PATH>      Path to JSON benchmark results file (or read stdin if omitted)\n"
+      << "  --input <PATH>      Path to JSON benchmark results file (or read "
+         "stdin if omitted)\n"
       << "  -h, --help          Show this help message\n";
 }
 
@@ -127,7 +134,8 @@ int handle_bench_run(int argc, char* const argv[], int start_idx) {
     } else if (arg.starts_with("--output=")) {
       output_path = std::string(arg.substr(9));
     } else {
-      std::cerr << "Error: unrecognized option for bench run: '" << arg << "'\n";
+      std::cerr << "Error: unrecognized option for bench run: '" << arg
+                << "'\n";
       print_bench_run_usage(std::cerr);
       return 1;
     }
@@ -187,7 +195,8 @@ int handle_bench_run(int argc, char* const argv[], int start_idx) {
   if (!output_path.empty()) {
     std::ofstream ofs(output_path);
     if (!ofs) {
-      std::cerr << "Error: failed to open output file '" << output_path << "' for writing\n";
+      std::cerr << "Error: failed to open output file '" << output_path
+                << "' for writing\n";
       return 1;
     }
     ofs << format_comparison_json(comp) << "\n";
@@ -227,7 +236,8 @@ int handle_bench_report(int argc, char* const argv[], int start_idx) {
     } else if (!arg.starts_with("-") && input_path.empty()) {
       input_path = std::string(arg);
     } else {
-      std::cerr << "Error: unrecognized option for bench report: '" << arg << "'\n";
+      std::cerr << "Error: unrecognized option for bench report: '" << arg
+                << "'\n";
       print_bench_report_usage(std::cerr);
       return 1;
     }

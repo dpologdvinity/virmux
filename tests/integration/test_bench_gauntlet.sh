@@ -76,6 +76,7 @@ cleanup() {
       kill -KILL "$cpid" 2>/dev/null || true
     done
   fi
+  rm -rf /tmp/virmux_bench_build_* 2>/dev/null || true
   rm -rf "${TEMP_DIR:-}"
 }
 trap cleanup EXIT

@@ -262,12 +262,13 @@ int run_build_workload(int duration_seconds, uint64_t target_alloc_mb,
   (void)target_alloc_mb;
   const auto start_time = std::chrono::steady_clock::now();
 
-  char tmpl[] = "/tmp/virmux_bench_build_XXXXXX";
-  char* temp_dir_c = ::mkdtemp(tmpl);
-  if (!temp_dir_c) {
+  std::string dir_str = "/tmp/virmux_bench_build_" + std::to_string(::getpid());
+  std::error_code ec;
+  std::filesystem::remove_all(dir_str, ec);
+  if (!std::filesystem::create_directories(dir_str, ec)) {
     return -1;
   }
-  const std::filesystem::path temp_dir(temp_dir_c);
+  const std::filesystem::path temp_dir(dir_str);
 
   struct TempDirGuard {
     std::filesystem::path dir;
@@ -405,6 +406,7 @@ bool InputLatencyProbe::open_descriptors() {
 
       struct termios tios{};
       if (::tcgetattr(slave_fd_, &tios) == 0) {
+        tios.c_lflag &= ~ICANON;
         tios.c_lflag |= ECHO;
         ::tcsetattr(slave_fd_, TCSANOW, &tios);
       }
@@ -456,8 +458,7 @@ double InputLatencyProbe::measure_sample() {
   while (::read(read_fd, drain_buf, sizeof(drain_buf)) > 0) {
   }
   if (is_pty_) {
-    while (::read(slave_fd_, drain_buf, sizeof(drain_buf)) > 0) {
-    }
+    ::tcflush(slave_fd_, TCIFLUSH);
   }
 
   const auto t0 = std::chrono::steady_clock::now();
@@ -471,7 +472,24 @@ double InputLatencyProbe::measure_sample() {
   pfd.fd = read_fd;
   pfd.events = POLLIN;
 
-  int ret = ::poll(&pfd, 1, 1000);  // 1000ms timeout
+  auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
+  int ret = 0;
+  while (true) {
+    auto rem = std::chrono::duration_cast<std::chrono::milliseconds>(
+                   deadline - std::chrono::steady_clock::now())
+                   .count();
+    if (rem <= 0) {
+      ret = 0;
+      break;
+    }
+    ret = ::poll(&pfd, 1, static_cast<int>(rem));
+    if (ret < 0 && errno == EINTR) {
+      continue;
+    }
+    break;
+  }
+
   if (ret > 0 && (pfd.revents & POLLIN)) {
     char resp = 0;
     ssize_t nr = ::read(read_fd, &resp, 1);
@@ -481,8 +499,7 @@ double InputLatencyProbe::measure_sample() {
           std::chrono::duration<double, std::milli>(t1 - t0).count();
 
       if (is_pty_) {
-        while (::read(slave_fd_, drain_buf, sizeof(drain_buf)) > 0) {
-        }
+        ::tcflush(slave_fd_, TCIFLUSH);
       }
 
       std::lock_guard<std::mutex> lock(samples_mutex_);
@@ -1072,7 +1089,10 @@ std::string format_comparison_table(const BenchmarkComparison& comp) {
 
   // 3. KSM Memory Saved
   {
-    std::string gain = "+" + format_bytes(m.peak_ksm_bytes_saved) + " saved";
+    int64_t ksm_delta = static_cast<int64_t>(m.peak_ksm_bytes_saved) -
+                        static_cast<int64_t>(b.peak_ksm_bytes_saved);
+    std::string gain = (ksm_delta >= 0 ? "+" : "-") +
+                       format_bytes(std::abs(ksm_delta)) + " saved";
     std::snprintf(buf, sizeof(buf), "%-28s %-24s %-24s %s\n",
                   "KSM Memory Saved",
                   format_bytes(b.peak_ksm_bytes_saved).c_str(),
@@ -1238,32 +1258,44 @@ BenchmarkRunner& BenchmarkRunner::operator=(BenchmarkRunner&& other) noexcept {
   return *this;
 }
 
+void BenchmarkRunner::request_stop() noexcept {
+  stop_flag_.store(true, std::memory_order_relaxed);
+}
+
 void BenchmarkRunner::stop() {
-  stop_flag_.store(true);
+  request_stop();
   reap_children();
 }
 
 void BenchmarkRunner::reap_children() {
   std::lock_guard<std::mutex> lock(pids_mutex_);
   for (pid_t p : active_pids_) {
-    if (p > 0 && ::kill(p, 0) == 0) {
-      ::kill(-p, SIGTERM);
-      ::kill(p, SIGTERM);
+    if (p > 0) {
+      if (::kill(p, 0) == 0) {
+        ::kill(-p, SIGTERM);
+        ::kill(p, SIGTERM);
+      }
+      std::error_code ec;
+      std::filesystem::remove_all(
+          "/tmp/virmux_bench_build_" + std::to_string(p), ec);
     }
   }
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
   for (pid_t p : active_pids_) {
-    if (p > 0 && ::kill(p, 0) == 0) {
-      ::kill(-p, SIGKILL);
-      ::kill(p, SIGKILL);
-    }
     if (p > 0) {
+      if (::kill(p, 0) == 0) {
+        ::kill(-p, SIGKILL);
+        ::kill(p, SIGKILL);
+      }
       for (int retry = 0; retry < 20; ++retry) {
         if (::waitpid(p, nullptr, WNOHANG) > 0 || ::kill(p, 0) < 0) {
           break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
       }
+      std::error_code ec;
+      std::filesystem::remove_all(
+          "/tmp/virmux_bench_build_" + std::to_string(p), ec);
     }
   }
 }
@@ -1414,6 +1446,10 @@ BenchmarkResult BenchmarkRunner::execute_suite(
 
       {
         std::lock_guard<std::mutex> lock(pids_mutex_);
+        if (stop_flag_.load(std::memory_order_relaxed)) {
+          ::kill(-pid, SIGKILL);
+          ::kill(pid, SIGKILL);
+        }
         active_pids_.push_back(pid);
       }
       telemetry.add_target_pid(pid);
@@ -1452,10 +1488,26 @@ BenchmarkResult BenchmarkRunner::execute_suite(
     });
   }
 
+  std::atomic<bool> suite_done{false};
+  std::thread watcher([this, &suite_done]() {
+    while (!suite_done.load(std::memory_order_relaxed)) {
+      if (stop_flag_.load(std::memory_order_relaxed)) {
+        reap_children();
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+  });
+
   for (auto& w : workers) {
     if (w.joinable()) {
       w.join();
     }
+  }
+
+  suite_done.store(true, std::memory_order_relaxed);
+  if (watcher.joinable()) {
+    watcher.join();
   }
 
   const auto elapsed = std::chrono::duration<double>(
