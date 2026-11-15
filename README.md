@@ -50,7 +50,7 @@ cd virmux
 meson setup build
 ninja -C build
 
-# Run unit and integration test suite (40 tests)
+# Run unit and integration test suite (46 tests)
 ninja -C build test
 ```
 
@@ -148,6 +148,16 @@ virmux cas stats
 
 # Prune CAS cache down to a maximum byte threshold via LRU
 virmux cas clean --max-bytes 500M
+```
+
+#### 9. Stress Benchmarking (`virmux bench run`, `virmux bench report`)
+```bash
+# Run 12-task baseline vs managed gauntlet stress benchmark
+virmux bench run --quick --tasks 12 --output report.json
+
+# Display formatted comparison report from JSON file or stdin
+virmux bench report report.json
+cat report.json | virmux bench report
 ```
 
 ---

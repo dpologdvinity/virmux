@@ -101,6 +101,13 @@
    - Intercepts `sysconf(_SC_NPROCESSORS_ONLN)` and `/proc/meminfo` to spoof available hardware resources.
    - Intercepts Chromium/Node process launches to inject low-memory flags (`--single-process`, `--disable-gpu`, `--renderer-process-limit=1`).
 
+10. **`src/bench/` (Stress Benchmark & Gauntlet Engine):**
+    - Synthetic workload generators simulating real-world concurrency profiles: `BROWSER` (page allocation + dirtying + sleep), `COMPILER` (matrix multiplication CPU burn), `MODEL` (large buffer tensor allocation + dirtying), `BUILD` (ephemeral disk I/O file generation + deletion).
+    - Monotonic PTY input latency probe (`InputLatencyProbe`) measuring interactive keystroke round-trip latency under synthetic load via non-canonical raw slave PTY.
+    - System telemetry sampler (`TelemetrySampler`) tracking `/proc/meminfo` (MemTotal, MemAvailable, SwapUsed) and KSM deduplication deltas.
+    - Comparative gauntlet runner (`BenchmarkRunner`) executing baseline unmanaged concurrent tasks vs virmux-managed tasks (with `AdmissionGate`, Core 0-1 shielding, and OOM score adjustment) across a 12-terminal matrix.
+    - JSON export and human-readable comparative reporting (`format_comparison_table`, `format_comparison_json`).
+
 ---
 
 ### Technology Stack Rationale
