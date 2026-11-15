@@ -52,7 +52,7 @@
   - Add CLI subcommands `virmux bench run` and `virmux bench report` in `src/cli/cli_bench.cpp`, `include/virmux/cli_bench.hpp`, and `cli/main.cpp`.
   - Unit tests for CLI parsing and reporting in `tests/unit/test_cli_bench.cpp`.
 
-- [ ] **Task 3: Integration Benchmark Gauntlet Suite**
+- [x] **Task 3: Integration Benchmark Gauntlet Suite**
   - Implement `tests/integration/test_bench_gauntlet.sh`.
   - Validate quick 4-task and full 12-task gauntlet runs.
   - Verify JSON output schema, zero leaked background processes, and clean exit codes.

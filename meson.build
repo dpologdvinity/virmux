@@ -467,3 +467,14 @@ test(
   timeout: 120,
 )
 
+test(
+  'integration_bench_gauntlet',
+  find_program('bash'),
+  args: [
+    meson.current_source_dir() / 'tests/integration/test_bench_gauntlet.sh',
+    meson.current_build_dir(),
+  ],
+  depends: [virmux_exe, virmux_intercept_lib],
+  timeout: 120,
+)
+
