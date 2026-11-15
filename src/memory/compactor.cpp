@@ -223,7 +223,8 @@ ReclaimResult ProcessCompactor::reclaim_memory(pid_t target_pid,
     // Anonymous or writable ranges: lines containing rw-p or r--p where path is
     // empty or [heap] or [anon], explicitly excluding [stack]
     bool perms_match = (perms == "rw-p" || perms == "r--p");
-    bool path_match = (path.empty() || path == "[heap]" || path.starts_with("[anon"));
+    bool path_match =
+        (path.empty() || path == "[heap]" || path.starts_with("[anon"));
     if (path == "[stack]" || path.starts_with("[stack:")) {
       path_match = false;
     }
@@ -233,7 +234,8 @@ ReclaimResult ProcessCompactor::reclaim_memory(pid_t target_pid,
     }
 
     auto dash = addr_range.find('-');
-    if (dash == std::string::npos || dash == 0 || dash == addr_range.size() - 1) {
+    if (dash == std::string::npos || dash == 0 ||
+        dash == addr_range.size() - 1) {
       continue;
     }
 
@@ -245,8 +247,8 @@ ReclaimResult ProcessCompactor::reclaim_memory(pid_t target_pid,
     auto [p1, ec1] = std::from_chars(
         start_str.data(), start_str.data() + start_str.size(), start, 16);
     uintptr_t end = 0;
-    auto [p2, ec2] = std::from_chars(
-        end_str.data(), end_str.data() + end_str.size(), end, 16);
+    auto [p2, ec2] = std::from_chars(end_str.data(),
+                                     end_str.data() + end_str.size(), end, 16);
 
     if (ec1 == std::errc{} && ec2 == std::errc{} && end > start) {
       ranges.emplace_back(start, end - start);

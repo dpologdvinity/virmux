@@ -1,14 +1,16 @@
 /**
  * @file memory_manager.hpp
- * @brief Unified memory manager coordinating VMA scanning, KSM, compaction, and telemetry.
+ * @brief Unified memory manager coordinating VMA scanning, KSM, compaction, and
+ * telemetry.
  */
 
 #pragma once
 
+#include <sys/types.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <sys/types.h>
 #include <vector>
 
 #include "virmux/compactor.hpp"
@@ -29,15 +31,18 @@ struct VmaRange {
 };
 
 /**
- * @brief Unified memory manager coordinating VMA inspection, compaction, and system telemetry.
+ * @brief Unified memory manager coordinating VMA inspection, compaction, and
+ * system telemetry.
  */
 class MemoryManager {
  public:
   /**
    * @brief Construct a new MemoryManager instance.
    * @param procfs_root Root directory for procfs (defaults to "/proc").
-   * @param ksm_root Root directory for KSM sysfs (defaults to "/sys/kernel/mm/ksm").
-   * @param sysfs_block_root Root directory for block sysfs (defaults to "/sys/block").
+   * @param ksm_root Root directory for KSM sysfs (defaults to
+   * "/sys/kernel/mm/ksm").
+   * @param sysfs_block_root Root directory for block sysfs (defaults to
+   * "/sys/block").
    */
   explicit MemoryManager(std::string procfs_root = "/proc",
                          std::string ksm_root = "/sys/kernel/mm/ksm",
@@ -56,7 +61,8 @@ class MemoryManager {
    * @brief Advise and compact anonymous memory for target process.
    * @param pid Target process ID.
    * @param advice Reclaim advice mode (defaults to Pageout).
-   * @return ReclaimResult containing status, bytes advised, range count, and error code.
+   * @return ReclaimResult containing status, bytes advised, range count, and
+   * error code.
    */
   [[nodiscard]] ReclaimResult compact_process(
       pid_t pid, ReclaimAdvice advice = ReclaimAdvice::Pageout);

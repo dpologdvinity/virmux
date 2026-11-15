@@ -61,16 +61,24 @@ void test_vma_scanner_mock_maps(void) {
   std::filesystem::create_directories(pid_dir);
 
   const std::string mock_maps =
-      "55a73e6a0000-55a73e6b0000 r--p 00000000 08:01 12345                      /usr/bin/foo\n"
-      "55a73e6b0000-55a73e6c0000 r-xp 00010000 08:01 12345                      /usr/bin/foo\n"
-      "55a73e6c0000-55a73e6d0000 rw-p 00020000 08:01 12345                      /usr/bin/foo\n"
-      "55a73e6d0000-55a73e6e0000 rw-p 00000000 00:00 0                          [heap]\n"
+      "55a73e6a0000-55a73e6b0000 r--p 00000000 08:01 12345                     "
+      " /usr/bin/foo\n"
+      "55a73e6b0000-55a73e6c0000 r-xp 00010000 08:01 12345                     "
+      " /usr/bin/foo\n"
+      "55a73e6c0000-55a73e6d0000 rw-p 00020000 08:01 12345                     "
+      " /usr/bin/foo\n"
+      "55a73e6d0000-55a73e6e0000 rw-p 00000000 00:00 0                         "
+      " [heap]\n"
       "7f4955a00000-7f4955b00000 rw-p 00000000 00:00 0 \n"
       "7f4955b00000-7f4955c00000 r--p 00000000 00:00 0 \n"
-      "7f4955c00000-7f4955d00000 rw-p 00000000 00:00 0                          [anon:custom_arena]\n"
-      "7f4955d00123-7f4955e00000 rw-p 00000000 00:00 0                          [anon:misaligned]\n"
-      "7f4955e00000-7f4955f00000 r-xp 00000000 00:00 0                          [vdso]\n"
-      "7ffd551f3000-7ffd55214000 rw-p 00000000 00:00 0                          [stack]\n";
+      "7f4955c00000-7f4955d00000 rw-p 00000000 00:00 0                         "
+      " [anon:custom_arena]\n"
+      "7f4955d00123-7f4955e00000 rw-p 00000000 00:00 0                         "
+      " [anon:misaligned]\n"
+      "7f4955e00000-7f4955f00000 r-xp 00000000 00:00 0                         "
+      " [vdso]\n"
+      "7ffd551f3000-7ffd55214000 rw-p 00000000 00:00 0                         "
+      " [stack]\n";
 
   write_file(pid_dir / "maps", mock_maps);
 
@@ -110,7 +118,8 @@ void test_vma_scanner_mock_maps(void) {
   TEST_ASSERT_TRUE(anon_vmas[4].is_anonymous);
   TEST_ASSERT_TRUE(anon_vmas[4].is_writable);
 
-  // Test anonymous_only = false (should include file-backed and vdso, but exclude misaligned)
+  // Test anonymous_only = false (should include file-backed and vdso, but
+  // exclude misaligned)
   auto all_vmas = mgr.scan_process_vmas(test_pid, false);
   TEST_ASSERT_EQUAL_INT(9, all_vmas.size());
 
@@ -176,7 +185,8 @@ void test_compact_process_self(void) {
   TEST_ASSERT_TRUE(res_cold.bytes_advised > 0);
 
   // Test compact with Pageout
-  auto res_pageout = mgr.compact_process(::getpid(), virmux::ReclaimAdvice::Pageout);
+  auto res_pageout =
+      mgr.compact_process(::getpid(), virmux::ReclaimAdvice::Pageout);
   TEST_ASSERT_TRUE(res_pageout.success);
   TEST_ASSERT_EQUAL_INT(0, res_pageout.error_code);
   TEST_ASSERT_TRUE(res_pageout.ranges_count > 0);
@@ -202,11 +212,11 @@ void test_compact_cgroup_procs_mock(void) {
   TEST_ASSERT_FALSE(temp_dir.path.empty());
 
   std::filesystem::path procs_file = temp_dir.path / "cgroup.procs";
-  std::string content =
-      std::to_string(::getpid()) + "\n"
-      "-1\n"
-      "99999999\n"
-      "invalid_entry\n";
+  std::string content = std::to_string(::getpid()) +
+                        "\n"
+                        "-1\n"
+                        "99999999\n"
+                        "invalid_entry\n";
   write_file(procs_file, content);
 
   virmux::MemoryManager mgr;

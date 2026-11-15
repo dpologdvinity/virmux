@@ -1,14 +1,12 @@
 /**
  * @file test_fault_isolation.cpp
- * @brief Unit tests for OOM score adjustment and fork-bomb / pids limit protection.
+ * @brief Unit tests for OOM score adjustment and fork-bomb / pids limit
+ * protection.
  */
 
 extern "C" {
 #include "unity/unity.h"
 }
-
-#include "virmux/cgroup.hpp"
-#include "virmux/sandbox.hpp"
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -19,11 +17,15 @@ extern "C" {
 #include <fstream>
 #include <string>
 
+#include "virmux/cgroup.hpp"
+#include "virmux/sandbox.hpp"
+
 void setUp(void) {}
 void tearDown(void) {}
 
 void test_oom_score_positive_write_and_verify(void) {
-  // Test writing positive score (+800) in child process to avoid altering test runner process
+  // Test writing positive score (+800) in child process to avoid altering test
+  // runner process
   pid_t pid = fork();
   TEST_ASSERT_TRUE(pid >= 0);
   if (pid == 0) {
@@ -52,7 +54,8 @@ void test_oom_score_positive_write_and_verify(void) {
 }
 
 void test_oom_score_negative_unprivileged_graceful(void) {
-  // Writing negative score (-900) should handle EPERM/EACCES gracefully without throwing or crashing
+  // Writing negative score (-900) should handle EPERM/EACCES gracefully without
+  // throwing or crashing
   bool res = virmux::set_process_oom_score(0, -900);
   if (geteuid() != 0) {
     TEST_ASSERT_FALSE(res);

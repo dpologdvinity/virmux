@@ -7,11 +7,12 @@ extern "C" {
 #include "unity/unity.h"
 }
 
+#include <sys/mman.h>
+#include <unistd.h>
+
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
-#include <sys/mman.h>
-#include <unistd.h>
 #include <vector>
 
 #include "virmux/compactor.hpp"
@@ -57,8 +58,7 @@ void test_compactor_self_reclaim_cold_and_pageout(void) {
 
 void test_compactor_reclaim_memory_current_pid(void) {
   virmux::ProcessCompactor compactor;
-  auto res =
-      compactor.reclaim_memory(::getpid(), virmux::ReclaimAdvice::Cold);
+  auto res = compactor.reclaim_memory(::getpid(), virmux::ReclaimAdvice::Cold);
 
   TEST_ASSERT_TRUE(res.success);
   TEST_ASSERT_EQUAL_INT(0, res.error_code);

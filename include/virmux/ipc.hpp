@@ -25,14 +25,16 @@ inline constexpr uint32_t IPC_MAX_PAYLOAD = 16 * 1024 * 1024;
  * @brief Packed binary TLV header for all IPC messages.
  *
  * Exactly 12 bytes: magic (4), version (2), msg_type (2), payload_len (4).
- * Serialized in host native byte order for zero-copy performance over local AF_UNIX sockets.
+ * Serialized in host native byte order for zero-copy performance over local
+ * AF_UNIX sockets.
  */
 #pragma pack(push, 1)
 struct IpcHeader {
-  uint32_t magic;       ///< 0x564D5558 ('V', 'M', 'U', 'X') in host byte order
-  uint16_t version;     ///< IPC protocol version (1)
-  uint16_t msg_type;    ///< Message type identifier (see IpcMsgType)
-  uint32_t payload_len; ///< Byte length of payload immediately following header
+  uint32_t magic;     ///< 0x564D5558 ('V', 'M', 'U', 'X') in host byte order
+  uint16_t version;   ///< IPC protocol version (1)
+  uint16_t msg_type;  ///< Message type identifier (see IpcMsgType)
+  uint32_t
+      payload_len;  ///< Byte length of payload immediately following header
 };
 #pragma pack(pop)
 
@@ -69,7 +71,8 @@ enum IpcMsgType : uint16_t {
  *
  * Checks VIRMUX_SOCKET environment variable first.
  * If unset, checks /run/user/<UID>/virmux.sock.
- * Falls back to /tmp/virmux-<UID>.sock if runtime dir is unavailable or unwritable.
+ * Falls back to /tmp/virmux-<UID>.sock if runtime dir is unavailable or
+ * unwritable.
  *
  * @return Resolved socket filesystem path.
  */
@@ -78,27 +81,35 @@ std::string resolve_socket_path();
 /**
  * @brief Send a binary-framed IPC message over a connected socket.
  *
- * Encodes the 12-byte IpcHeader and payload, handling partial sends and poll timeouts.
+ * Encodes the 12-byte IpcHeader and payload, handling partial sends and poll
+ * timeouts.
  *
  * @param fd Connected socket descriptor.
  * @param msg_type Message type (e.g. MSG_PING).
  * @param payload Payload string or byte view.
- * @param timeout_ms Timeout in milliseconds (-1 for infinite, 0 for non-blocking).
- * @return true on complete transmission, false on timeout, disconnect, or error.
+ * @param timeout_ms Timeout in milliseconds (-1 for infinite, 0 for
+ * non-blocking).
+ * @return true on complete transmission, false on timeout, disconnect, or
+ * error.
  */
-bool send_ipc_message(int fd, uint16_t msg_type, std::string_view payload, int timeout_ms = 1000);
+bool send_ipc_message(int fd, uint16_t msg_type, std::string_view payload,
+                      int timeout_ms = 1000);
 
 /**
  * @brief Receive a binary-framed IPC message from a connected socket.
  *
- * Reads and validates the 12-byte IpcHeader and full payload with poll timeouts.
+ * Reads and validates the 12-byte IpcHeader and full payload with poll
+ * timeouts.
  *
  * @param fd Connected socket descriptor.
  * @param out_type Output parameter receiving the message type.
  * @param out_payload Output parameter receiving the payload content.
- * @param timeout_ms Timeout in milliseconds (-1 for infinite, 0 for non-blocking).
- * @return true on successful reception, false on timeout, header error, disconnect, or payload > 16MiB.
+ * @param timeout_ms Timeout in milliseconds (-1 for infinite, 0 for
+ * non-blocking).
+ * @return true on successful reception, false on timeout, header error,
+ * disconnect, or payload > 16MiB.
  */
-bool recv_ipc_message(int fd, uint16_t& out_type, std::string& out_payload, int timeout_ms = 1000);
+bool recv_ipc_message(int fd, uint16_t& out_type, std::string& out_payload,
+                      int timeout_ms = 1000);
 
 }  // namespace virmux

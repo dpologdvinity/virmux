@@ -309,10 +309,12 @@ void test_fix_permissions_recursive_symlink_safety(void) {
     out << "external secret data\n";
   }
   std::error_code ec;
-  std::filesystem::permissions(outside_target, std::filesystem::perms::owner_read,
+  std::filesystem::permissions(outside_target,
+                               std::filesystem::perms::owner_read,
                                std::filesystem::perm_options::replace, ec);
 
-  // Inside base_dir: read-only directory and file, plus a symlink pointing outside
+  // Inside base_dir: read-only directory and file, plus a symlink pointing
+  // outside
   std::string internal_dir = base_dir + "/readonly_subdir";
   std::filesystem::create_directory(internal_dir, ec);
   std::string internal_file = internal_dir + "/ro_file.txt";
@@ -320,12 +322,13 @@ void test_fix_permissions_recursive_symlink_safety(void) {
     std::ofstream out(internal_file);
     out << "internal data\n";
   }
-  std::filesystem::permissions(internal_file, std::filesystem::perms::owner_read,
+  std::filesystem::permissions(internal_file,
+                               std::filesystem::perms::owner_read,
                                std::filesystem::perm_options::replace, ec);
-  std::filesystem::permissions(internal_dir,
-                               std::filesystem::perms::owner_read |
-                                   std::filesystem::perms::owner_exec,
-                               std::filesystem::perm_options::replace, ec);
+  std::filesystem::permissions(
+      internal_dir,
+      std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec,
+      std::filesystem::perm_options::replace, ec);
 
   // Symlink pointing to outside target
   std::string symlink_path = base_dir + "/link_to_external";
@@ -345,7 +348,8 @@ void test_fix_permissions_recursive_symlink_safety(void) {
       static_cast<int>(out_perms & std::filesystem::perms::owner_all));
 
   // Cleanup external dir
-  std::filesystem::permissions(outside_target, std::filesystem::perms::owner_all,
+  std::filesystem::permissions(outside_target,
+                               std::filesystem::perms::owner_all,
                                std::filesystem::perm_options::replace, ec);
   std::filesystem::remove_all(out_dir, ec);
 }

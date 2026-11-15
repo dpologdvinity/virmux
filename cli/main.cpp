@@ -254,8 +254,7 @@ int handle_run(int argc, char* argv[]) {
       uint64_t val = 0;
       auto [p, ec] =
           std::from_chars(val_sv.data(), val_sv.data() + val_sv.size(), val);
-      if (ec != std::errc() || p != val_sv.data() + val_sv.size() ||
-          val == 0) {
+      if (ec != std::errc() || p != val_sv.data() + val_sv.size() || val == 0) {
         std::cerr << "Error: invalid value for --max-pids: '" << val_sv
                   << "' (must be a positive integer)\n";
         return 1;
@@ -266,8 +265,7 @@ int handle_run(int argc, char* argv[]) {
       uint64_t val = 0;
       auto [p, ec] =
           std::from_chars(val_sv.data(), val_sv.data() + val_sv.size(), val);
-      if (ec != std::errc() || p != val_sv.data() + val_sv.size() ||
-          val == 0) {
+      if (ec != std::errc() || p != val_sv.data() + val_sv.size() || val == 0) {
         std::cerr << "Error: invalid value for --max-pids: '" << val_sv
                   << "' (must be a positive integer)\n";
         return 1;

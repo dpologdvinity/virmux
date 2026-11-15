@@ -1,6 +1,7 @@
 /**
  * @file test_sandbox_overlay.cpp
- * @brief Unit tests for sandbox ephemeral OverlayFS execution and scratch redirection.
+ * @brief Unit tests for sandbox ephemeral OverlayFS execution and scratch
+ * redirection.
  */
 
 extern "C" {
@@ -70,9 +71,8 @@ void test_sandbox_ephemeral_cow_isolation(void) {
   // Verify base_code.c in base directory is 100% UNTOUCHED
   std::ifstream ifs(base_file);
   TEST_ASSERT_TRUE(ifs.is_open());
-  std::string current_content(
-      (std::istreambuf_iterator<char>(ifs)),
-      std::istreambuf_iterator<char>());
+  std::string current_content((std::istreambuf_iterator<char>(ifs)),
+                              std::istreambuf_iterator<char>());
   ifs.close();
   TEST_ASSERT_EQUAL_STRING(original_content.c_str(), current_content.c_str());
 

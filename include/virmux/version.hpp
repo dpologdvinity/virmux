@@ -13,4 +13,4 @@ namespace virmux {
  */
 [[nodiscard]] const char* version_string() noexcept;
 
-} // namespace virmux
+}  // namespace virmux

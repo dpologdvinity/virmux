@@ -1,6 +1,7 @@
 /**
  * @file telemetry.cpp
- * @brief Implementation of process memory, host meminfo, and zram telemetry parser.
+ * @brief Implementation of process memory, host meminfo, and zram telemetry
+ * parser.
  */
 
 #include "virmux/telemetry.hpp"
@@ -39,7 +40,8 @@ std::string trim(std::string_view sv) {
  * @param val Output parsed numeric integer.
  * @return True if key and integer value parsed successfully.
  */
-bool parse_key_value_kb(const std::string& line, std::string& key, uint64_t& val) {
+bool parse_key_value_kb(const std::string& line, std::string& key,
+                        uint64_t& val) {
   auto colon_pos = line.find(':');
   if (colon_pos == std::string::npos) {
     return false;
@@ -54,7 +56,8 @@ bool parse_key_value_kb(const std::string& line, std::string& key, uint64_t& val
   }
   key = std::string(k_sv);
 
-  std::string_view v_sv(line.data() + colon_pos + 1, line.size() - colon_pos - 1);
+  std::string_view v_sv(line.data() + colon_pos + 1,
+                        line.size() - colon_pos - 1);
   while (!v_sv.empty() && (v_sv.front() == ' ' || v_sv.front() == '\t')) {
     v_sv.remove_prefix(1);
   }
@@ -197,7 +200,8 @@ std::vector<ZramDeviceStats> MemoryTelemetry::read_zram_stats() const {
     return result;
   }
 
-  for (const auto& entry : std::filesystem::directory_iterator(block_root, ec)) {
+  for (const auto& entry :
+       std::filesystem::directory_iterator(block_root, ec)) {
     if (ec) {
       break;
     }
@@ -222,8 +226,7 @@ std::vector<ZramDeviceStats> MemoryTelemetry::read_zram_stats() const {
     const auto open_bracket = algo_content.find('[');
     const auto close_bracket = algo_content.find(']');
     if (open_bracket != std::string::npos &&
-        close_bracket != std::string::npos &&
-        close_bracket > open_bracket) {
+        close_bracket != std::string::npos && close_bracket > open_bracket) {
       dev.algorithm = algo_content.substr(open_bracket + 1,
                                           close_bracket - open_bracket - 1);
     } else {

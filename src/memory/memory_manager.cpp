@@ -5,6 +5,8 @@
 
 #include "virmux/memory_manager.hpp"
 
+#include <unistd.h>
+
 #include <cerrno>
 #include <charconv>
 #include <cstddef>
@@ -15,7 +17,6 @@
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -24,17 +25,15 @@ namespace virmux {
 namespace {
 
 void trim_trailing_whitespace(std::string& s) {
-  while (!s.empty() &&
-         (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' ||
-          s.back() == '\n')) {
+  while (!s.empty() && (s.back() == ' ' || s.back() == '\t' ||
+                        s.back() == '\r' || s.back() == '\n')) {
     s.pop_back();
   }
 }
 
 }  // namespace
 
-MemoryManager::MemoryManager(std::string procfs_root,
-                             std::string ksm_root,
+MemoryManager::MemoryManager(std::string procfs_root, std::string ksm_root,
                              std::string sysfs_block_root)
     : procfs_root_(std::move(procfs_root)),
       ksm_(std::move(ksm_root)),
@@ -105,8 +104,8 @@ std::vector<VmaRange> MemoryManager::scan_process_vmas(
     }
 
     uintptr_t end = 0;
-    auto [p2, ec2] = std::from_chars(
-        end_str.data(), end_str.data() + end_str.size(), end, 16);
+    auto [p2, ec2] = std::from_chars(end_str.data(),
+                                     end_str.data() + end_str.size(), end, 16);
     if (ec2 != std::errc{} || p2 != end_str.data() + end_str.size()) {
       continue;
     }
@@ -167,7 +166,8 @@ ReclaimResult MemoryManager::compact_process(pid_t pid, ReclaimAdvice advice) {
   ranges.reserve(vmas.size());
 
   for (const auto& vma : vmas) {
-    // Exclude thread stack from proactive compaction to prevent immediate minor faults
+    // Exclude thread stack from proactive compaction to prevent immediate minor
+    // faults
     if (vma.is_stack) {
       continue;
     }
@@ -179,9 +179,8 @@ ReclaimResult MemoryManager::compact_process(pid_t pid, ReclaimAdvice advice) {
   return compactor_.reclaim_ranges(pid, ranges, advice);
 }
 
-size_t MemoryManager::compact_cgroup_procs(
-    const std::string& cgroup_procs_path,
-    ReclaimAdvice advice) {
+size_t MemoryManager::compact_cgroup_procs(const std::string& cgroup_procs_path,
+                                           ReclaimAdvice advice) {
   std::ifstream f(cgroup_procs_path);
   if (!f.is_open()) {
     return 0;
@@ -210,9 +209,7 @@ size_t MemoryManager::compact_cgroup_procs(
   return compacted_count;
 }
 
-KsmStats MemoryManager::get_ksm_stats() const {
-  return ksm_.read_stats();
-}
+KsmStats MemoryManager::get_ksm_stats() const { return ksm_.read_stats(); }
 
 HostMemoryStats MemoryManager::get_host_stats() const {
   return telemetry_.read_host_stats();

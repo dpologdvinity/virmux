@@ -312,7 +312,8 @@ void test_session_state_strings(void) {
       virmux::session_state_to_string(virmux::SessionState::FROZEN).data());
   TEST_ASSERT_EQUAL_STRING(
       "CHECKPOINTED",
-      virmux::session_state_to_string(virmux::SessionState::CHECKPOINTED).data());
+      virmux::session_state_to_string(virmux::SessionState::CHECKPOINTED)
+          .data());
   TEST_ASSERT_EQUAL_STRING(
       "DEAD",
       virmux::session_state_to_string(virmux::SessionState::DEAD).data());

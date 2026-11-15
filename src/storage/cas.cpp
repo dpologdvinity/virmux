@@ -236,8 +236,8 @@ bool CasStore::get(const std::string& key, const std::string& dest_path) {
 
   pid_t pid = ::getpid();
   uint64_t seq = g_cas_seq.fetch_add(1, std::memory_order_relaxed);
-  std::string temp_dest = dest.string() + ".tmp." + std::to_string(pid) +
-                          "." + std::to_string(seq);
+  std::string temp_dest =
+      dest.string() + ".tmp." + std::to_string(pid) + "." + std::to_string(seq);
 
   fs::copy_file(src, temp_dest, fs::copy_options::overwrite_existing, ec);
   if (ec) {

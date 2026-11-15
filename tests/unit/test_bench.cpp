@@ -1,6 +1,7 @@
 /**
  * @file test_bench.cpp
- * @brief Unit tests for benchmark workload generators, input latency probe, and telemetry sampler.
+ * @brief Unit tests for benchmark workload generators, input latency probe, and
+ * telemetry sampler.
  */
 
 extern "C" {
@@ -56,26 +57,46 @@ struct TempDir {
 }  // namespace
 
 void test_workload_type_string_conversions(void) {
-  TEST_ASSERT_EQUAL_STRING("browser", virmux::workload_type_to_string(virmux::WorkloadType::BROWSER).data());
-  TEST_ASSERT_EQUAL_STRING("compiler", virmux::workload_type_to_string(virmux::WorkloadType::COMPILER).data());
-  TEST_ASSERT_EQUAL_STRING("model", virmux::workload_type_to_string(virmux::WorkloadType::MODEL).data());
-  TEST_ASSERT_EQUAL_STRING("build", virmux::workload_type_to_string(virmux::WorkloadType::BUILD).data());
+  TEST_ASSERT_EQUAL_STRING(
+      "browser",
+      virmux::workload_type_to_string(virmux::WorkloadType::BROWSER).data());
+  TEST_ASSERT_EQUAL_STRING(
+      "compiler",
+      virmux::workload_type_to_string(virmux::WorkloadType::COMPILER).data());
+  TEST_ASSERT_EQUAL_STRING(
+      "model",
+      virmux::workload_type_to_string(virmux::WorkloadType::MODEL).data());
+  TEST_ASSERT_EQUAL_STRING(
+      "build",
+      virmux::workload_type_to_string(virmux::WorkloadType::BUILD).data());
 
-  TEST_ASSERT_TRUE(virmux::workload_type_from_string("browser") == virmux::WorkloadType::BROWSER);
-  TEST_ASSERT_TRUE(virmux::workload_type_from_string("Browser") == virmux::WorkloadType::BROWSER);
-  TEST_ASSERT_TRUE(virmux::workload_type_from_string("BROWSER") == virmux::WorkloadType::BROWSER);
+  TEST_ASSERT_TRUE(virmux::workload_type_from_string("browser") ==
+                   virmux::WorkloadType::BROWSER);
+  TEST_ASSERT_TRUE(virmux::workload_type_from_string("Browser") ==
+                   virmux::WorkloadType::BROWSER);
+  TEST_ASSERT_TRUE(virmux::workload_type_from_string("BROWSER") ==
+                   virmux::WorkloadType::BROWSER);
 
-  TEST_ASSERT_TRUE(virmux::workload_type_from_string("compiler") == virmux::WorkloadType::COMPILER);
-  TEST_ASSERT_TRUE(virmux::workload_type_from_string("Compiler") == virmux::WorkloadType::COMPILER);
-  TEST_ASSERT_TRUE(virmux::workload_type_from_string("COMPILER") == virmux::WorkloadType::COMPILER);
+  TEST_ASSERT_TRUE(virmux::workload_type_from_string("compiler") ==
+                   virmux::WorkloadType::COMPILER);
+  TEST_ASSERT_TRUE(virmux::workload_type_from_string("Compiler") ==
+                   virmux::WorkloadType::COMPILER);
+  TEST_ASSERT_TRUE(virmux::workload_type_from_string("COMPILER") ==
+                   virmux::WorkloadType::COMPILER);
 
-  TEST_ASSERT_TRUE(virmux::workload_type_from_string("model") == virmux::WorkloadType::MODEL);
-  TEST_ASSERT_TRUE(virmux::workload_type_from_string("Model") == virmux::WorkloadType::MODEL);
-  TEST_ASSERT_TRUE(virmux::workload_type_from_string("MODEL") == virmux::WorkloadType::MODEL);
+  TEST_ASSERT_TRUE(virmux::workload_type_from_string("model") ==
+                   virmux::WorkloadType::MODEL);
+  TEST_ASSERT_TRUE(virmux::workload_type_from_string("Model") ==
+                   virmux::WorkloadType::MODEL);
+  TEST_ASSERT_TRUE(virmux::workload_type_from_string("MODEL") ==
+                   virmux::WorkloadType::MODEL);
 
-  TEST_ASSERT_TRUE(virmux::workload_type_from_string("build") == virmux::WorkloadType::BUILD);
-  TEST_ASSERT_TRUE(virmux::workload_type_from_string("Build") == virmux::WorkloadType::BUILD);
-  TEST_ASSERT_TRUE(virmux::workload_type_from_string("BUILD") == virmux::WorkloadType::BUILD);
+  TEST_ASSERT_TRUE(virmux::workload_type_from_string("build") ==
+                   virmux::WorkloadType::BUILD);
+  TEST_ASSERT_TRUE(virmux::workload_type_from_string("Build") ==
+                   virmux::WorkloadType::BUILD);
+  TEST_ASSERT_TRUE(virmux::workload_type_from_string("BUILD") ==
+                   virmux::WorkloadType::BUILD);
 
   bool threw = false;
   try {
@@ -100,39 +121,47 @@ void test_benchmark_task_config_defaults(void) {
 
 void test_run_synthetic_workload_browser(void) {
   // Test single iteration completion
-  int ret = virmux::run_synthetic_workload(virmux::WorkloadType::BROWSER, 0, 1, nullptr);
+  int ret = virmux::run_synthetic_workload(virmux::WorkloadType::BROWSER, 0, 1,
+                                           nullptr);
   TEST_ASSERT_EQUAL_INT(0, ret);
 
   // Test immediate stop via flag
   std::atomic<bool> stop_flag{true};
-  ret = virmux::run_synthetic_workload(virmux::WorkloadType::BROWSER, 10, 1, &stop_flag);
+  ret = virmux::run_synthetic_workload(virmux::WorkloadType::BROWSER, 10, 1,
+                                       &stop_flag);
   TEST_ASSERT_EQUAL_INT(0, ret);
 }
 
 void test_run_synthetic_workload_compiler(void) {
-  int ret = virmux::run_synthetic_workload(virmux::WorkloadType::COMPILER, 0, 1, nullptr);
+  int ret = virmux::run_synthetic_workload(virmux::WorkloadType::COMPILER, 0, 1,
+                                           nullptr);
   TEST_ASSERT_EQUAL_INT(0, ret);
 
   std::atomic<bool> stop_flag{true};
-  ret = virmux::run_synthetic_workload(virmux::WorkloadType::COMPILER, 10, 1, &stop_flag);
+  ret = virmux::run_synthetic_workload(virmux::WorkloadType::COMPILER, 10, 1,
+                                       &stop_flag);
   TEST_ASSERT_EQUAL_INT(0, ret);
 }
 
 void test_run_synthetic_workload_model(void) {
-  int ret = virmux::run_synthetic_workload(virmux::WorkloadType::MODEL, 0, 1, nullptr);
+  int ret = virmux::run_synthetic_workload(virmux::WorkloadType::MODEL, 0, 1,
+                                           nullptr);
   TEST_ASSERT_EQUAL_INT(0, ret);
 
   std::atomic<bool> stop_flag{true};
-  ret = virmux::run_synthetic_workload(virmux::WorkloadType::MODEL, 10, 1, &stop_flag);
+  ret = virmux::run_synthetic_workload(virmux::WorkloadType::MODEL, 10, 1,
+                                       &stop_flag);
   TEST_ASSERT_EQUAL_INT(0, ret);
 }
 
 void test_run_synthetic_workload_build(void) {
-  int ret = virmux::run_synthetic_workload(virmux::WorkloadType::BUILD, 0, 1, nullptr);
+  int ret = virmux::run_synthetic_workload(virmux::WorkloadType::BUILD, 0, 1,
+                                           nullptr);
   TEST_ASSERT_EQUAL_INT(0, ret);
 
   std::atomic<bool> stop_flag{true};
-  ret = virmux::run_synthetic_workload(virmux::WorkloadType::BUILD, 10, 1, &stop_flag);
+  ret = virmux::run_synthetic_workload(virmux::WorkloadType::BUILD, 10, 1,
+                                       &stop_flag);
   TEST_ASSERT_EQUAL_INT(0, ret);
 }
 
@@ -202,7 +231,8 @@ void test_telemetry_sampler_mock_procfs(void) {
   write_file(temp_ksm.path / "run", "1\n");
   write_file(temp_ksm.path / "pages_sharing", "1000\n");
 
-  virmux::TelemetrySampler sampler(temp_proc.path.string(), temp_ksm.path.string());
+  virmux::TelemetrySampler sampler(temp_proc.path.string(),
+                                   temp_ksm.path.string());
   TEST_ASSERT_FALSE(sampler.is_running());
   TEST_ASSERT_EQUAL_UINT64(0, sampler.sample_count());
 
@@ -246,7 +276,8 @@ void test_telemetry_sampler_process_tracking(void) {
       "VmSwap:\t    4096 kB\n";
   write_file(temp_proc.path / "4242" / "status", status_content);
 
-  virmux::TelemetrySampler sampler(temp_proc.path.string(), temp_ksm.path.string());
+  virmux::TelemetrySampler sampler(temp_proc.path.string(),
+                                   temp_ksm.path.string());
   sampler.add_target_pid(4242);
   sampler.sample();
 
