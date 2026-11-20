@@ -129,6 +129,15 @@ std::string escape_json_str(std::string_view input) {
 
 bool run_command_direct(const std::vector<std::string>& args) {
   if (args.empty()) return false;
+  // Build argv before fork(): the caller (the supervisor daemon, or a test
+  // hosting it on a thread) may be multi-threaded, so the child must stick to
+  // async-signal-safe calls (no heap allocation) until execv().
+  std::vector<char*> c_args;
+  c_args.reserve(args.size() + 1);
+  for (const auto& a : args) {
+    c_args.push_back(const_cast<char*>(a.c_str()));
+  }
+  c_args.push_back(nullptr);
   pid_t pid = ::fork();
   if (pid < 0) return false;
   if (pid == 0) {
@@ -139,12 +148,6 @@ bool run_command_direct(const std::vector<std::string>& args) {
       ::dup2(devnull, STDERR_FILENO);
       ::close(devnull);
     }
-    std::vector<char*> c_args;
-    c_args.reserve(args.size() + 1);
-    for (const auto& a : args) {
-      c_args.push_back(const_cast<char*>(a.c_str()));
-    }
-    c_args.push_back(nullptr);
     ::execv(c_args[0], c_args.data());
     ::_exit(127);
   }
