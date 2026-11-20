@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -65,6 +66,56 @@ enum IpcMsgType : uint16_t {
   MSG_ERROR_RESP = 0x00E0,
   MSG_ACK_RESP = 0x00E1,
 };
+
+/**
+ * @brief Outcome of decoding an IPC header or frame from a byte buffer.
+ */
+enum class IpcDecodeStatus : uint8_t {
+  kOk,          ///< A complete, valid header/frame was decoded.
+  kIncomplete,  ///< Buffer is a valid prefix but more bytes are required.
+  kInvalid,     ///< Header is malformed (magic, version, or length limit).
+};
+
+/**
+ * @brief Non-owning view of one decoded frame inside a caller's buffer.
+ *
+ * `payload` aliases the input buffer passed to decode_ipc_frame() and is only
+ * valid while that buffer is alive and unmodified.
+ */
+struct IpcFrameView {
+  uint16_t msg_type{0};      ///< Message type from the header.
+  std::string_view payload;  ///< Payload bytes (exactly header.payload_len).
+  size_t frame_size{0};      ///< Total bytes consumed (header + payload).
+};
+
+/**
+ * @brief Decode and validate a 12-byte IpcHeader from untrusted bytes.
+ *
+ * Pure function (no I/O): the single source of truth for header validation,
+ * shared by recv_ipc_message() and the fuzz harness. Only the first
+ * sizeof(IpcHeader) bytes of @p bytes are examined.
+ *
+ * @param bytes Raw bytes, starting at the header.
+ * @param out_header Receives the decoded header when kOk is returned.
+ * @return kOk, kIncomplete if fewer than 12 bytes, or kInvalid if magic,
+ * version, or payload_len (> IPC_MAX_PAYLOAD) is rejected.
+ */
+IpcDecodeStatus decode_ipc_header(std::string_view bytes,
+                                  IpcHeader& out_header);
+
+/**
+ * @brief Decode one complete IPC frame (header + payload) from a buffer.
+ *
+ * Pure function (no I/O, no allocation). Trailing bytes after the frame are
+ * ignored; callers can advance by out_frame.frame_size to decode a stream.
+ *
+ * @param bytes Raw bytes, starting at a frame boundary.
+ * @param out_frame Receives the frame view when kOk is returned.
+ * @return kOk, kIncomplete if the header or payload is truncated, or kInvalid
+ * if the header is rejected.
+ */
+IpcDecodeStatus decode_ipc_frame(std::string_view bytes,
+                                 IpcFrameView& out_frame);
 
 /**
  * @brief Resolve the Unix domain socket path for virmux daemon IPC.

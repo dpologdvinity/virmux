@@ -16,6 +16,7 @@ extern "C" {
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 #include "virmux/ipc.hpp"
 #include "virmux/raii.hpp"
@@ -329,8 +330,98 @@ void test_ipc_fragmented_stream_reassembly(void) {
   TEST_ASSERT_EQUAL_STRING(test_payload.c_str(), out_payload.c_str());
 }
 
+namespace {
+
+/**
+ * @brief Build a raw wire frame (header + payload) for pure decoder tests.
+ */
+std::string make_frame(uint32_t magic, uint16_t version, uint16_t msg_type,
+                       uint32_t payload_len, std::string_view payload) {
+  virmux::IpcHeader hdr{};
+  hdr.magic = magic;
+  hdr.version = version;
+  hdr.msg_type = msg_type;
+  hdr.payload_len = payload_len;
+  std::string frame(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
+  frame.append(payload);
+  return frame;
+}
+
+}  // namespace
+
+/**
+ * @brief Verify the pure frame decoder accepts a well-formed frame and reports
+ * the exact number of bytes it consumed.
+ */
+void test_ipc_decode_frame_valid(void) {
+  std::string wire = make_frame(virmux::IPC_MAGIC, virmux::IPC_VERSION,
+                                virmux::MSG_KILL_SESSION_REQ, 4, "7 15");
+  wire += "trailing";
+
+  virmux::IpcFrameView frame{};
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(virmux::IpcDecodeStatus::kOk),
+      static_cast<int>(virmux::decode_ipc_frame(wire, frame)));
+  TEST_ASSERT_EQUAL_HEX16(virmux::MSG_KILL_SESSION_REQ, frame.msg_type);
+  TEST_ASSERT_EQUAL_STRING("7 15", std::string(frame.payload).c_str());
+  TEST_ASSERT_EQUAL_UINT64(sizeof(virmux::IpcHeader) + 4, frame.frame_size);
+}
+
+/**
+ * @brief Verify truncated headers and payloads report kIncomplete rather than
+ * reading past the end of the buffer.
+ */
+void test_ipc_decode_frame_incomplete(void) {
+  std::string wire = make_frame(virmux::IPC_MAGIC, virmux::IPC_VERSION,
+                                virmux::MSG_PING, 10, "abc");
+  virmux::IpcFrameView frame{};
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(virmux::IpcDecodeStatus::kIncomplete),
+      static_cast<int>(virmux::decode_ipc_frame(wire, frame)));
+
+  for (size_t len = 0; len < sizeof(virmux::IpcHeader); ++len) {
+    TEST_ASSERT_EQUAL_INT(
+        static_cast<int>(virmux::IpcDecodeStatus::kIncomplete),
+        static_cast<int>(virmux::decode_ipc_frame(
+            std::string_view(wire.data(), len), frame)));
+  }
+}
+
+/**
+ * @brief Verify bad magic, bad version, and oversized length are rejected by
+ * the header decoder before any payload is examined.
+ */
+void test_ipc_decode_header_invalid(void) {
+  virmux::IpcHeader hdr{};
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(virmux::IpcDecodeStatus::kInvalid),
+      static_cast<int>(virmux::decode_ipc_header(
+          make_frame(0xDEADBEEF, virmux::IPC_VERSION, virmux::MSG_PING, 0, ""),
+          hdr)));
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(virmux::IpcDecodeStatus::kInvalid),
+      static_cast<int>(virmux::decode_ipc_header(
+          make_frame(virmux::IPC_MAGIC, 99, virmux::MSG_PING, 0, ""), hdr)));
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(virmux::IpcDecodeStatus::kInvalid),
+      static_cast<int>(virmux::decode_ipc_header(
+          make_frame(virmux::IPC_MAGIC, virmux::IPC_VERSION, virmux::MSG_PING,
+                     virmux::IPC_MAX_PAYLOAD + 1, ""),
+          hdr)));
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(virmux::IpcDecodeStatus::kOk),
+      static_cast<int>(virmux::decode_ipc_header(
+          make_frame(virmux::IPC_MAGIC, virmux::IPC_VERSION, virmux::MSG_PING,
+                     virmux::IPC_MAX_PAYLOAD, ""),
+          hdr)));
+  TEST_ASSERT_EQUAL_UINT32(virmux::IPC_MAX_PAYLOAD, hdr.payload_len);
+}
+
 int main(void) {
   UNITY_BEGIN();
+  RUN_TEST(test_ipc_decode_frame_valid);
+  RUN_TEST(test_ipc_decode_frame_incomplete);
+  RUN_TEST(test_ipc_decode_header_invalid);
   RUN_TEST(test_ipc_header_size_and_endianness);
   RUN_TEST(test_resolve_socket_path);
   RUN_TEST(test_ipc_send_recv_socketpair);

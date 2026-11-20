@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 
 namespace virmux {
@@ -131,6 +132,47 @@ bool recv_all(int fd, void* buffer, size_t length, int timeout_ms,
 
 }  // namespace
 
+IpcDecodeStatus decode_ipc_header(std::string_view bytes,
+                                  IpcHeader& out_header) {
+  if (bytes.size() < sizeof(IpcHeader)) {
+    return IpcDecodeStatus::kIncomplete;
+  }
+
+  // memcpy instead of reinterpret_cast: the input buffer carries no alignment
+  // guarantee and IpcHeader is a packed POD.
+  IpcHeader hdr{};
+  std::memcpy(&hdr, bytes.data(), sizeof(hdr));
+
+  if (hdr.magic != IPC_MAGIC || hdr.version != IPC_VERSION ||
+      hdr.payload_len > IPC_MAX_PAYLOAD) {
+    return IpcDecodeStatus::kInvalid;
+  }
+
+  out_header = hdr;
+  return IpcDecodeStatus::kOk;
+}
+
+IpcDecodeStatus decode_ipc_frame(std::string_view bytes,
+                                 IpcFrameView& out_frame) {
+  IpcHeader hdr{};
+  IpcDecodeStatus status = decode_ipc_header(bytes, hdr);
+  if (status != IpcDecodeStatus::kOk) {
+    return status;
+  }
+
+  // Compare against the remaining length rather than computing
+  // sizeof(hdr) + payload_len so the bound check itself cannot overflow.
+  const size_t available = bytes.size() - sizeof(IpcHeader);
+  if (available < hdr.payload_len) {
+    return IpcDecodeStatus::kIncomplete;
+  }
+
+  out_frame.msg_type = hdr.msg_type;
+  out_frame.payload = bytes.substr(sizeof(IpcHeader), hdr.payload_len);
+  out_frame.frame_size = sizeof(IpcHeader) + hdr.payload_len;
+  return IpcDecodeStatus::kOk;
+}
+
 std::string resolve_socket_path() {
   const char* env_path = std::getenv("VIRMUX_SOCKET");
   if (env_path != nullptr && env_path[0] != '\0') {
@@ -187,13 +229,14 @@ bool recv_ipc_message(int fd, uint16_t& out_type, std::string& out_payload,
   auto deadline =
       start + std::chrono::milliseconds(timeout_ms < 0 ? 0 : timeout_ms);
 
-  IpcHeader hdr{};
-  if (!recv_all(fd, &hdr, sizeof(hdr), timeout_ms, deadline)) {
+  char raw_hdr[sizeof(IpcHeader)];
+  if (!recv_all(fd, raw_hdr, sizeof(raw_hdr), timeout_ms, deadline)) {
     return false;
   }
 
-  if (hdr.magic != IPC_MAGIC || hdr.version != IPC_VERSION ||
-      hdr.payload_len > IPC_MAX_PAYLOAD) {
+  IpcHeader hdr{};
+  if (decode_ipc_header(std::string_view(raw_hdr, sizeof(raw_hdr)), hdr) !=
+      IpcDecodeStatus::kOk) {
     return false;
   }
 
