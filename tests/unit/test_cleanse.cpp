@@ -125,7 +125,7 @@ void test_cleanse_path_actually_evicts_page_cache(void) {
   ::close(fd);
   std::string test_file = file_template;
 
-  constexpr size_t test_size = 4096 * 4;  // 4 pages = 16 KB
+  constexpr size_t test_size = 4096UL * 4;  // 4 pages = 16 KB
 
   // Write file and flush to disk
   {
@@ -182,7 +182,7 @@ void test_cleanse_path_directory_recursive(void) {
   std::string file2 = sub_dir + "/file2.bin";
   std::string file3 = sub_sub_dir + "/file3.bin";
 
-  constexpr size_t file_size = 4096 * 2;
+  constexpr size_t file_size = 4096UL * 2;
 
   auto populate_and_cache = [](const std::string& path) {
     int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -239,7 +239,7 @@ void test_cleanse_path_directory_continues_past_unreadable(void) {
   std::string file_nested = sub_deep + "/nested.bin";
   std::string file_after = base_dir + "/file_after.bin";
 
-  constexpr size_t file_size = 4096 * 2;
+  constexpr size_t file_size = 4096UL * 2;
   auto populate_and_cache = [](const std::string& path) {
     int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     TEST_ASSERT_TRUE(fd >= 0);

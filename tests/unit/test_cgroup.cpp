@@ -46,6 +46,8 @@ void test_scoped_fd_move_and_release(void) {
 
   // Move construct
   virmux::ScopedFd fd2(std::move(fd1));
+  // Asserting the documented moved-from state is the point here.
+  // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
   TEST_ASSERT_FALSE(fd1.valid());
   TEST_ASSERT_EQUAL_INT(-1, fd1.get());
   TEST_ASSERT_TRUE(fd2.valid());
@@ -55,6 +57,8 @@ void test_scoped_fd_move_and_release(void) {
   virmux::ScopedFd fd3;
   TEST_ASSERT_FALSE(fd3.valid());
   fd3 = std::move(fd2);
+  // Asserting the documented moved-from state is the point here.
+  // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
   TEST_ASSERT_FALSE(fd2.valid());
   TEST_ASSERT_TRUE(fd3.valid());
   TEST_ASSERT_EQUAL_INT(pipe_fds[0], fd3.get());
@@ -99,7 +103,7 @@ void test_cgroup_unprivileged_fallback_logs_warning(void) {
   // Under unprivileged execution, init should not crash; it logs warning and
   // sets valid=false
   bool res = slice.setup("/sys/fs/cgroup/nonexistent_test_slice",
-                         1024 * 1024 * 500, "2-11");
+                         1024ULL * 1024 * 500, "2-11");
   TEST_ASSERT_FALSE(res);
   TEST_ASSERT_FALSE(slice.is_valid());
   TEST_ASSERT_FALSE(slice.valid());
@@ -114,7 +118,7 @@ void test_cgroup_mock_directory_operations(void) {
   TEST_ASSERT_NOT_NULL(tmp_dir);
 
   virmux::CgroupSlice slice("session-mock");
-  bool res = slice.setup(tmp_dir, 1024 * 1024 * 256, "0-1");
+  bool res = slice.setup(tmp_dir, 1024ULL * 1024 * 256, "0-1");
   TEST_ASSERT_TRUE(res);
   TEST_ASSERT_TRUE(slice.is_valid());
 
@@ -178,11 +182,15 @@ void test_cgroup_move_semantics(void) {
 
   virmux::CgroupSlice slice2(std::move(slice1));
   TEST_ASSERT_EQUAL_STRING("slice-move", slice2.name().c_str());
+  // Asserting the documented moved-from state is the point here.
+  // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
   TEST_ASSERT_FALSE(slice1.is_valid());
 
   virmux::CgroupSlice slice3;
   slice3 = std::move(slice2);
   TEST_ASSERT_EQUAL_STRING("slice-move", slice3.name().c_str());
+  // Asserting the documented moved-from state is the point here.
+  // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
   TEST_ASSERT_FALSE(slice2.is_valid());
 }
 
@@ -192,7 +200,7 @@ void test_cgroup_uninitialized_slice_operations(void) {
   TEST_ASSERT_FALSE(uninit_slice.is_valid());
 
   // Operations on uninitialized slice must safely return false
-  TEST_ASSERT_FALSE(uninit_slice.set_memory_high(1024 * 1024 * 100));
+  TEST_ASSERT_FALSE(uninit_slice.set_memory_high(1024ULL * 1024 * 100));
   TEST_ASSERT_FALSE(uninit_slice.set_cpuset("0-1"));
   TEST_ASSERT_FALSE(uninit_slice.set_pids_max(128));
   TEST_ASSERT_FALSE(uninit_slice.attach_pid(getpid()));

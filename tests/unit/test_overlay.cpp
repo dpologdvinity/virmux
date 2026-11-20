@@ -302,6 +302,8 @@ void test_overlay_move_semantics(void) {
 
     // Move construct ws2 from ws1
     virmux::OverlayWorkspace ws2(std::move(ws1));
+    // Asserting the documented moved-from state is the point here.
+    // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
     TEST_ASSERT_TRUE(ws1.session_dir().empty());
     TEST_ASSERT_TRUE(ws1.merged_dir().empty());
     TEST_ASSERT_TRUE(ws1.upper_dir().empty());
@@ -320,6 +322,8 @@ void test_overlay_move_semantics(void) {
     ws3 = std::move(ws2);
     // ws3's original session directory should be cleaned up by move assignment
     TEST_ASSERT_FALSE(fs::exists(ws3_session));
+    // Asserting the documented moved-from state is the point here.
+    // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
     TEST_ASSERT_TRUE(ws2.session_dir().empty());
     TEST_ASSERT_EQUAL_STRING(original_session.c_str(),
                              ws3.session_dir().c_str());

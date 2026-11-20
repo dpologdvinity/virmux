@@ -127,6 +127,8 @@ void test_scoped_token_move(void) {
 
     // Move construction
     virmux::ScopedToken token2(std::move(token1));
+    // Asserting the documented moved-from state is the point here.
+    // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
     TEST_ASSERT_FALSE(token1.acquired());
     TEST_ASSERT_TRUE(token2.acquired());
     TEST_ASSERT_EQUAL_INT(1, gate.active_count());
@@ -134,6 +136,8 @@ void test_scoped_token_move(void) {
     // Move assignment
     virmux::ScopedToken token3;
     token3 = std::move(token2);
+    // Asserting the documented moved-from state is the point here.
+    // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
     TEST_ASSERT_FALSE(token2.acquired());
     TEST_ASSERT_TRUE(token3.acquired());
     TEST_ASSERT_EQUAL_INT(1, gate.active_count());

@@ -132,7 +132,7 @@ void test_checkpoint_unprivileged_freeze_pageout(void) {
   session.name = "worker-sim";
   session.pid = child_pid;
   session.virtual_cores = 2;
-  session.memory_limit_bytes = 1024 * 1024 * 256;
+  session.memory_limit_bytes = 1024ULL * 1024 * 256;
   session.command = "/bin/sleep 60";
   session.state = virmux::SessionState::RUNNING_NORMAL;
 

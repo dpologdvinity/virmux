@@ -25,7 +25,7 @@ void test_compactor_is_supported(void) {
 }
 
 void test_compactor_self_reclaim_cold_and_pageout(void) {
-  constexpr size_t kMemSize = 4 * 1024 * 1024;  // 4 MB
+  constexpr size_t kMemSize = 4UL * 1024 * 1024;  // 4 MB
   void* addr = ::mmap(nullptr, kMemSize, PROT_READ | PROT_WRITE,
                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   TEST_ASSERT_NOT_NULL(addr);

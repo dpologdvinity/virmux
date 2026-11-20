@@ -124,8 +124,6 @@ void test_sandbox_persistent_workspace(void) {
 }
 
 void test_sandbox_scratch_isolated_per_invocation(void) {
-  std::string shared_file_marker = "session_marker.tmp";
-
   // Run 1: write marker into $TMPDIR
   {
     virmux::SandboxConfig cfg{

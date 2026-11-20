@@ -139,7 +139,7 @@ void test_ipc_send_recv_socketpair(void) {
 
   // 3. 100KB binary payload (e.g. MSG_LIST_SESSIONS_RESP)
   {
-    std::string binary_data(100 * 1024, '\0');
+    std::string binary_data(100UL * 1024, '\0');
     for (size_t i = 0; i < binary_data.size(); ++i) {
       binary_data[i] = static_cast<char>((i * 31 + 7) & 0xFF);
     }

@@ -25,7 +25,7 @@ void tearDown(void) {}
 
 void test_sandbox_exit_code_propagation(void) {
   virmux::SandboxConfig cfg{.virtual_cores = 2,
-                            .memory_limit_bytes = 1024 * 1024 * 100};
+                            .memory_limit_bytes = 1024ULL * 1024 * 100};
   char arg0[] = "/bin/sh";
   char arg1[] = "-c";
   char arg2[] = "exit 42";

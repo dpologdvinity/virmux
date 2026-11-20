@@ -60,7 +60,7 @@ void test_format_stats_json(void) {
   ksm.pages_sharing = 400;
   ksm.pages_unshared = 50;
   ksm.pages_volatile = 10;
-  ksm.bytes_saved = 400 * 4096;
+  ksm.bytes_saved = 400ULL * 4096;
 
   std::string json = virmux::format_stats_json(host, ksm);
 

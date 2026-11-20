@@ -92,7 +92,7 @@ void tearDown(void) { unsetenv(VIRMUX_ENV_KSM_AUTO_MERGE); }
 
 void test_mmap_anon_private_auto_merge_enabled(void) {
   setenv(VIRMUX_ENV_KSM_AUTO_MERGE, "1", 1);
-  const size_t size = 4096 * 4;
+  const size_t size = 4096UL * 4;
 
   void* ptr = mmap(nullptr, size, PROT_READ | PROT_WRITE,
                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -114,7 +114,7 @@ void test_mmap_anon_private_auto_merge_enabled(void) {
 
 void test_mmap64_anon_private_auto_merge_enabled(void) {
   setenv(VIRMUX_ENV_KSM_AUTO_MERGE, "1", 1);
-  const size_t size = 4096 * 2;
+  const size_t size = 4096UL * 2;
 
   void* ptr = mmap64(nullptr, size, PROT_READ | PROT_WRITE,
                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -207,7 +207,9 @@ void test_mmap_reentrancy_and_stress(void) {
 }
 
 void test_mmap_invalid_args_fails(void) {
-  // mmap with size 0 should fail with EINVAL
+  // mmap with size 0 should fail with EINVAL; the invalid length is the
+  // input under test.
+  // NOLINTNEXTLINE(clang-analyzer-unix.StdCLibraryFunctions): deliberate
   void* ptr = mmap(nullptr, 0, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   TEST_ASSERT_EQUAL_PTR(MAP_FAILED, ptr);
   TEST_ASSERT_EQUAL_INT(EINVAL, errno);

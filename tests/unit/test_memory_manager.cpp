@@ -167,7 +167,7 @@ void test_vma_scanner_real_self(void) {
 }
 
 void test_compact_process_self(void) {
-  constexpr size_t kMemSize = 4 * 1024 * 1024;  // 4 MB
+  constexpr size_t kMemSize = 4UL * 1024 * 1024;  // 4 MB
   void* addr = ::mmap(nullptr, kMemSize, PROT_READ | PROT_WRITE,
                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   TEST_ASSERT_NOT_NULL(addr);

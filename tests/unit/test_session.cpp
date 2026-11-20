@@ -38,7 +38,7 @@ void test_session_registration_and_lookup(void) {
   r1.name = "test-custom";
   r1.pid = 10001;
   r1.virtual_cores = 4;
-  r1.memory_limit_bytes = 1024 * 1024 * 512;
+  r1.memory_limit_bytes = 1024ULL * 1024 * 512;
   r1.cgroup_path = "/sys/fs/cgroup/virmux.slice/test-custom";
   r1.command = "npm run test";
 
@@ -52,7 +52,7 @@ void test_session_registration_and_lookup(void) {
   TEST_ASSERT_EQUAL_INT(10001, s1->pid);
   TEST_ASSERT_EQUAL(virmux::SessionState::RUNNING_NORMAL, s1->state);
   TEST_ASSERT_EQUAL_INT(4, s1->virtual_cores);
-  TEST_ASSERT_EQUAL_UINT64(1024 * 1024 * 512, s1->memory_limit_bytes);
+  TEST_ASSERT_EQUAL_UINT64(1024ULL * 1024 * 512, s1->memory_limit_bytes);
   TEST_ASSERT_EQUAL_STRING("/sys/fs/cgroup/virmux.slice/test-custom",
                            s1->cgroup_path.c_str());
   TEST_ASSERT_EQUAL_STRING("npm run test", s1->command.c_str());
@@ -173,7 +173,7 @@ void test_session_telemetry_reading(void) {
   if (pid == 0) {
     ::close(fds[1]);
     // Allocate 4 MB of resident anonymous memory
-    std::vector<char> buf(4 * 1024 * 1024, static_cast<char>(1));
+    std::vector<char> buf(4UL * 1024 * 1024, static_cast<char>(1));
     buf[1024] = 2;
 
     // Block until parent signals through pipe

@@ -206,6 +206,8 @@ void test_scratch_move_semantics(void) {
 
     // Move construct ws2 from ws1
     virmux::ScratchWorkspace ws2(std::move(ws1));
+    // Asserting the documented moved-from state is the point here.
+    // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
     TEST_ASSERT_FALSE(ws1.is_valid());
     TEST_ASSERT_TRUE(ws1.path().empty());
     TEST_ASSERT_TRUE(ws2.is_valid());
@@ -223,6 +225,8 @@ void test_scratch_move_semantics(void) {
     TEST_ASSERT_FALSE(fs::exists(ws3_path));
 
     // ws2 should be moved-from
+    // Asserting the documented moved-from state is the point here.
+    // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
     TEST_ASSERT_FALSE(ws2.is_valid());
     TEST_ASSERT_TRUE(ws2.path().empty());
 

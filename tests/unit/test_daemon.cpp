@@ -153,7 +153,7 @@ void test_daemon_client_session_lifecycle(void) {
   req.name = "test-worker";
   req.pid = child_pid;
   req.virtual_cores = 3;
-  req.memory_limit_bytes = 1024 * 1024 * 256;
+  req.memory_limit_bytes = 1024ULL * 1024 * 256;
   req.cgroup_path = "/sys/fs/cgroup/virmux.slice/test-worker";
   req.command = "/bin/sleep 1000";
 

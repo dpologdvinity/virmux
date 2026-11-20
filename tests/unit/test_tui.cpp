@@ -137,7 +137,7 @@ void test_tui_navigation_bounds(void) {
   std::vector<virmux::SessionInfo> sessions;
   for (int i = 0; i < 3; ++i) {
     virmux::SessionInfo s;
-    s.id = static_cast<uint64_t>(i + 1);
+    s.id = static_cast<uint64_t>(i) + 1;
     s.name = "sess-" + std::to_string(i + 1);
     s.state = virmux::SessionState::RUNNING_NORMAL;
     sessions.push_back(s);
