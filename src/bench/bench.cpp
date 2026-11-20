@@ -26,9 +26,12 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <memory>
+#include <new>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 
 #include "virmux/cli_stats.hpp"
 #include "virmux/gate.hpp"
@@ -98,17 +101,17 @@ int run_browser_workload(int duration_seconds, uint64_t target_alloc_mb,
   const uint64_t target_bytes = target_alloc_mb > 0
                                     ? (target_alloc_mb * 1024ULL * 1024ULL)
                                     : (16ULL * 1024ULL * 1024ULL);
-  constexpr size_t kChunkSize = 64 * 1024;  // 64 KiB chunks
+  constexpr size_t kChunkSize = 64UL * 1024UL;  // 64 KiB chunks
   const size_t num_chunks = std::max<size_t>(1, target_bytes / kChunkSize);
 
   std::vector<std::vector<char>> pages;
   pages.reserve(num_chunks);
 
-  try {
-    for (size_t i = 0; i < num_chunks; ++i) {
-      if (stop_flag && stop_flag->load(std::memory_order_relaxed)) {
-        break;
-      }
+  for (size_t i = 0; i < num_chunks; ++i) {
+    if (stop_flag && stop_flag->load(std::memory_order_relaxed)) {
+      break;
+    }
+    try {
       std::vector<char> chunk(kChunkSize);
       // Fill chunk with pseudo-DOM HTML structure for realistic anonymous pages
       const std::string node_prefix = "<div class=\"dom-node\" id=\"node_" +
@@ -125,9 +128,11 @@ int run_browser_workload(int duration_seconds, uint64_t target_alloc_mb,
         chunk[p] = '<';
       }
       pages.push_back(std::move(chunk));
+    } catch (const std::bad_alloc&) {
+      // Memory pressure: stop growing the working set and run the scan phase
+      // over the pages already allocated.
+      break;
     }
-  } catch (const std::bad_alloc&) {
-    // Gracefully handle system memory pressure
   }
 
   // Periodic DOM scanning and mutation loop
@@ -240,15 +245,16 @@ int run_model_workload(int duration_seconds, uint64_t target_alloc_mb,
       }
     }
 
-    // Working buffer allocation and compaction cycle
-    try {
-      std::vector<uint8_t> working_buf(working_buf_bytes, 0x5a);
-      if (!working_buf.empty()) {
-        working_buf[0] = static_cast<uint8_t>(c_mat[0]);
-        volatile uint8_t v = working_buf[working_buf.size() / 2];
-        (void)v;
-      }
-    } catch (const std::bad_alloc&) {
+    // Working buffer allocation and compaction cycle. Failing to allocate
+    // under memory pressure is an expected outcome for this workload, so the
+    // cycle is simply skipped for this iteration.
+    const std::unique_ptr<uint8_t[]> working_buf(
+        new (std::nothrow) uint8_t[working_buf_bytes]);
+    if (working_buf != nullptr && working_buf_bytes > 0) {
+      std::memset(working_buf.get(), 0x5a, working_buf_bytes);
+      working_buf[0] = static_cast<uint8_t>(c_mat[0]);
+      volatile uint8_t v = working_buf[working_buf_bytes / 2];
+      (void)v;
     }
 
     if (duration_seconds <= 0 && stop_flag == nullptr) {
@@ -282,7 +288,7 @@ int run_build_workload(int duration_seconds, uint64_t target_alloc_mb,
   } guard{temp_dir};
 
   size_t iteration = 0;
-  constexpr size_t kBlockSize = 64 * 1024;  // 64 KiB
+  constexpr size_t kBlockSize = 64UL * 1024UL;  // 64 KiB
   std::vector<uint8_t> payload(kBlockSize, 0xcd);
 
   while (!check_should_stop(start_time, duration_seconds, stop_flag)) {
@@ -391,43 +397,58 @@ InputLatencyProbe& InputLatencyProbe::operator=(
   return *this;
 }
 
+namespace {
+
+/**
+ * @brief Adds O_NONBLOCK and FD_CLOEXEC to @p fd.
+ * @return true only if both flags were applied.
+ */
+bool make_nonblocking_cloexec(int fd) {
+  const int fl = ::fcntl(fd, F_GETFL, 0);
+  if (fl < 0 || ::fcntl(fd, F_SETFL, fl | O_NONBLOCK) != 0) {
+    return false;
+  }
+  const int fdfl = ::fcntl(fd, F_GETFD, 0);
+  return fdfl >= 0 && ::fcntl(fd, F_SETFD, fdfl | FD_CLOEXEC) == 0;
+}
+
+}  // namespace
+
 bool InputLatencyProbe::open_descriptors() {
   close_descriptors();
 
+  // Invariant relied upon by measure_sample(): every descriptor handed out
+  // here is O_NONBLOCK, so the reads it performs while holding io_mutex_
+  // can never block. A descriptor that cannot be made non-blocking is
+  // closed rather than used.
   if (!force_pipe_fallback_) {
     int m = -1;
     int s = -1;
     if (::openpty(&m, &s, nullptr, nullptr, nullptr) == 0) {
-      master_fd_ = m;
-      slave_fd_ = s;
-      is_pty_ = true;
+      if (make_nonblocking_cloexec(m) && make_nonblocking_cloexec(s)) {
+        master_fd_ = m;
+        slave_fd_ = s;
+        is_pty_ = true;
 
-      int m_flags = ::fcntl(master_fd_, F_GETFL, 0);
-      ::fcntl(master_fd_, F_SETFL, m_flags | O_NONBLOCK);
-      int s_flags = ::fcntl(slave_fd_, F_GETFL, 0);
-      ::fcntl(slave_fd_, F_SETFL, s_flags | O_NONBLOCK);
-
-      struct termios tios{};
-      if (::tcgetattr(slave_fd_, &tios) == 0) {
-        tios.c_lflag &= ~ICANON;
-        tios.c_lflag |= ECHO;
-        ::tcsetattr(slave_fd_, TCSANOW, &tios);
+        struct termios tios{};
+        if (::tcgetattr(slave_fd_, &tios) == 0) {
+          tios.c_lflag &= ~ICANON;
+          tios.c_lflag |= ECHO;
+          ::tcsetattr(slave_fd_, TCSANOW, &tios);
+        }
+        return true;
       }
-      return true;
+      ::close(m);
+      ::close(s);
     }
   }
 
-  // Fallback: anonymous non-blocking pipe
+  // Fallback: anonymous pipe, created non-blocking atomically.
   int fds[2] = {-1, -1};
-  if (::pipe(fds) == 0) {
+  if (::pipe2(fds, O_NONBLOCK | O_CLOEXEC) == 0) {
     master_fd_ = fds[1];  // write end
     slave_fd_ = fds[0];   // read end
     is_pty_ = false;
-
-    int w_flags = ::fcntl(master_fd_, F_GETFL, 0);
-    ::fcntl(master_fd_, F_SETFL, w_flags | O_NONBLOCK);
-    int r_flags = ::fcntl(slave_fd_, F_GETFL, 0);
-    ::fcntl(slave_fd_, F_SETFL, r_flags | O_NONBLOCK);
     return true;
   }
 
@@ -457,7 +478,10 @@ double InputLatencyProbe::measure_sample() {
   const int write_fd = master_fd_;
   const int read_fd = is_pty_ ? master_fd_ : slave_fd_;
 
+  // Drain stale bytes. read_fd is O_NONBLOCK (see open_descriptors()), so
+  // this returns -1/EAGAIN once empty instead of blocking under io_mutex_.
   char drain_buf[128];
+  // NOLINTNEXTLINE(clang-analyzer-unix.BlockInCriticalSection): O_NONBLOCK fd
   while (::read(read_fd, drain_buf, sizeof(drain_buf)) > 0) {
   }
   if (is_pty_) {
@@ -495,6 +519,8 @@ double InputLatencyProbe::measure_sample() {
 
   if (ret > 0 && (pfd.revents & POLLIN)) {
     char resp = 0;
+    // poll() reported POLLIN and read_fd is O_NONBLOCK, so this cannot block.
+    // NOLINTNEXTLINE(clang-analyzer-unix.BlockInCriticalSection): O_NONBLOCK fd
     ssize_t nr = ::read(read_fd, &resp, 1);
     if (nr > 0) {
       const auto t1 = std::chrono::steady_clock::now();
@@ -519,9 +545,8 @@ void InputLatencyProbe::start(int interval_ms) {
   if (running_) {
     return;
   }
-  if (master_fd_ < 0 || slave_fd_ < 0) {
-    open_descriptors();
-  }
+  // Descriptors are (re)opened lazily by measure_sample() under io_mutex_;
+  // touching them here, under samples_mutex_ only, would race with it.
   running_ = true;
   worker_ = std::thread([this, interval_ms]() {
     while (running_) {
@@ -1031,13 +1056,13 @@ double parse_double_field(std::string_view obj, std::string_view key,
           obj[end] == 'E' || obj[end] == '+')) {
     end++;
   }
-  if (end > pos) {
-    try {
-      return std::stod(std::string(obj.substr(pos, end - pos)));
-    } catch (...) {
-    }
+  double value = 0.0;
+  const auto [ptr, ec] =
+      std::from_chars(obj.data() + pos, obj.data() + end, value);
+  if (ec != std::errc{} || ptr == obj.data() + pos) {
+    return def;
   }
-  return def;
+  return value;
 }
 
 uint64_t parse_uint64_field(std::string_view obj, std::string_view key,
@@ -1061,13 +1086,13 @@ uint64_t parse_uint64_field(std::string_view obj, std::string_view key,
          std::isdigit(static_cast<unsigned char>(obj[end]))) {
     end++;
   }
-  if (end > pos) {
-    try {
-      return std::stoull(std::string(obj.substr(pos, end - pos)));
-    } catch (...) {
-    }
+  uint64_t value = 0;
+  const auto [ptr, ec] =
+      std::from_chars(obj.data() + pos, obj.data() + end, value);
+  if (ec != std::errc{} || ptr == obj.data() + pos) {
+    return def;
   }
-  return def;
+  return value;
 }
 
 int parse_int_field(std::string_view obj, std::string_view key, int def = 0) {
