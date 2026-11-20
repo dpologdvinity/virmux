@@ -1,0 +1,8 @@
+# Build options for virmux. See tests/fuzz/README.md for the fuzzing workflow.
+
+option(
+  'fuzzing',
+  type: 'boolean',
+  value: false,
+  description: 'Build libFuzzer harnesses in tests/fuzz (requires clang and -Db_sanitize=address,undefined)',
+)

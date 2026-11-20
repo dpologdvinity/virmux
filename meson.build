@@ -16,6 +16,44 @@ threads_dep = dependency('threads')
 ncurses_dep = dependency('ncursesw', required: true)
 util_dep = meson.get_compiler('cpp').find_library('util', required: false)
 
+# ---------------------------------------------------------------------------
+# libFuzzer support (-Dfuzzing=true). Off by default; default builds are
+# unaffected. When enabled, the core library is built with coverage
+# instrumentation (-fsanitize=fuzzer-no-link) so libFuzzer can steer inputs
+# through it, and every harness in tests/fuzz links the libFuzzer runtime.
+# ASan/UBSan come from meson's b_sanitize so that the core library, unit tests,
+# and harnesses all agree on the sanitizer runtime.
+# ---------------------------------------------------------------------------
+fuzzing = get_option('fuzzing')
+fuzz_instrument_args = []
+if fuzzing
+  foreach lang : ['cpp', 'c']
+    compiler_id = meson.get_compiler(lang).get_id()
+    if compiler_id != 'clang'
+      error(
+        '-Dfuzzing=true requires clang for @0@ (found \'@1@\'). '.format(
+          lang,
+          compiler_id,
+        )
+        + 'Reconfigure with CC=clang CXX=clang++.',
+      )
+    endif
+  endforeach
+  # b_sanitize is a string on older meson and an array on newer meson;
+  # formatting it covers both representations.
+  sanitize_str = '@0@'.format(get_option('b_sanitize'))
+  if not (sanitize_str.contains('address') and sanitize_str.contains('undefined'))
+    error(
+      '-Dfuzzing=true requires -Db_sanitize=address,undefined (found \'@0@\').'.format(
+        sanitize_str,
+      ),
+    )
+  endif
+  # Abort on the first UBSan report so libFuzzer records it as a crash
+  # instead of printing a diagnostic and continuing.
+  fuzz_instrument_args = ['-fsanitize=fuzzer-no-link', '-fno-sanitize-recover=all']
+endif
+
 virmux_core_lib = static_library(
   'virmux_core',
   [
@@ -45,6 +83,7 @@ virmux_core_lib = static_library(
     'src/tui/tui.cpp',
   ],
   include_directories: inc,
+  cpp_args: fuzz_instrument_args,
   dependencies: [threads_dep, ncurses_dep, util_dep],
   install: false,
 )
@@ -510,3 +549,31 @@ test(
   suite: 'integration',
 )
 
+# ---------------------------------------------------------------------------
+# libFuzzer harnesses (only with -Dfuzzing=true). Each tests/fuzz/fuzz_<name>.cpp
+# becomes ./fuzz_<name>. The matching meson test (suite 'fuzz') replays the
+# checked-in seed corpus tests/fuzz/corpus/<name> once with -runs=0: no
+# mutation happens and the source corpus directory is never written to.
+# ---------------------------------------------------------------------------
+if fuzzing
+  fuzz_targets = [
+    'ipc_frame',
+  ]
+  foreach name : fuzz_targets
+    fuzz_exe = executable(
+      'fuzz_' + name,
+      'tests/fuzz/fuzz_' + name + '.cpp',
+      cpp_args: ['-fsanitize=fuzzer', '-fno-sanitize-recover=all'],
+      link_args: ['-fsanitize=fuzzer'],
+      dependencies: [virmux_core_dep],
+    )
+    test(
+      'fuzz_' + name,
+      fuzz_exe,
+      args: ['-runs=0', meson.current_source_dir() / 'tests/fuzz/corpus' / name],
+      env: ['ASAN_OPTIONS=detect_leaks=1', 'UBSAN_OPTIONS=print_stacktrace=1'],
+      suite: 'fuzz',
+      timeout: 120,
+    )
+  endforeach
+endif
