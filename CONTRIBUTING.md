@@ -29,6 +29,16 @@ Thank you for your interest in contributing to `virmux`!
    ninja -C build test
    ```
 
+4. **Fuzzing (optional, clang only):** libFuzzer harnesses for the IPC,
+   daemon-request, session-list, bench-report and size parsers live in
+   `tests/fuzz/`. See [`tests/fuzz/README.md`](tests/fuzz/README.md):
+
+   ```bash
+   CC=clang CXX=clang++ meson setup build-fuzz \
+     -Dfuzzing=true -Db_sanitize=address,undefined -Db_lundef=false
+   meson test -C build-fuzz --suite fuzz
+   ```
+
 ---
 
 ## Branching & Commit Standards

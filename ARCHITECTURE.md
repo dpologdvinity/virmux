@@ -54,6 +54,7 @@
    - Gathers per-process telemetry from `/proc/<pid>/statm`, `/proc/<pid>/status`, and `/proc/<pid>/smaps_rollup`.
    - Manages process tree termination via `cgroup.kill` and recursive procfs task scanning with auto-thaw so frozen tasks process termination signals.
    - Automatically prunes dead sessions after a 5-second retention window.
+   - Request payloads are decoded by the pure, I/O-free `parse_daemon_request()` (`src/daemon/protocol.cpp`, `virmux/daemon_protocol.hpp`) before dispatch, so the untrusted-input parser is unit-tested and fuzzed (`tests/fuzz/`) in isolation from the registry.
 
 2. **`src/core/checkpoint.cpp` (Checkpoint & Hibernation Subsystem):**
    - Implements `CheckpointManager` resolving storage paths (`$VIRMUX_CHECKPOINT_DIR`, `/run/user/<UID>/virmux/checkpoints`, or `/tmp/virmux-<UID>/checkpoints`) with `0700` directory hardening.
@@ -72,6 +73,7 @@
      - `msg_type`: Request and response action identifiers.
      - `payload_len`: 32-bit payload length (bounded to 16 MiB sanity limit).
    - Non-blocking socket I/O using monotonic poll deadlines with fragmented stream reassembly.
+   - Header validation lives in the pure `decode_ipc_header()` / `decode_ipc_frame()` functions shared by `recv_ipc_message()` and the `fuzz_ipc_frame` harness.
 
 5. **`src/tui/` (Terminal Dashboard `virmux top`):**
    - High-performance, zero-flicker terminal dashboard powered by Ncurses (`libncursesw`).
