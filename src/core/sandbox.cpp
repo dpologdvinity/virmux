@@ -74,6 +74,27 @@ struct MeminfoGuard {
 };
 
 /**
+ * @brief Write the entire buffer to fd, retrying on EINTR and short writes.
+ * @return true only if every byte was written.
+ */
+bool write_all(int fd, const std::string& data) {
+  const char* p = data.data();
+  size_t remaining = data.size();
+  while (remaining > 0) {
+    ssize_t written = ::write(fd, p, remaining);
+    if (written < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      return false;
+    }
+    p += written;
+    remaining -= static_cast<size_t>(written);
+  }
+  return true;
+}
+
+/**
  * @brief Resolve absolute path to libvirmux_intercept.so.
  * @return Absolute canonical path if found, or empty string.
  */
@@ -290,10 +311,13 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
                              std::to_string(seq) + "_meminfo";
   int mem_fd = ::open(meminfo_path.c_str(),
                       O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  // Only advertise the spoofed file to the interceptor if it was fully
+  // written; a truncated file would corrupt the child's /proc/meminfo view.
+  bool meminfo_ready = false;
   if (mem_fd >= 0) {
     std::string mem_content =
         generate_synthetic_meminfo(cfg.memory_limit_bytes);
-    (void)::write(mem_fd, mem_content.data(), mem_content.size());
+    meminfo_ready = write_all(mem_fd, mem_content);
     ::close(mem_fd);
   }
   MeminfoGuard meminfo_guard{meminfo_path};
@@ -413,7 +437,9 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
     }
 
     ::setenv(VIRMUX_ENV_VIRTUAL_CORES, vcores_str.c_str(), 1);
-    ::setenv(VIRMUX_ENV_SPOOFED_MEMINFO, meminfo_path.c_str(), 1);
+    if (meminfo_ready) {
+      ::setenv(VIRMUX_ENV_SPOOFED_MEMINFO, meminfo_path.c_str(), 1);
+    }
     ::setenv("OMP_NUM_THREADS", vcores_str.c_str(), 1);
     ::setenv("OPENBLAS_NUM_THREADS", vcores_str.c_str(), 1);
     ::setenv("MKL_NUM_THREADS", vcores_str.c_str(), 1);
