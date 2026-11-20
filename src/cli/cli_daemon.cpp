@@ -43,6 +43,19 @@ static void daemon_signal_handler(int /*sig*/) {
   }
 }
 
+/**
+ * @brief Send a one-byte readiness status ('1' ok, '0' fail) to the parent
+ *        of a backgrounded daemon, retrying on EINTR.
+ * @return true if the byte was delivered.
+ */
+bool signal_parent(int fd, char status) {
+  ssize_t n;
+  do {
+    n = ::write(fd, &status, 1);
+  } while (n < 0 && errno == EINTR);
+  return n == 1;
+}
+
 std::string escape_json_str(const std::string& input) {
   std::string output;
   output.reserve(input.size());
@@ -384,7 +397,11 @@ int cmd_daemon(int argc, char* const argv[]) {
   // In child process
   ::close(pipe_fds[0]);
   ::setsid();
-  (void)::chdir("/");
+  if (::chdir("/") != 0) {
+    // Report failure to the parent; exiting regardless of delivery.
+    (void)signal_parent(pipe_fds[1], '0');
+    ::_exit(1);
+  }
 
   int null_fd = ::open("/dev/null", O_RDWR);
   if (null_fd >= 0) {
@@ -398,15 +415,17 @@ int cmd_daemon(int argc, char* const argv[]) {
 
   SupervisorDaemon daemon(cfg);
   if (!daemon.init()) {
-    char fail = '0';
-    (void)::write(pipe_fds[1], &fail, 1);
+    (void)signal_parent(pipe_fds[1], '0');
     ::close(pipe_fds[1]);
     ::_exit(1);
   }
 
-  // Signal parent that daemon is initialized and listening
-  char ok = '1';
-  (void)::write(pipe_fds[1], &ok, 1);
+  // Signal parent that daemon is initialized and listening. If the parent
+  // never receives '1' it reports failure, so the daemon must not keep running.
+  if (!signal_parent(pipe_fds[1], '1')) {
+    ::close(pipe_fds[1]);
+    ::_exit(1);
+  }
   ::close(pipe_fds[1]);
 
   g_active_daemon.store(&daemon);

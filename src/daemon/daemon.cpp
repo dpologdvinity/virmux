@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include <cctype>
+#include <cerrno>
 #include <charconv>
 #include <chrono>
 #include <cstdlib>
@@ -604,7 +605,12 @@ void SupervisorDaemon::stop() {
   stop_requested_.store(true);
   if (wake_pipe_[1] >= 0) {
     char b = 'x';
-    (void)::write(wake_pipe_[1], &b, 1);
+    ssize_t n;
+    do {
+      n = ::write(wake_pipe_[1], &b, 1);
+    } while (n < 0 && errno == EINTR);
+    // Any other failure (EAGAIN on the non-blocking pipe) means a wake-up
+    // byte is already pending, so the poll loop will still wake.
   }
   if (!running_.load()) {
     if (server_fd_ >= 0) {
