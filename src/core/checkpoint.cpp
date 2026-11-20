@@ -265,6 +265,18 @@ bool CheckpointManager::checkpoint_session(const SessionInfo& session,
       }
     }
 
+    // Mirror restore_session(): with neither a writable cgroup.freeze nor a
+    // signalable PID nothing was frozen, so do not record a checkpoint that
+    // claims a "deep freeze" happened.
+    if (!frozen) {
+      std::filesystem::remove_all(session_dir, ec);
+      if (status_msg != nullptr) {
+        *status_msg = "Failed to freeze session " + std::to_string(session.id) +
+                      ": no cgroup or process to stop";
+      }
+      return false;
+    }
+
     // Page out anonymous pages into swap/zram
     if (session.pid > 0) {
       ProcessCompactor compactor;

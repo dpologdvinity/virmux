@@ -398,6 +398,34 @@ void test_checkpoint_restore_fails_for_dead_process(void) {
   std::filesystem::remove_all(temp_dir, ec);
 }
 
+/**
+ * @brief The unprivileged fallback must fail (and leave no checkpoint behind)
+ * when the session can be neither cgroup-frozen nor SIGSTOPped, instead of
+ * claiming a successful "deep freeze".
+ */
+void test_checkpoint_fails_when_session_cannot_be_frozen(void) {
+  std::string temp_dir = get_unique_temp_dir();
+  virmux::CheckpointManager mgr(temp_dir);
+
+  ::setenv("VIRMUX_CRIU_FORCE", "0", 1);
+
+  virmux::SessionInfo session;
+  session.id = 202;
+  session.name = "unfreezable";
+  session.pid = 0;           // no process to signal
+  session.cgroup_path = "";  // no cgroup to freeze
+  session.command = "none";
+
+  std::string msg;
+  TEST_ASSERT_FALSE(mgr.checkpoint_session(session, &msg));
+  TEST_ASSERT_FALSE(mgr.has_checkpoint(202));
+  TEST_ASSERT_TRUE(msg.find("freeze") != std::string::npos);
+
+  ::unsetenv("VIRMUX_CRIU_FORCE");
+  std::error_code ec;
+  std::filesystem::remove_all(temp_dir, ec);
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_checkpoint_path_resolution_and_permissions);
@@ -408,5 +436,6 @@ int main(void) {
   RUN_TEST(test_checkpoint_error_handling);
   RUN_TEST(test_checkpoint_persistence_across_registry_restart);
   RUN_TEST(test_checkpoint_restore_fails_for_dead_process);
+  RUN_TEST(test_checkpoint_fails_when_session_cannot_be_frozen);
   return UNITY_END();
 }
