@@ -526,9 +526,8 @@ int VirmuxTui::run() {
   }
 
   DaemonClient client(config_.socket_path);
-  bool running = true;
 
-  while (running && !g_tui_stop_requested.load()) {
+  while (!g_tui_stop_requested.load()) {
     bool online = client.is_alive(100);
     std::vector<SessionInfo> sessions;
     if (online) {
@@ -556,8 +555,7 @@ int VirmuxTui::run() {
     }
 
     if (!handle_key(ch, online ? &client : nullptr)) {
-      running = false;
-      break;
+      break;  // quit key
     }
   }
 
