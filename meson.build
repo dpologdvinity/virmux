@@ -40,6 +40,7 @@ virmux_core_lib = static_library(
     'src/storage/overlay.cpp',
     'src/ipc/ipc.cpp',
     'src/daemon/session.cpp',
+    'src/daemon/protocol.cpp',
     'src/daemon/daemon.cpp',
     'src/tui/tui.cpp',
   ],
@@ -280,6 +281,14 @@ test_daemon_exe = executable(
 )
 
 test('test_daemon', test_daemon_exe, suite: 'unit')
+
+test_daemon_protocol_exe = executable(
+  'test_daemon_protocol',
+  'tests/unit/test_daemon_protocol.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_daemon_protocol', test_daemon_protocol_exe, suite: 'unit')
 
 test_cli_daemon_exe = executable(
   'test_cli_daemon',
