@@ -6,6 +6,9 @@
   // Allow inline HTML tags like <details> or <br>
   "MD033": false,
   // Enforce dash (-) for unordered lists
-  "MD004": { "style": "dash" }
+  "MD004": { "style": "dash" },
+  // Specs repeat "The Problem" / "The Implementation" under each subsystem
+  // heading; only flag duplicates that share a parent section
+  "MD024": { "siblings_only": true }
 }
 

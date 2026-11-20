@@ -1,0 +1,7 @@
+// markdownlint-cli2 runner options. Lint rules live in .markdownlint.jsonc.
+{
+  // Skip everything git ignores (node_modules/, build dirs, .claude/ agent
+  // worktrees) so local runs lint exactly what CI sees.
+  "gitignore": true,
+  "globs": ["**/*.md"]
+}
