@@ -13,9 +13,8 @@
 #include <unistd.h>
 
 #include <atomic>
-#include <cstdio>
+#include <climits>
 #include <cstdlib>
-#include <cstring>
 #include <filesystem>
 #include <utility>
 
@@ -28,6 +27,82 @@ namespace fs = std::filesystem;
 namespace {
 
 std::atomic<uint64_t> g_overlay_seq{0};
+
+/**
+ * @brief Bounded, allocation-free text builder over a caller-owned buffer.
+ *
+ * The namespace and mount helpers run in a freshly cloned/forked child before
+ * execve(), where only async-signal-safe operations are allowed: no heap
+ * allocation, no stdio, no locale-dependent formatting. Overflow is sticky
+ * and reported through ok(); the buffer always stays NUL-terminated.
+ */
+class FixedText {
+ public:
+  FixedText(char* buf, size_t capacity) noexcept : buf_(buf), cap_(capacity) {
+    if (cap_ > 0) {
+      buf_[0] = '\0';
+    }
+  }
+
+  void append(const char* text) noexcept {
+    for (; *text != '\0'; ++text) {
+      put(*text);
+    }
+  }
+
+  void append_uint(unsigned long long value) noexcept {
+    char digits[24];
+    size_t n = 0;
+    do {
+      digits[n++] = static_cast<char>('0' + (value % 10));
+      value /= 10;
+    } while (value != 0 && n < sizeof(digits));
+    while (n > 0) {
+      put(digits[--n]);
+    }
+  }
+
+  [[nodiscard]] bool ok() const noexcept { return !overflow_; }
+  [[nodiscard]] const char* c_str() const noexcept { return buf_; }
+  [[nodiscard]] size_t size() const noexcept { return len_; }
+
+ private:
+  void put(char c) noexcept {
+    if (len_ + 1 < cap_) {
+      buf_[len_++] = c;
+      buf_[len_] = '\0';
+    } else {
+      overflow_ = true;
+    }
+  }
+
+  char* buf_;
+  size_t cap_;
+  size_t len_{0};
+  bool overflow_{false};
+};
+
+/**
+ * @brief Writes an ID map line ("0 <outer_id> 1\n") to @p path.
+ * Async-signal-safe.
+ */
+bool write_id_map(const char* path, unsigned long long outer_id) noexcept {
+  char line[64];
+  FixedText text(line, sizeof(line));
+  text.append("0 ");
+  text.append_uint(outer_id);
+  text.append(" 1\n");
+  if (!text.ok()) {
+    return false;
+  }
+  int fd = ::open(path, O_WRONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return false;
+  }
+  ssize_t written = ::write(fd, text.c_str(), text.size());
+  ::close(fd);
+  return written == static_cast<ssize_t>(text.size());
+}
 
 bool is_accessible_or_creatable(const std::string& path) {
   std::error_code ec;
@@ -202,8 +277,19 @@ bool OverlayWorkspace::mount_in_current_namespace() {
     return false;
   }
 
-  std::string opts = "lowerdir=" + config_.lower_dir +
-                     ",upperdir=" + upper_dir_ + ",workdir=" + work_dir_;
+  // Built on the stack: this runs between clone() and execve() in the sandbox
+  // child, where heap allocation is not async-signal-safe.
+  char opts_buf[3 * PATH_MAX + 64];
+  FixedText opts(opts_buf, sizeof(opts_buf));
+  opts.append("lowerdir=");
+  opts.append(config_.lower_dir.c_str());
+  opts.append(",upperdir=");
+  opts.append(upper_dir_.c_str());
+  opts.append(",workdir=");
+  opts.append(work_dir_.c_str());
+  if (!opts.ok()) {
+    return false;
+  }
   int res = ::mount("overlay", merged_dir_.c_str(), "overlay", 0, opts.c_str());
   if (res != 0) {
     return false;
@@ -213,10 +299,16 @@ bool OverlayWorkspace::mount_in_current_namespace() {
   if (!config_.lower_dir.empty()) {
     if (::mount(merged_dir_.c_str(), config_.lower_dir.c_str(), nullptr,
                 MS_BIND | MS_REC, nullptr) != 0) {
-      std::fprintf(stderr,
-                   "error: [overlay] bind mount of merged dir onto lower "
-                   "dir failed: %s\n",
-                   std::strerror(errno));
+      char msg_buf[128];
+      FixedText msg(msg_buf, sizeof(msg_buf));
+      msg.append(
+          "error: [overlay] bind mount of merged dir onto lower dir failed "
+          "(errno ");
+      msg.append_uint(static_cast<unsigned long long>(errno));
+      msg.append(")\n");
+      // Best-effort diagnostic; the failure itself is the return value.
+      ssize_t ignored = ::write(STDERR_FILENO, msg.c_str(), msg.size());
+      (void)ignored;
       ::umount2(merged_dir_.c_str(), MNT_DETACH);
       mounted_ = false;
       return false;
@@ -252,11 +344,18 @@ void OverlayWorkspace::teardown() noexcept {
 
 bool OverlayWorkspace::enter_user_mount_namespace(uid_t orig_uid,
                                                   gid_t orig_gid) {
+  // Requires a single-threaded caller; see the header for why clone()-time
+  // namespace creation is preferred.
   if (::unshare(CLONE_NEWUSER | CLONE_NEWNS) != 0) {
     return false;
   }
+  return configure_user_mount_namespace(orig_uid, orig_gid);
+}
 
-  // 1. write "deny" to /proc/self/setgroups
+bool OverlayWorkspace::configure_user_mount_namespace(uid_t orig_uid,
+                                                      gid_t orig_gid) {
+  // 1. write "deny" to /proc/self/setgroups (required before an unprivileged
+  // gid_map write)
   int fd_setgroups = ::open("/proc/self/setgroups", O_WRONLY | O_CLOEXEC);
   if (fd_setgroups >= 0) {
     ssize_t w = ::write(fd_setgroups, "deny\n", 5);
@@ -266,27 +365,9 @@ bool OverlayWorkspace::enter_user_mount_namespace(uid_t orig_uid,
     }
   }
 
-  // 2. write "0 <orig_uid> 1" to /proc/self/uid_map
-  std::string uid_entry = "0 " + std::to_string(orig_uid) + " 1\n";
-  int fd_uid = ::open("/proc/self/uid_map", O_WRONLY | O_CLOEXEC);
-  if (fd_uid < 0) {
-    return false;
-  }
-  ssize_t w_u = ::write(fd_uid, uid_entry.data(), uid_entry.size());
-  ::close(fd_uid);
-  if (w_u != static_cast<ssize_t>(uid_entry.size())) {
-    return false;
-  }
-
-  // 3. write "0 <orig_gid> 1" to /proc/self/gid_map
-  std::string gid_entry = "0 " + std::to_string(orig_gid) + " 1\n";
-  int fd_gid = ::open("/proc/self/gid_map", O_WRONLY | O_CLOEXEC);
-  if (fd_gid < 0) {
-    return false;
-  }
-  ssize_t w_g = ::write(fd_gid, gid_entry.data(), gid_entry.size());
-  ::close(fd_gid);
-  if (w_g != static_cast<ssize_t>(gid_entry.size())) {
+  // 2. map "0 <orig_uid> 1" and 3. "0 <orig_gid> 1"
+  if (!write_id_map("/proc/self/uid_map", orig_uid) ||
+      !write_id_map("/proc/self/gid_map", orig_gid)) {
     return false;
   }
 

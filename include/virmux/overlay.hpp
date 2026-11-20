@@ -60,6 +60,10 @@ class OverlayWorkspace {
 
   /**
    * @brief Mounts OverlayFS in the current process's mount namespace.
+   *
+   * Async-signal-safe (no heap allocation or stdio), so it may run in a
+   * child between clone()/fork() and execve().
+   *
    * @return true if mount succeeded or was already mounted, false otherwise.
    */
   bool mount_in_current_namespace();
@@ -71,9 +75,17 @@ class OverlayWorkspace {
   void teardown() noexcept;
 
   /**
-   * @brief Helper to configure unprivileged user and mount namespace with
-   * UID/GID mapping. Must be called in child process post-fork before
-   * mount_in_current_namespace().
+   * @brief Moves the calling process into a new unprivileged user + mount
+   * namespace via unshare(), then applies configure_user_mount_namespace().
+   *
+   * unshare(CLONE_NEWUSER) fails with EINVAL unless the caller is
+   * single-threaded. A fork() child is not guaranteed to be (ThreadSanitizer
+   * and some preloaded runtimes start helper threads in it), so launchers
+   * should prefer creating the namespaces atomically with
+   * clone(CLONE_NEWUSER | CLONE_NEWNS) and calling
+   * configure_user_mount_namespace() in the child instead.
+   *
+   * Async-signal-safe. Must be called before mount_in_current_namespace().
    *
    * @param orig_uid Pre-unshare user ID to map to root (UID 0) inside
    * namespace.
@@ -82,6 +94,20 @@ class OverlayWorkspace {
    * @return true on success, false otherwise.
    */
   static bool enter_user_mount_namespace(uid_t orig_uid, gid_t orig_gid);
+
+  /**
+   * @brief Configures a freshly created user + mount namespace that the
+   * calling process already occupies (e.g. a clone(CLONE_NEWUSER |
+   * CLONE_NEWNS) child): denies setgroups, maps @p orig_uid / @p orig_gid to
+   * root, and makes all mounts private so nothing propagates to the host.
+   *
+   * Async-signal-safe. Must be called before mount_in_current_namespace().
+   *
+   * @param orig_uid User ID in the parent namespace to map to UID 0.
+   * @param orig_gid Group ID in the parent namespace to map to GID 0.
+   * @return true on success, false otherwise.
+   */
+  static bool configure_user_mount_namespace(uid_t orig_uid, gid_t orig_gid);
 
  private:
   OverlayConfig config_;
