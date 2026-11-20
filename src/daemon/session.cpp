@@ -206,6 +206,31 @@ uint64_t parse_json_uint(std::string_view json, std::string_view key,
   return val;
 }
 
+/**
+ * @brief Writes @p freeze ("1" or "0") to `<cgroup_path>/cgroup.freeze`.
+ * @param cgroup_path Session cgroup directory; empty means "no cgroup".
+ * @param freeze true to freeze, false to thaw.
+ * @return true only if the control file exists and the write succeeded.
+ */
+bool write_cgroup_freeze(const std::string& cgroup_path, bool freeze) {
+  if (cgroup_path.empty()) {
+    return false;
+  }
+  const std::filesystem::path freeze_file =
+      std::filesystem::path(cgroup_path) / "cgroup.freeze";
+  std::error_code ec;
+  if (!std::filesystem::exists(freeze_file, ec)) {
+    return false;
+  }
+  std::ofstream ofs(freeze_file);
+  if (!ofs.is_open()) {
+    return false;
+  }
+  ofs << (freeze ? "1\n" : "0\n");
+  ofs.flush();
+  return !ofs.fail();
+}
+
 }  // namespace
 
 std::string_view session_state_to_string(SessionState s) {
@@ -504,9 +529,11 @@ void SessionRegistry::refresh_telemetry() {
         }
       }
 
-      if (!got_rss && vmrss_bytes > 0) {
+      if (!got_rss) {
+        // statm unreadable: fall back to VmRSS from status. A missing VmRSS
+        // line (kernel thread / process tearing down its mm) yields 0 so the
+        // previous sample is never reported as current.
         s.memory_rss_bytes = vmrss_bytes;
-        got_rss = true;
       }
 
       // 4. Read KSM dedup
@@ -655,35 +682,21 @@ void SessionRegistry::refresh_telemetry() {
                       now_steady - s.last_active_time)
                       .count();
               if (elapsed_ms >= static_cast<int64_t>(idle_timeout_ms_)) {
-                bool frozen = false;
-                if (!s.cgroup_path.empty()) {
-                  const std::filesystem::path freeze_file =
-                      std::filesystem::path(s.cgroup_path) / "cgroup.freeze";
-                  std::error_code ec;
-                  if (std::filesystem::exists(freeze_file, ec)) {
-                    std::ofstream ofs(freeze_file);
-                    if (ofs.is_open()) {
-                      ofs << "1\n";
-                      ofs.flush();
-                      if (!ofs.fail()) {
-                        frozen = true;
-                      }
-                    }
-                  }
-                }
-
+                bool frozen = write_cgroup_freeze(s.cgroup_path, true);
                 if (!frozen && s.pid > 0) {
-                  if (::kill(s.pid, SIGSTOP) == 0) {
-                    frozen = true;
-                  } else if (errno == ESRCH) {
+                  const bool stopped = ::kill(s.pid, SIGSTOP) == 0;
+                  const int err = stopped ? 0 : errno;
+                  if (err == ESRCH) {
                     s.state = SessionState::DEAD;
                     s.memory_rss_bytes = 0;
                     s.ksm_dedup_bytes = 0;
                     if (dead_since_.find(s.id) == dead_since_.end()) {
                       dead_since_[s.id] = now_steady;
                     }
-                  } else if (procfs_root_ != "/proc") {
-                    frozen = true;
+                  } else {
+                    // Mock procfs roots use virtual PIDs that cannot be
+                    // signalled; treat them as frozen.
+                    frozen = stopped || procfs_root_ != "/proc";
                   }
                 }
 
@@ -780,36 +793,17 @@ bool SessionRegistry::freeze_session(uint64_t id) {
     return false;
   }
 
-  bool frozen = false;
-  if (!it->cgroup_path.empty()) {
-    const std::filesystem::path freeze_file =
-        std::filesystem::path(it->cgroup_path) / "cgroup.freeze";
-    std::error_code ec;
-    if (std::filesystem::exists(freeze_file, ec)) {
-      std::ofstream ofs(freeze_file);
-      if (ofs.is_open()) {
-        ofs << "1\n";
-        ofs.flush();
-        if (!ofs.fail()) {
-          frozen = true;
-        }
+  if (!write_cgroup_freeze(it->cgroup_path, true) &&
+      ::kill(it->pid, SIGSTOP) != 0) {
+    const int err = errno;
+    // Mock procfs roots use virtual PIDs that cannot be signalled; only a
+    // real /proc makes a failed SIGSTOP an error.
+    if (procfs_root_ == "/proc") {
+      if (err == ESRCH) {
+        it->state = SessionState::DEAD;
+        it->memory_rss_bytes = 0;
       }
-    }
-  }
-
-  if (!frozen) {
-    if (::kill(it->pid, SIGSTOP) == 0) {
-      frozen = true;
-    } else {
-      if (procfs_root_ != "/proc") {
-        frozen = true;
-      } else {
-        if (errno == ESRCH) {
-          it->state = SessionState::DEAD;
-          it->memory_rss_bytes = 0;
-        }
-        return false;
-      }
+      return false;
     }
   }
 
@@ -829,41 +823,35 @@ bool SessionRegistry::thaw_session(uint64_t id) {
     return false;
   }
 
-  bool thawed = false;
-  if (!it->cgroup_path.empty()) {
-    const std::filesystem::path freeze_file =
-        std::filesystem::path(it->cgroup_path) / "cgroup.freeze";
-    std::error_code ec;
-    if (std::filesystem::exists(freeze_file, ec)) {
-      std::ofstream ofs(freeze_file);
-      if (ofs.is_open()) {
-        ofs << "0\n";
-        ofs.flush();
-        if (!ofs.fail()) {
-          thawed = true;
-        }
-      }
-    }
+  if (!thaw_locked(*it)) {
+    return false;
   }
-
-  if (!thawed) {
-    if (::kill(it->pid, SIGCONT) == 0) {
-      thawed = true;
-    } else {
-      if (procfs_root_ != "/proc") {
-        thawed = true;
-      } else {
-        if (errno == ESRCH) {
-          it->state = SessionState::DEAD;
-          it->memory_rss_bytes = 0;
-        }
-        return false;
-      }
-    }
-  }
-
-  it->state = SessionState::RUNNING_NORMAL;
   it->last_active_time = std::chrono::steady_clock::now();
+  return true;
+}
+
+bool SessionRegistry::thaw_locked(SessionInfo& s) {
+  if (write_cgroup_freeze(s.cgroup_path, false)) {
+    s.state = SessionState::RUNNING_NORMAL;
+    return true;
+  }
+  if (s.pid <= 0) {
+    // No cgroup and no process to signal: nothing can be thawed.
+    return false;
+  }
+  if (::kill(s.pid, SIGCONT) != 0) {
+    const int err = errno;
+    // Mock procfs roots use virtual PIDs that cannot be signalled; only a
+    // real /proc makes a failed SIGCONT an error.
+    if (procfs_root_ == "/proc") {
+      if (err == ESRCH) {
+        s.state = SessionState::DEAD;
+        s.memory_rss_bytes = 0;
+      }
+      return false;
+    }
+  }
+  s.state = SessionState::RUNNING_NORMAL;
   return true;
 }
 
@@ -876,28 +864,10 @@ bool SessionRegistry::touch_session(uint64_t id) {
   }
   it->last_active_time = std::chrono::steady_clock::now();
   if (it->state == SessionState::FROZEN) {
-    bool thawed = false;
-    if (!it->cgroup_path.empty()) {
-      const std::filesystem::path freeze_file =
-          std::filesystem::path(it->cgroup_path) / "cgroup.freeze";
-      std::error_code ec;
-      if (std::filesystem::exists(freeze_file, ec)) {
-        std::ofstream ofs(freeze_file);
-        if (ofs.is_open()) {
-          ofs << "0\n";
-          ofs.flush();
-          if (!ofs.fail()) {
-            thawed = true;
-          }
-        }
-      }
-    }
-    if (!thawed && it->pid > 0) {
-      if (::kill(it->pid, SIGCONT) == 0) {
-        thawed = true;
-      }
-    }
-    it->state = SessionState::RUNNING_NORMAL;
+    // A failed auto-thaw leaves the session FROZEN (or DEAD if its process
+    // is gone) instead of misreporting it as running; refresh_telemetry()
+    // reconciles the state on the next tick.
+    (void)thaw_locked(*it);
   }
   return true;
 }

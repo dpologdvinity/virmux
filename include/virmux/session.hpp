@@ -236,6 +236,19 @@ class SessionRegistry {
   static std::vector<SessionInfo> from_json(std::string_view json);
 
  private:
+  /**
+   * @brief Thaw @p s via cgroup.freeze or SIGCONT fallback. Caller holds
+   * mutex_.
+   *
+   * On success the state becomes RUNNING_NORMAL. On failure under a real
+   * /proc the state is left unchanged, except that a vanished process (ESRCH)
+   * is marked DEAD. Under a mock procfs root a failed signal counts as success
+   * because its PIDs are virtual.
+   *
+   * @return true if the session is now running.
+   */
+  bool thaw_locked(SessionInfo& s);
+
   mutable std::mutex mutex_;
   std::string procfs_root_;
   uint64_t next_id_{1};

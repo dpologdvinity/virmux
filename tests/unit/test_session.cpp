@@ -484,6 +484,89 @@ void test_session_checkpoint_timestamp_range(void) {
   std::filesystem::remove_all(dir);
 }
 
+/**
+ * @brief Test 10: touch_session() must not report a session as running when
+ * the auto-thaw failed because its process has already exited.
+ */
+void test_session_touch_does_not_resurrect_dead_frozen_session(void) {
+  pid_t pid = ::fork();
+  TEST_ASSERT_TRUE(pid >= 0);
+
+  if (pid == 0) {
+    while (true) {
+      ::usleep(10000);
+    }
+    ::_exit(0);
+  }
+
+  virmux::SessionRegistry reg;
+  virmux::SessionRegistration req;
+  req.name = "touch-target";
+  req.pid = pid;
+  req.command = "loop-target";
+  uint64_t id = reg.register_session(req);
+
+  TEST_ASSERT_TRUE(reg.freeze_session(id));
+
+  // The frozen process dies before the session is touched again.
+  ::kill(pid, SIGKILL);
+  int status = 0;
+  ::waitpid(pid, &status, 0);
+
+  TEST_ASSERT_TRUE(reg.touch_session(id));
+  auto s = reg.get_session(id);
+  TEST_ASSERT_TRUE(s.has_value());
+  TEST_ASSERT_NOT_EQUAL(virmux::SessionState::RUNNING_NORMAL, s->state);
+  TEST_ASSERT_EQUAL(virmux::SessionState::DEAD, s->state);
+}
+
+/**
+ * @brief Test 11: When no RSS source is readable any more, refresh_telemetry()
+ * must not keep reporting the previous (stale) RSS sample.
+ */
+void test_session_rss_not_stale_when_unreadable(void) {
+  const std::string root =
+      "/tmp/virmux_rss_stale_test_" + std::to_string(::getpid());
+  const std::string pid_dir = root + "/4242";
+  std::error_code ec;
+  std::filesystem::remove_all(root, ec);
+  std::filesystem::create_directories(pid_dir);
+
+  {
+    std::ofstream status(pid_dir + "/status");
+    status << "State:\tS (sleeping)\nVmRSS:\t   100 kB\n";
+    std::ofstream statm(pid_dir + "/statm");
+    statm << "10 5 0 0 0 0 0\n";
+  }
+
+  virmux::SessionRegistry reg(root);
+  virmux::SessionRegistration req;
+  req.name = "rss-target";
+  req.pid = 4242;
+  req.command = "synthetic";
+  uint64_t id = reg.register_session(req);
+
+  reg.refresh_telemetry();
+  auto s = reg.get_session(id);
+  TEST_ASSERT_TRUE(s.has_value());
+  TEST_ASSERT_GREATER_THAN_UINT64(0, s->memory_rss_bytes);
+
+  // The process loses its address space: statm disappears and status no
+  // longer carries a VmRSS line.
+  std::filesystem::remove(pid_dir + "/statm", ec);
+  {
+    std::ofstream status(pid_dir + "/status", std::ios::trunc);
+    status << "State:\tS (sleeping)\n";
+  }
+
+  reg.refresh_telemetry();
+  s = reg.get_session(id);
+  TEST_ASSERT_TRUE(s.has_value());
+  TEST_ASSERT_EQUAL_UINT64(0, s->memory_rss_bytes);
+
+  std::filesystem::remove_all(root, ec);
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_session_from_json_start_time_range);
@@ -498,5 +581,7 @@ int main(void) {
   RUN_TEST(test_session_error_handling);
   RUN_TEST(test_session_concurrent_access);
   RUN_TEST(test_session_dead_pruning);
+  RUN_TEST(test_session_touch_does_not_resurrect_dead_frozen_session);
+  RUN_TEST(test_session_rss_not_stale_when_unreadable);
   return UNITY_END();
 }
