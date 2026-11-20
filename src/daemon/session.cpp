@@ -1004,7 +1004,11 @@ std::vector<SessionInfo> SessionRegistry::from_json(std::string_view json) {
 
   while (idx < json.size()) {
     skip_ws();
-    if (idx < json.size() && json[idx] == ']') {
+    // skip_ws() may consume the rest of the input; never index json[size()].
+    if (idx >= json.size()) {
+      break;
+    }
+    if (json[idx] == ']') {
       idx++;
       break;
     }
@@ -1023,7 +1027,10 @@ std::vector<SessionInfo> SessionRegistry::from_json(std::string_view json) {
 
     while (idx < json.size()) {
       skip_ws();
-      if (idx < json.size() && json[idx] == '}') {
+      if (idx >= json.size()) {
+        break;
+      }
+      if (json[idx] == '}') {
         idx++;
         break;
       }

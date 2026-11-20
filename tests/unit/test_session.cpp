@@ -15,6 +15,8 @@ extern "C" {
 #include <chrono>
 #include <csignal>
 #include <cstring>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -411,8 +413,31 @@ void test_session_dead_pruning(void) {
   TEST_ASSERT_TRUE(reg.get_session(id2).has_value());
 }
 
+/**
+ * @brief Regression (found by fuzz_session_list_json): from_json() must not
+ * read json[json.size()] after skipping trailing whitespace.
+ *
+ * Each view deliberately stops just before a byte that is still inside the
+ * backing buffer, so an over-read is observable even in builds without
+ * bounds-checked string_view: a phantom '{' yields an extra session and a
+ * phantom '"' makes the key scan call substr() past the end (throws).
+ */
+void test_session_from_json_no_read_past_end(void) {
+  const std::string outer = "[ {";
+  auto sessions = virmux::SessionRegistry::from_json(
+      std::string_view(outer.data(), outer.size() - 1));
+  TEST_ASSERT_EQUAL_size_t(0, sessions.size());
+
+  const std::string inner = "[{ \"";
+  sessions = virmux::SessionRegistry::from_json(
+      std::string_view(inner.data(), inner.size() - 1));
+  TEST_ASSERT_EQUAL_size_t(1, sessions.size());
+  TEST_ASSERT_EQUAL_UINT64(0, sessions[0].id);
+}
+
 int main(void) {
   UNITY_BEGIN();
+  RUN_TEST(test_session_from_json_no_read_past_end);
   RUN_TEST(test_session_registration_and_lookup);
   RUN_TEST(test_session_list_and_json);
   RUN_TEST(test_session_telemetry_reading);
