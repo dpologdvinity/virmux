@@ -479,6 +479,22 @@ test(
 )
 
 test(
+  'test_cli_top_rejects_invalid_refresh',
+  virmux_exe,
+  args: ['top', '--headless', '--refresh', 'abc'],
+  should_fail: true,
+  suite: 'cli',
+)
+
+test(
+  'test_cli_top_rejects_trailing_garbage_refresh',
+  virmux_exe,
+  args: ['top', '--headless', '--refresh=100ms'],
+  should_fail: true,
+  suite: 'cli',
+)
+
+test(
   'integration_virmux_run',
   find_program('bash'),
   args: [

@@ -3,6 +3,7 @@
  * @brief Command-line interface and run dispatcher for virmux.
  */
 
+#include <algorithm>
 #include <cctype>
 #include <cerrno>
 #include <charconv>
@@ -11,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -19,6 +21,7 @@
 #include "virmux/cli_bench.hpp"
 #include "virmux/cli_cas.hpp"
 #include "virmux/cli_daemon.hpp"
+#include "virmux/cli_parse.hpp"
 #include "virmux/cli_stats.hpp"
 #include "virmux/sandbox.hpp"
 #include "virmux/tui.hpp"
@@ -309,7 +312,7 @@ int handle_run(int argc, char* argv[]) {
   }
 
   std::vector<char*> child_argv;
-  child_argv.reserve(static_cast<size_t>(argc - cmd_start_idx + 1));
+  child_argv.reserve(static_cast<size_t>(argc - cmd_start_idx) + 1);
   for (int i = cmd_start_idx; i < argc; ++i) {
     child_argv.push_back(argv[i]);
   }
@@ -342,6 +345,27 @@ void print_top_usage(std::ostream& out) {
 }
 
 /**
+ * @brief Parses a `--refresh` interval in milliseconds.
+ *
+ * Malformed values are rejected with an error rather than silently becoming
+ * the minimum interval; valid values below 50 ms are clamped up to 50 ms.
+ *
+ * @param value Raw option value.
+ * @param out_ms Receives the interval on success; untouched on failure.
+ * @return true on success, false if the value was rejected.
+ */
+bool parse_refresh_interval(std::string_view value, int& out_ms) {
+  const std::optional<int> parsed = virmux::parse_positive_int(value);
+  if (!parsed) {
+    std::cerr << "Error: invalid value for --refresh: '" << value
+              << "' (expected a positive number of milliseconds)\n";
+    return false;
+  }
+  out_ms = std::max(50, *parsed);
+  return true;
+}
+
+/**
  * @brief Dispatcher for the `virmux top` command.
  * @param argc Argument count.
  * @param argv Argument vector.
@@ -363,10 +387,13 @@ int handle_top(int argc, char* argv[]) {
         std::cerr << "Error: --refresh requires an argument\n";
         return 1;
       }
-      cfg.refresh_interval_ms = std::max(50, std::atoi(argv[++i]));
+      if (!parse_refresh_interval(argv[++i], cfg.refresh_interval_ms)) {
+        return 1;
+      }
     } else if (arg.starts_with("--refresh=")) {
-      cfg.refresh_interval_ms =
-          std::max(50, std::atoi(std::string(arg.substr(10)).c_str()));
+      if (!parse_refresh_interval(arg.substr(10), cfg.refresh_interval_ms)) {
+        return 1;
+      }
     } else if (arg == "--socket") {
       if (i + 1 >= argc) {
         std::cerr << "Error: --socket requires an argument\n";
