@@ -1,0 +1,15 @@
+[
+  {
+    "id": 1,
+    "name": "build",
+    "pid": 1234,
+    "state": "RUNNING_NORMAL",
+    "virtual_cores": 2,
+    "memory_rss_bytes": 1048576,
+    "memory_limit_bytes": 2147483648,
+    "ksm_dedup_bytes": 4096,
+    "cgroup_path": "/sys/fs/cgroup/virmux/1",
+    "command": "make -j4",
+    "start_time": 1700000000000
+  }
+]
