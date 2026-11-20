@@ -139,6 +139,26 @@ void kill_process_tree(pid_t pid, int signal, const std::string& procfs_root) {
   }
 }
 
+/**
+ * @brief Convert untrusted epoch milliseconds into a system_clock time_point.
+ *
+ * system_clock::duration is int64 nanoseconds on Linux, so converting
+ * milliseconds above ~9.2e12 (year 2262) multiplies past INT64_MAX, which is
+ * signed-overflow UB. Such values (including negative numbers that wrapped
+ * to huge uint64) cannot be real session timestamps, so they map to the
+ * epoch, the same as "unknown".
+ */
+std::chrono::system_clock::time_point time_point_from_epoch_ms(uint64_t ms) {
+  constexpr auto kMaxMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::system_clock::duration::max())
+                              .count();
+  if (ms > static_cast<uint64_t>(kMaxMs)) {
+    return {};
+  }
+  return std::chrono::system_clock::time_point(
+      std::chrono::milliseconds(static_cast<int64_t>(ms)));
+}
+
 std::string parse_json_str(std::string_view json, std::string_view key) {
   auto pos = json.find(key);
   if (pos == std::string_view::npos) return "";
@@ -271,8 +291,7 @@ SessionRegistry::SessionRegistry(std::string procfs_root,
               info.command =
                   collapse_home_path(parse_json_str(content, "\"command\""));
               uint64_t ts = parse_json_uint(content, "\"timestamp\"");
-              info.start_time = std::chrono::system_clock::time_point(
-                  std::chrono::milliseconds(ts));
+              info.start_time = time_point_from_epoch_ms(ts);
               info.state = SessionState::CHECKPOINTED;
               info.last_cpu_ticks = 0;
               info.last_active_time = std::chrono::steady_clock::now();
@@ -1136,8 +1155,7 @@ std::vector<SessionInfo> SessionRegistry::from_json(std::string_view json) {
     }
 
     if (start_time_ms > 0) {
-      info.start_time = std::chrono::system_clock::time_point(
-          std::chrono::milliseconds(start_time_ms));
+      info.start_time = time_point_from_epoch_ms(start_time_ms);
     }
     results.push_back(info);
   }
@@ -1214,8 +1232,7 @@ bool SessionRegistry::restore_session(uint64_t id, std::string* msg) {
         info.command =
             collapse_home_path(parse_json_str(content, "\"command\""));
         uint64_t ts = parse_json_uint(content, "\"timestamp\"");
-        info.start_time = std::chrono::system_clock::time_point(
-            std::chrono::milliseconds(ts));
+        info.start_time = time_point_from_epoch_ms(ts);
         info.state = SessionState::CHECKPOINTED;
         info.last_cpu_ticks = 0;
         info.last_active_time = std::chrono::steady_clock::now();

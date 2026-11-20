@@ -15,6 +15,8 @@ extern "C" {
 #include <chrono>
 #include <csignal>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -435,8 +437,57 @@ void test_session_from_json_no_read_past_end(void) {
   TEST_ASSERT_EQUAL_UINT64(0, sessions[0].id);
 }
 
+/**
+ * @brief Regression (found by fuzz_session_list_json): out-of-range
+ * start_time values must not overflow the milliseconds -> system_clock
+ * (nanoseconds) conversion, which is signed-integer-overflow UB.
+ *
+ * Unrepresentable timestamps are dropped (epoch); representable ones survive.
+ */
+void test_session_from_json_start_time_range(void) {
+  auto sessions = virmux::SessionRegistry::from_json(
+      "[{\"id\": 1, \"start_time\": 99999999999999999},"
+      " {\"id\": 2, \"start_time\": -5},"
+      " {\"id\": 3, \"start_time\": 1700000000000}]");
+  TEST_ASSERT_EQUAL_size_t(3, sessions.size());
+  TEST_ASSERT_TRUE(sessions[0].start_time ==
+                   std::chrono::system_clock::time_point{});
+  TEST_ASSERT_TRUE(sessions[1].start_time ==
+                   std::chrono::system_clock::time_point{});
+  TEST_ASSERT_EQUAL_INT64(1700000000000LL,
+                          std::chrono::duration_cast<std::chrono::milliseconds>(
+                              sessions[2].start_time.time_since_epoch())
+                              .count());
+}
+
+/**
+ * @brief Checkpoint metadata timestamps get the same range guard when the
+ * registry reloads checkpoints at startup.
+ */
+void test_session_checkpoint_timestamp_range(void) {
+  const std::filesystem::path dir =
+      std::filesystem::temp_directory_path() /
+      ("virmux_test_ckpt_ts_" + std::to_string(::getpid()));
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir / "7");
+  {
+    std::ofstream meta(dir / "7" / "checkpoint.json");
+    meta << "{\"id\": 7, \"name\": \"x\", \"timestamp\": 99999999999999999}";
+  }
+  {
+    virmux::SessionRegistry reg("/proc", dir.string());
+    auto info = reg.get_session(7);
+    TEST_ASSERT_TRUE(info.has_value());
+    TEST_ASSERT_TRUE(info->start_time ==
+                     std::chrono::system_clock::time_point{});
+  }
+  std::filesystem::remove_all(dir);
+}
+
 int main(void) {
   UNITY_BEGIN();
+  RUN_TEST(test_session_from_json_start_time_range);
+  RUN_TEST(test_session_checkpoint_timestamp_range);
   RUN_TEST(test_session_from_json_no_read_past_end);
   RUN_TEST(test_session_registration_and_lookup);
   RUN_TEST(test_session_list_and_json);
