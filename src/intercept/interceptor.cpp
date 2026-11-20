@@ -167,6 +167,20 @@ inline bool is_ksm_auto_merge_enabled() noexcept {
 }
 
 /**
+ * @brief Issues mmap through raw syscall(2) when no libc symbol is available.
+ *
+ * syscall(2) returns the mapping address as a `long` (-1, i.e. MAP_FAILED, on
+ * error), so converting that integer back to a pointer is inherent here.
+ */
+template <typename OffT>
+static void* raw_mmap_syscall(void* addr, size_t length, int prot, int flags,
+                              int fd, OffT offset) {
+  const long ret = syscall(SYS_mmap, addr, length, prot, flags, fd, offset);
+  // NOLINTNEXTLINE(performance-no-int-to-ptr): syscall(2) returns a long
+  return reinterpret_cast<void*>(ret);
+}
+
+/**
  * @brief Internal mmap helper shared by mmap and mmap64 exports.
  */
 template <typename OffT>
@@ -181,8 +195,7 @@ static void* do_mmap(void* addr, size_t length, int prot, int flags, int fd,
       return real_mmap(addr, length, prot, flags, fd,
                        static_cast<off_t>(offset));
     }
-    return reinterpret_cast<void*>(
-        syscall(SYS_mmap, addr, length, prot, flags, fd, offset));
+    return raw_mmap_syscall(addr, length, prot, flags, fd, offset);
   }
 
   ReentrancyGuard guard;
@@ -199,8 +212,7 @@ static void* do_mmap(void* addr, size_t length, int prot, int flags, int fd,
       res = real_mmap64(addr, length, prot, flags, fd,
                         static_cast<off64_t>(offset));
     } else {
-      res = reinterpret_cast<void*>(
-          syscall(SYS_mmap, addr, length, prot, flags, fd, offset));
+      res = raw_mmap_syscall(addr, length, prot, flags, fd, offset);
     }
   } else {
     if (!real_mmap) {
@@ -210,8 +222,7 @@ static void* do_mmap(void* addr, size_t length, int prot, int flags, int fd,
       res =
           real_mmap(addr, length, prot, flags, fd, static_cast<off_t>(offset));
     } else {
-      res = reinterpret_cast<void*>(
-          syscall(SYS_mmap, addr, length, prot, flags, fd, offset));
+      res = raw_mmap_syscall(addr, length, prot, flags, fd, offset);
     }
   }
 
@@ -266,6 +277,39 @@ __attribute__((constructor)) void init_interceptor() noexcept {
     if (!real_mmap64) {
       real_mmap64 = reinterpret_cast<mmap64_fn_t>(dlsym(RTLD_NEXT, "mmap"));
     }
+  }
+}
+
+/**
+ * @brief Builds the slimmed argv used when exec'ing a browser binary.
+ *
+ * Exceptions must never escape the exported noexcept execve() wrapper, so any
+ * failure while building the new vector (in practice std::bad_alloc) is
+ * reported as `false`, and the caller execs the original argv unchanged.
+ *
+ * @param argv Original null-terminated argument vector.
+ * @param storage Receives the owned argument strings.
+ * @param out Receives null-terminated pointers into @p storage.
+ * @return true if @p out holds a usable augmented argv.
+ */
+bool build_slim_argv(char* const argv[], std::vector<std::string>& storage,
+                     std::vector<char*>& out) noexcept {
+  try {
+    storage = virmux::inject_slim_flags(argv);
+    if (storage.empty()) {
+      return false;
+    }
+    out.clear();
+    out.reserve(storage.size() + 1);
+    for (auto& arg : storage) {
+      out.push_back(arg.data());
+    }
+    out.push_back(nullptr);
+    return true;
+  } catch (...) {
+    // Degrade to the unaugmented exec rather than terminate the process.
+    out.clear();
+    return false;
   }
 }
 
@@ -445,25 +489,16 @@ extern "C" __attribute__((visibility("default"))) int execve(
 #elif defined(__GNUC__)
 #pragma GCC diagnostic pop
 #endif
-    try {
-      std::vector<std::string> augmented = virmux::inject_slim_flags(argv);
-      if (!augmented.empty()) {
-        std::vector<char*> new_argv;
-        new_argv.reserve(augmented.size() + 1);
-        for (auto& arg : augmented) {
-          new_argv.push_back(const_cast<char*>(arg.c_str()));
-        }
-        new_argv.push_back(nullptr);
-
-        if (real_execve) {
-          return real_execve(pathname, new_argv.data(), envp);
-        }
-        return static_cast<int>(
-            syscall(SYS_execve, pathname, new_argv.data(), envp));
+    std::vector<std::string> slim_storage;
+    std::vector<char*> slim_argv;
+    if (build_slim_argv(argv, slim_storage, slim_argv)) {
+      if (real_execve) {
+        return real_execve(pathname, slim_argv.data(), envp);
       }
-    } catch (...) {
-      // In case of allocation failure, fall through to unaugmented execve
+      return static_cast<int>(
+          syscall(SYS_execve, pathname, slim_argv.data(), envp));
     }
+    // Augmentation failed: fall through to the unaugmented execve.
   }
 
   if (real_execve) {

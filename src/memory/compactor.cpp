@@ -120,7 +120,10 @@ ReclaimResult ProcessCompactor::reclaim_ranges(
     size_t aligned_len =
         ((offset + len + page_size - 1) / page_size) * page_size;
 
+    // aligned_addr lies in the *target* process's address space; it is never
+    // dereferenced here, but process_madvise(2) takes it as an iovec pointer.
     struct iovec iov;
+    // NOLINTNEXTLINE(performance-no-int-to-ptr): remote address for iovec ABI
     iov.iov_base = reinterpret_cast<void*>(aligned_addr);
     iov.iov_len = aligned_len;
     aligned_iovs.push_back(iov);
