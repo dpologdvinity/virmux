@@ -1,3 +1,4 @@
+<!-- markdownlint-disable-next-line MD041 -- GitHub renders this below the PR title, so sections start at h2 -->
 ## Summary
 
 Briefly explain the purpose of this PR and what problem it solves.

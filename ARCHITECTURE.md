@@ -1,10 +1,10 @@
 # Architecture & System Design — `virmux`
 
-### High-Level Architecture
+## High-Level Architecture
 
 `virmux` is decomposed into an unprivileged userspace CLI, an interceptor dynamic library (`libvirmux_intercept.so`), and a lightweight supervisor daemon communicating via Unix Domain Sockets:
 
-```
+```text
 +-------------------------------------------------------------------------+
 |                                virmux CLI                               |
 |        [cli/main.cpp] - Arg parsing, TUI dashboard, IPC Client          |
@@ -43,7 +43,7 @@
 
 ---
 
-### Subsystem Boundaries
+## Subsystem Boundaries
 
 1. **`src/daemon/` (Supervisor & Session Lifecycle):**
    - Implements `SupervisorDaemon` listening on Unix domain sockets (`/run/user/<UID>/virmux.sock` or fallback `/tmp/virmux-<UID>.sock`).
@@ -110,7 +110,7 @@
 
 ---
 
-### Technology Stack Rationale
+## Technology Stack Rationale
 
 - **C++20 (Core Engine & Daemon):** Strong RAII semantics (`ScopedFd`, `ScopedMount`, `ScopedCgroup`, `ScopedThread`) guarantee leak-free kernel resource cleanup. Concurrency primitives (`std::mutex`, `std::jthread`, `std::atomic`) ensure thread-safe session tracking.
 - **C ABI (`extern "C"`) for `libvirmux_intercept.so`:** The `LD_PRELOAD` interceptor library compiles with C linkage so it can transparently intercept syscalls across any executable on the system (C, C++, Rust, Go, Python, Node).

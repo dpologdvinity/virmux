@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-11-14
 
 ### Added
+
 - **Core Architecture & Virtualization Engine (Phase 1):**
   - Meson + Ninja C++20/C17 build system with strict warning flags (`-Wall -Wextra -Wpedantic -Werror`).
   - Kernel prerequisite diagnostic utility (`scripts/doctor.sh`).

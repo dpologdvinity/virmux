@@ -1,4 +1,5 @@
 # Virmux — System Design Specification
+
 ## 06. CLI & Interactive TUI Specification
 
 ### 1. Architectural Objective
@@ -23,6 +24,7 @@ virmux [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS]
    - `--heavy`: Explicitly register task with the Admission Control queue.
    - `--priority <PRIO>`: Set priority class: `interactive`, `normal`, `idle` (`SCHED_IDLE`).
    - *Example:*
+
      ```bash
      virmux run --workspace ~/git/daydaze -- npx playwright test
      ```
@@ -53,7 +55,7 @@ virmux [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS]
 
 ### 3. Interactive TUI (`virmux top`) Design
 
-```
+```text
 +-----------------------------------------------------------------------------+
 | VIRMUX v0.1.0  [WSL2 / 12 Cores / 15.0G RAM]            Host Load: 2.15    |
 | Dedicated Shield: Cores 0-1 (Fluid)   | Worker Pool: Cores 2-11 (Managed)   |
@@ -72,6 +74,7 @@ virmux [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS]
 ```
 
 #### TUI Hotkeys
+
 - `Up` / `Down` or `j` / `k`: Select session in table.
 - `Enter`: Attach terminal to selected session.
 - `Space`: Toggle freeze/thaw on selected session.
@@ -87,6 +90,7 @@ virmux [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS]
 Communication between `virmux` CLI instances and the supervisor daemon uses a high-performance Unix Domain Socket at `/run/user/<UID>/virmux.sock`.
 
 #### Message Format
+
 Binary TLV (Type-Length-Value) packet protocol with JSON payload for complex queries:
 
 ```c

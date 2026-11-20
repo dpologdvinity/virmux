@@ -33,12 +33,14 @@
 ### Task 1: KSM Controller & Sysfs Telemetry
 
 **Files:**
+
 - Create: `include/virmux/ksm.hpp`
 - Create: `src/memory/ksm.cpp`
 - Create: `tests/unit/test_ksm.cpp`
 - Modify: `meson.build`
 
 **Interfaces:**
+
 ```cpp
 namespace virmux {
 
@@ -98,12 +100,14 @@ class KsmController {
 ### Task 2: Process Compactor via `process_madvise(2)`
 
 **Files:**
+
 - Create: `include/virmux/compactor.hpp`
 - Create: `src/memory/compactor.cpp`
 - Create: `tests/unit/test_compactor.cpp`
 - Modify: `meson.build`
 
 **Interfaces:**
+
 ```cpp
 namespace virmux {
 
@@ -166,12 +170,14 @@ class ProcessCompactor {
 ### Task 3: Memory Telemetry & `zram` Parser
 
 **Files:**
+
 - Create: `include/virmux/telemetry.hpp`
 - Create: `src/memory/telemetry.cpp`
 - Create: `tests/unit/test_telemetry.cpp`
 - Modify: `meson.build`
 
 **Interfaces:**
+
 ```cpp
 namespace virmux {
 
@@ -245,12 +251,14 @@ class MemoryTelemetry {
 ### Task 4: VMA Scanner & Unified Memory Manager
 
 **Files:**
+
 - Create: `include/virmux/memory_manager.hpp`
 - Create: `src/memory/memory_manager.cpp`
 - Create: `tests/unit/test_memory_manager.cpp`
 - Modify: `meson.build`
 
 **Interfaces:**
+
 ```cpp
 namespace virmux {
 
@@ -316,12 +324,14 @@ class MemoryManager {
 ### Task 5: Dynamic Preload Interceptor Memory Hook (`MADV_MERGEABLE`)
 
 **Files:**
+
 - Modify: `include/virmux/intercept.h`
 - Modify: `src/intercept/interceptor.cpp`
 - Create: `tests/unit/test_interceptor_mem.cpp`
 - Modify: `meson.build`
 
 **Requirements:**
+
 - The dynamic interceptor library `libvirmux_intercept.so` must register heap allocations as KSM merge candidates when `VIRMUX_KSM_AUTO_MERGE=1` is enabled.
 - Intercepts POSIX `mmap` / `mmap64` and flags `MAP_ANONYMOUS | MAP_PRIVATE` allocations with `madvise(addr, length, MADV_MERGEABLE)`.
 - Includes reentrancy guard protection to avoid recursing during dynamic linker loading.
@@ -350,6 +360,7 @@ class MemoryManager {
 ### Task 6: CLI Subcommands `virmux stats` and `virmux pack`
 
 **Files:**
+
 - Create: `include/virmux/cli_stats.hpp`
 - Create: `src/cli/cli_stats.cpp`
 - Modify: `cli/main.cpp`
@@ -357,6 +368,7 @@ class MemoryManager {
 - Modify: `meson.build`
 
 **Requirements:**
+
 - `virmux stats`: Formatted terminal output detailing:
   - System memory (Total, Available, Free, Cached).
   - KSM deduplication (Status, Pages Shared, Pages Sharing, Memory Saved).
@@ -388,10 +400,12 @@ class MemoryManager {
 ### Task 7: Integration Tests & Benchmark Verification
 
 **Files:**
+
 - Create: `tests/integration/test_memory_pack.sh`
 - Modify: `meson.build`
 
 **Requirements:**
+
 - Automated integration test:
   1. `virmux stats` prints cleanly with exit code 0.
   2. `virmux stats --json | jq .` parses valid JSON with required keys (`memory`, `ksm`, `zram`).

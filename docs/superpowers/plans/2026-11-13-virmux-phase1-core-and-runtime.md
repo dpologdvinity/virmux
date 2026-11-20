@@ -37,6 +37,7 @@
 ### Task 1: Project Scaffolding & Build Configuration
 
 **Files:**
+
 - Create: `meson.build`
 - Create: `include/virmux/version.hpp`
 - Create: `src/core/version.cpp`
@@ -45,6 +46,7 @@
 - Create: `tests/unit/test_version.cpp`
 
 **Interfaces:**
+
 - Produces: `virmux::version_string()` -> `const char*`
 
 - [ ] **Step 1: Write failing test for version string**
@@ -98,12 +100,14 @@ git commit -m "chore(build): setup meson c++20 project and unity test harness"
 ### Task 2: Dynamic Interceptor Library (`libvirmux_intercept.so`)
 
 **Files:**
+
 - Create: `include/virmux/intercept.h`
 - Create: `src/intercept/interceptor.cpp`
 - Modify: `meson.build`
 - Test: `tests/unit/test_interceptor.cpp`
 
 **Interfaces:**
+
 - Consumes: Environment variables `VIRMUX_VIRTUAL_CORES`, `VIRMUX_SPOOFED_MEMINFO`
 - Produces: Shared library `build/src/intercept/libvirmux_intercept.so` exporting `sysconf`, `get_nprocs`, and `open`
 
@@ -163,11 +167,13 @@ git commit -m "feat(intercept): implement core sysconf and meminfo preload inter
 ### Task 3: Headless Browser & Tool Flag Injection
 
 **Files:**
+
 - Create: `src/intercept/browser_trim.cpp`
 - Modify: `src/intercept/interceptor.cpp`
 - Test: `tests/unit/test_browser_trim.cpp`
 
 **Interfaces:**
+
 - Consumes: Target binary name in `execve`
 - Produces: Augmented argument vector containing `--disable-gpu`, `--disable-software-rasterizer`, `--single-process`
 
@@ -234,12 +240,14 @@ git commit -m "feat(intercept): add automatic headless browser flag injection"
 ### Task 4: RAII Kernel Wrappers & Cgroups v2 Slices
 
 **Files:**
+
 - Create: `include/virmux/raii.hpp`
 - Create: `include/virmux/cgroup.hpp`
 - Create: `src/core/cgroup.cpp`
 - Test: `tests/unit/test_cgroup.cpp`
 
 **Interfaces:**
+
 - Produces:
   - `class ScopedFd` (wraps file descriptors with `close()` in destructor)
   - `class CgroupSlice` (`init(slice_name)`, `set_memory_high(bytes)`, `set_cpuset(cores_str)`, `attach_pid(pid)`)
@@ -304,11 +312,13 @@ git commit -m "feat(core): implement RAII descriptors and cgroup v2 controller w
 ### Task 5: Admission Control Token Bucket
 
 **Files:**
+
 - Create: `include/virmux/gate.hpp`
 - Create: `src/sched/gate.cpp`
 - Test: `tests/unit/test_gate.cpp`
 
 **Interfaces:**
+
 - Produces:
   - `class AdmissionGate(int max_concurrent_heavy, std::chrono::milliseconds timeout)`
   - `bool acquire_token()`
@@ -368,11 +378,13 @@ git commit -m "feat(sched): implement admission control token bucket gate"
 ### Task 6: Command Sandbox Launcher & Exit Propagation
 
 **Files:**
+
 - Create: `include/virmux/sandbox.hpp`
 - Create: `src/core/sandbox.cpp`
 - Test: `tests/unit/test_sandbox.cpp`
 
 **Interfaces:**
+
 - Produces:
   - `struct SandboxConfig { int virtual_cores; uint64_t memory_limit_bytes; bool is_heavy; ... }`
   - `int virmux_spawn_command(const SandboxConfig &cfg, char *const argv[])`
@@ -440,11 +452,13 @@ git commit -m "feat(core): implement command sandbox launcher with status propag
 ### Task 7: Post-Execution Page Cache Cleanser
 
 **Files:**
+
 - Create: `include/virmux/cleanse.hpp`
 - Create: `src/memory/cleanse.cpp`
 - Test: `tests/unit/test_cleanse.cpp`
 
 **Interfaces:**
+
 - Produces: `void virmux::cleanse_path(std::string_view path)`
 
 - [ ] **Step 1: Write failing test for posix_fadvise cache eviction**
@@ -502,11 +516,13 @@ git commit -m "feat(memory): implement post-execution page cache eviction"
 ### Task 8: CLI Command `virmux run`
 
 **Files:**
+
 - Create: `cli/main.cpp`
 - Modify: `meson.build`
 - Test: integration test via CLI execution
 
 **Interfaces:**
+
 - Produces: Executable `build/virmux` supporting `virmux run [--cores N] [--mem LIMIT] -- <cmd...>`
 
 - [ ] **Step 1: Implement argument parser and run dispatcher in `cli/main.cpp`**
@@ -534,16 +550,19 @@ git commit -m "feat(cli): implement virmux run command-line interface"
 ### Task 9: Phase 1 Integration Tests & Gauntlet Smoke Test
 
 **Files:**
+
 - Create: `tests/integration/test_virmux_run.sh`
 - Create: `scripts/doctor.sh`
 - Modify: `meson.build`
 
 **Interfaces:**
+
 - Produces: Automated verification suite executing real Python and compiler tasks under `virmux run`
 
 - [ ] **Step 1: Write integration test script `tests/integration/test_virmux_run.sh`**
 
 Test:
+
 1. `virmux run --cores 2 -- python3 -c "import os; assert os.cpu_count() == 2"` -> verifies core spoofing.
 2. `virmux run -- meminfo check` -> verifies virtual RAM reporting.
 3. Concurrency test: launches 4 parallel `virmux run` tasks and verifies admission gate ordering.

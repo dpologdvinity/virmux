@@ -12,14 +12,15 @@
 
 ---
 
-### The Problem
+## The Problem
 
 Running multiple terminal sessions or autonomous AI agent swarms simultaneously (e.g. running Playwright tests, compiling C++/Rust, training neural models in PyTorch, building Docker images) quickly brings even high-end laptops and workstations to a crawl:
+
 - Test frameworks and compilers greedily spawn 12+ worker threads each, invalidating CPU caches and starving the host OS.
 - Dozens of Chromium or Python runtimes duplicate gigabytes of identical memory pages in RAM, rapidly overflowing physical memory into swap thrashing.
 - In WSL2, host memory saturation (`vmmem`) locks up the entire Windows desktop and triggers harsh Linux OOM kills.
 
-### The Solution: `virmux`
+## The Solution: `virmux`
 
 `virmux` acts as an in-kernel resource multiplexer and hypervisor. While tools like `tmux` multiplex terminal screens, `virmux` multiplexes the underlying hardware:
 
@@ -36,9 +37,10 @@ Running multiple terminal sessions or autonomous AI agent swarms simultaneously 
 
 ---
 
-### Quickstart
+## Quickstart
 
-#### Prerequisites
+### Prerequisites
+
 - Linux kernel 5.10+ (standard in Ubuntu 22.04+, WSL2, Debian 12+)
 - `meson`, `ninja`, `gcc` (>= 13) or `clang`
 - `libncursesw5-dev`
@@ -58,9 +60,10 @@ ninja -C build test
 
 ---
 
-### Usage & Subcommands
+## Usage & Subcommands
 
-#### 1. Execute Command in Managed Sandbox (`virmux run`)
+### 1. Execute Command in Managed Sandbox (`virmux run`)
+
 ```bash
 # Runs command in 2-core, 2GB memory ceiling sandbox with hardware virtualization
 virmux run --cores 2 --mem 2G -- npm test
@@ -72,7 +75,8 @@ virmux run --ephemeral --workspace ~/git/my-repo -- npx playwright test
 virmux run --heavy --cores 4 --mem 4G -- cargo build --release
 ```
 
-#### 2. Start Supervisor Daemon (`virmux daemon`)
+### 2. Start Supervisor Daemon (`virmux daemon`)
+
 ```bash
 # Start background daemon (uses readiness pipe for instant synchronization)
 virmux daemon
@@ -81,7 +85,8 @@ virmux daemon
 virmux daemon --foreground
 ```
 
-#### 3. Real-Time Interactive TUI Dashboard (`virmux top`)
+### 3. Real-Time Interactive TUI Dashboard (`virmux top`)
+
 ```bash
 # Launch interactive ncurses dashboard (sub-0.5% CPU budget)
 virmux top
@@ -91,12 +96,14 @@ virmux top --headless
 ```
 
 **TUI Hotkeys:**
+
 - `j` / `k` or `Up` / `Down`: Navigate active session table
 - `Space`: Freeze or thaw selected session
 - `K`: Kill selected session process tree
 - `q`: Exit dashboard
 
-#### 4. Manage Session Lifecycles (`virmux list`, `freeze`, `thaw`, `kill`)
+### 4. Manage Session Lifecycles (`virmux list`, `freeze`, `thaw`, `kill`)
+
 ```bash
 # List all active managed sessions in formatted table
 virmux list
@@ -112,7 +119,8 @@ virmux thaw 1
 virmux kill 1
 ```
 
-#### 5. Session Checkpointing & Hibernation (`virmux checkpoint`, `virmux restore`)
+### 5. Session Checkpointing & Hibernation (`virmux checkpoint`, `virmux restore`)
+
 ```bash
 # Checkpoint running session to disk (CRIU dump or deep-freeze pageout fallback)
 virmux checkpoint 1
@@ -121,7 +129,8 @@ virmux checkpoint 1
 virmux restore 1
 ```
 
-#### 6. Fault Isolation & Auto-Freeze Options
+### 6. Fault Isolation & Auto-Freeze Options
+
 ```bash
 # Start daemon with automatic inactivity freeze (defaults to 500ms idle threshold)
 virmux daemon --auto-freeze --idle-ms 500
@@ -130,7 +139,8 @@ virmux daemon --auto-freeze --idle-ms 500
 virmux run --max-pids 64 -- python3 worker.py
 ```
 
-#### 7. Telemetry & Compaction (`virmux stats`, `virmux pack`)
+### 7. Telemetry & Compaction (`virmux stats`, `virmux pack`)
+
 ```bash
 # Inspect host memory, KSM deduplication, and zram compression telemetry
 virmux stats
@@ -143,7 +153,8 @@ virmux pack
 virmux pack 1234 5678
 ```
 
-#### 8. Content-Addressable Storage (`virmux cas`)
+### 8. Content-Addressable Storage (`virmux cas`)
+
 ```bash
 # Inspect CAS cache size, hit/miss ratios, and entry counts
 virmux cas stats
@@ -152,7 +163,8 @@ virmux cas stats
 virmux cas clean --max-bytes 500M
 ```
 
-#### 9. Stress Benchmarking (`virmux bench run`, `virmux bench report`)
+### 9. Stress Benchmarking (`virmux bench run`, `virmux bench report`)
+
 ```bash
 # Run 12-task baseline vs managed gauntlet stress benchmark
 virmux bench run --quick --tasks 12 --output report.json
@@ -164,9 +176,10 @@ cat report.json | virmux bench report
 
 ---
 
-### Architecture & Detailed Specs
+## Architecture & Detailed Specs
 
 Comprehensive technical design specifications are available in [`docs/specs/`](docs/specs/):
+
 - [00. Overview & Core Architecture](docs/specs/00-OVERVIEW.md)
 - [01. Memory Multiplexing Subsystem](docs/specs/01-MEMORY-SUBSYSTEM.md)
 - [02. CPU & Concurrency Scheduling Subsystem](docs/specs/02-CPU-SCHEDULING-SUBSYSTEM.md)
@@ -179,6 +192,6 @@ Comprehensive technical design specifications are available in [`docs/specs/`](d
 
 ---
 
-### License
+## License
 
 MIT License. See [LICENSE](LICENSE) for details.

@@ -1,11 +1,12 @@
 # Virmux — System Design Specification
+
 ## 02. CPU & Concurrency Scheduling Subsystem
 
 ### 1. Architectural Objective
 
 The CPU Scheduling Subsystem prevents scheduler thrashing, CPU cache invalidation, and system unresponsiveness. It guarantees that interactive terminals and the host OS remain fluid (60fps UI, immediate terminal echo) while managing bursts from 10–30 simultaneous heavy worker sessions.
 
-```
+```text
 +-------------------------------------------------------------------------+
 |                    Hardware CPU Topology (12 Cores)                     |
 |                                                                         |
@@ -36,9 +37,11 @@ The CPU Scheduling Subsystem prevents scheduler thrashing, CPU cache invalidatio
 ### 2. Interactive Core Shielding (`cpuset.cpus`)
 
 #### The Problem
+
 When a test suite or compiler detects 12 cores, it launches 12 worker processes that saturate 100% of every CPU core. Every hardware core becomes unavailable for handling keyboard input, mouse events, or display redraws in the host OS, creating perceptible latency and freeze.
 
 #### The Implementation
+
 `virmux` partitions the CPU topology using the Linux cgroups v2 `cpuset` controller:
 
 1. **Topology Detection:**
@@ -46,9 +49,11 @@ When a test suite or compiler detects 12 cores, it launches 12 worker processes 
 2. **Partition Assignment:**
    - **Host Reserved (Cores 0–1):** Never allocated to background worker sessions. Reserved strictly for user interactive shells, window managers, and host processes.
    - **Worker Pool (Cores 2–11):** Assigned to the root `virmux.slice` via:
+
      ```bash
      echo "2-11" > /sys/fs/cgroup/virmux.slice/cpuset.cpus
      ```
+
 3. **Outcome:**
    Even if all worker sessions hit 100% compute load, Cores 0 and 1 remain completely unencumbered, guaranteeing instant shell responsiveness.
 
@@ -57,12 +62,15 @@ When a test suite or compiler detects 12 cores, it launches 12 worker processes 
 ### 3. Admission Control Engine (Token Bucket Concurrency Limiter)
 
 #### The Problem
+
 If 10 sessions execute `cargo build`, `playwright test`, or `cmake --build` simultaneously:
+
 - 10 sessions × 10 threads = **100 threads competing for 10 worker cores**.
 - Instruction cache hit rates collapse from 95% down to <40%.
 - Total time to complete all 10 builds balloons by 500% due to context-switching overhead.
 
 #### The Implementation
+
 `virmux` treats heavy compute execution as an admission-controlled resource queue:
 
 ```c
@@ -93,6 +101,7 @@ typedef struct {
 ### 4. Zero-Cost State Preservation: PTY Freezing vs. Network Yielding
 
 #### The Implementation
+
 `virmux` distinguishes between terminal idle and network wait to protect active network connections:
 
 1. **Terminal / PTY Idle (Hard Freeze):**

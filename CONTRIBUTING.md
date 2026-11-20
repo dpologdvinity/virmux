@@ -4,16 +4,18 @@ Thank you for your interest in contributing to `virmux`!
 
 ---
 
-### Development Setup
+## Development Setup
 
 1. **Prerequisites:**
    Ensure development tools and dependencies are installed:
+
    ```bash
    sudo apt-get update
    sudo apt-get install -y gcc meson ninja-build libncurses-dev
    ```
 
 2. **Clone and Configure:**
+
    ```bash
    git clone https://github.com/dpologdvinity/virmux.git
    cd virmux
@@ -22,13 +24,14 @@ Thank you for your interest in contributing to `virmux`!
    ```
 
 3. **Running Tests:**
+
    ```bash
    ninja -C build test
    ```
 
 ---
 
-### Branching & Commit Standards
+## Branching & Commit Standards
 
 - **Branching:** Create feature branches off `main` with descriptive names: `feat/<feature-name>`, `fix/<bug-name>`, or `docs/<topic>`.
 - **Commit Style:** Always use [Conventional Commits](https://www.conventionalcommits.org/):
@@ -39,7 +42,7 @@ Thank you for your interest in contributing to `virmux`!
 
 ---
 
-### Code Quality & Hygiene
+## Code Quality & Hygiene
 
 - **Standard:** C17 standard compliance with `-Wall -Wextra -Wpedantic -Werror`.
 - **No Memory Leaks:** All heap allocations must be paired with deterministic cleanups. Code is verified with AddressSanitizer (`-Db_sanitize=address`).

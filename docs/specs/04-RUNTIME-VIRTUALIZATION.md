@@ -1,11 +1,12 @@
 # Virmux — System Design Specification
+
 ## 04. Runtime Virtualization & Spoofing Subsystem
 
 ### 1. Architectural Objective
 
 Target applications and runtimes (Python, Node.js, Chromium, PyTorch, CMake) are designed to inspect the host machine and greedily claim all available resources. The Runtime Virtualization Subsystem transparently intercepts these resource discovery queries and provides spoofed, polite answers without modifying a single line of project code.
 
-```
+```text
 +-------------------------------------------------------------------------+
 |                  Target Process (e.g. Playwright / PyTorch)             |
 |                                                                         |
@@ -34,6 +35,7 @@ Target applications and runtimes (Python, Node.js, Chromium, PyTorch, CMake) are
 #### Intercepted Interfaces
 
 1. **Processor Count Queries:**
+
    ```c
    /* Intercepted sysconf */
    long sysconf(int name) {
@@ -62,6 +64,7 @@ Target applications and runtimes (Python, Node.js, Chromium, PyTorch, CMake) are
 
 2. **Memory Information Queries (`/proc/meminfo`):**
    When target processes attempt to read `/proc/meminfo` to calculate heap limits:
+
    ```c
    int open(const char *pathname, int flags, ...) {
        if (pathname && strcmp(pathname, "/proc/meminfo") == 0) {
@@ -74,8 +77,10 @@ Target applications and runtimes (Python, Node.js, Chromium, PyTorch, CMake) are
        ...
    }
    ```
+
    The synthetic `meminfo` provides balanced, proportional fields:
-   ```
+
+   ```text
    MemTotal:        2097152 kB  (2 GB)
    MemFree:         1572864 kB  (1.5 GB)
    MemAvailable:    1835008 kB  (1.75 GB)
@@ -85,12 +90,14 @@ Target applications and runtimes (Python, Node.js, Chromium, PyTorch, CMake) are
 
 3. **OpenMP & BLAS Automatic Injection:**
    `virmux` automatically injects environment variables into child sessions:
+
    ```bash
    export OMP_NUM_THREADS=2
    export OPENBLAS_NUM_THREADS=2
    export MKL_NUM_THREADS=2
    export NUMEXPR_NUM_THREADS=2
    ```
+
    This prevents PyTorch, NumPy, and scientific C/C++ libraries from overwhelming CPU execution units.
 
 ---
@@ -98,13 +105,16 @@ Target applications and runtimes (Python, Node.js, Chromium, PyTorch, CMake) are
 ### 3. Headless Browser Trimming Engine (Playwright / Chromium)
 
 #### The Problem
+
 Modern end-to-end testing frameworks like Playwright spawn full Chromium instances. Even in headless mode, Chromium initializes:
+
 - GPU emulation shaders and software rasterizers (`swiftshader`).
 - Crash reporting daemons and metrics reporters.
 - Background network discovery services.
 - Multi-process architecture (separate browser, GPU, network, and renderer processes), eating **800 MB–1.2 GB per test runner**.
 
 #### The Implementation
+
 `virmux` monitors `execve` calls in session subtrees. When an executable matching `chrome`, `chromium`, or `headless_shell` is detected, `virmux` injects the **Ultra-Slim Headless Profile**:
 
 ```c
@@ -125,6 +135,7 @@ static const char *SLIM_BROWSER_FLAGS[] = {
 ```
 
 #### Outcome
+
 - Process count per browser instance drops from **7 processes down to 1 process**.
 - Memory footprint drops from **~1 GB down to ~180 MB** (an **82% reduction**).
 - 10 parallel Playwright tests run in **1.8 GB of RAM** instead of 10 GB.
@@ -134,21 +145,26 @@ static const char *SLIM_BROWSER_FLAGS[] = {
 ### 4. GPU & VRAM Multi-Tenancy (NVIDIA MPS)
 
 #### The Problem
+
 By default, the CUDA runtime creates an exclusive context per process. If Session 1 runs a PyTorch training loop (`nibble`) and Session 2 attempts to run Blender or GPU test shaders:
+
 - Session 1 preallocates almost all VRAM.
 - Session 2 fails with: `CUDA out of memory` or `CUDA initialization error`.
 
 #### The Implementation
+
 `virmux` integrates with **NVIDIA Multi-Process Service (MPS)**:
 
 1. **MPS Server Initialization:**
    `virmux` ensures `nvidia-cuda-mps-control -d` is running. MPS allows multiple CUDA processes to share a single GPU context concurrently.
 2. **Per-Session VRAM Fraction Enforcement:**
    `virmux` injects environment boundaries:
+
    ```bash
    # Enforce max 20% of total GPU memory per session
    export CUDA_MPS_PINNED_DEVICE_MEM_LIMIT=0:2000M
    export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
    ```
+
 3. **Outcome:**
    Multiple sessions can execute neural network training and GPU-accelerated workloads concurrently on a single physical GPU without memory collisions.

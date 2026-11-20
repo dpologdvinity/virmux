@@ -1,11 +1,12 @@
 # Virmux — System Design Specification
+
 ## 01. Memory Multiplexing Subsystem
 
 ### 1. Architectural Objective
 
 The Memory Subsystem enables 10–30 heavy sessions to run concurrently within a constrained memory footprint (e.g., 15 GB total WSL RAM) without triggering Linux Out-Of-Memory (OOM) kills or physical disk swapping. It transforms physical RAM into an elastic, deduplicated, and compressed pool.
 
-```
+```text
 +-------------------------------------------------------------------------+
 |                        Active Physical DRAM (15 GB)                     |
 |                                                                         |
@@ -33,9 +34,11 @@ The Memory Subsystem enables 10–30 heavy sessions to run concurrently within a
 ### 2. Kernel Samepage Merging (KSM) Integration
 
 #### The Problem
+
 When 12 terminal sessions launch Python runtimes, Node.js, GCC, or headless Chromium, each process independently loads the identical executable binaries, dynamic link libraries (`libc.so`, `libpython.so`, `libnode.so`), and runtime heap initialization structures. This duplicates hundreds of megabytes of identical memory pages across sessions.
 
 #### The Implementation
+
 `virmux` interfaces with the Linux kernel KSM subsystem via `/sys/kernel/mm/ksm/`:
 
 1. **Host Configuration & Tuning:**
@@ -47,10 +50,12 @@ When 12 terminal sessions launch Python runtimes, Node.js, GCC, or headless Chro
 
 2. **Proactive Page Registration:**
    For processes spawned under `virmux`, the `virmux` preload library (`libvirmux_intercept.so`) flags anonymous memory allocations as merge candidates:
+
    ```c
    /* Intercepted or wrapper hook in child runtime */
    madvise(addr, length, MADV_MERGEABLE);
    ```
+
    This directs the kernel scanner specifically to identical runtime heaps without wasting CPU cycles scanning random binary buffers.
 
 3. **Metrics Telemetry:**
@@ -63,9 +68,11 @@ When 12 terminal sessions launch Python runtimes, Node.js, GCC, or headless Chro
 ### 3. Proactive Heap Compaction via `process_madvise(2)`
 
 #### The Problem
+
 When a session finishes a heavy tool command (e.g. running a test suite or model training step) and transitions to waiting for user input or an API network response, its allocated heap remains resident in physical RAM. Traditional Linux memory reclamation (`kswapd`) is reactive: it only reclaims memory when total system memory pressure is critically high.
 
 #### The Implementation
+
 `virmux` uses the Linux 5.10+ `process_madvise(2)` syscall to actively instruct the kernel to evict or compress memory for specific target processes:
 
 ```c
@@ -111,7 +118,7 @@ int virmux_memory_reclaim_pid(int pidfd) {
 
 Each `virmux` session runs inside a dedicated cgroup v2 slice under `/sys/fs/cgroup/virmux.slice/session-<id>/`.
 
-```
+```text
 /sys/fs/cgroup/virmux.slice/
 ├── cgroup.subtree_control ("cpu memory io")
 ├── session-1/
@@ -132,10 +139,13 @@ Each `virmux` session runs inside a dedicated cgroup v2 slice under `/sys/fs/cgr
 ### 6. Post-Execution Page Cache Cleanse (`posix_fadvise`)
 
 #### The Problem
+
 Build tools and compilers (`gcc`, `rustc`, `cmake`, `npm`) read and write thousands of intermediate files (`.o`, `.a`, `.tmp`). The Linux kernel caches every single page read and written in the Page Cache (`buff/cache`). In a 15GB RAM system, page cache rapidly consumes 7–8 GB of RAM, triggering artificial memory pressure.
 
 #### The Implementation
+
 Upon completion of a build or command within a session sandbox:
+
 ```c
 void virmux_cache_purge_path(const char *dir_path) {
     /* Walk directory tree of workspace scratch area */
@@ -148,4 +158,5 @@ void virmux_cache_purge_path(const char *dir_path) {
     }
 }
 ```
+
 This guarantees physical RAM is returned to the available pool the moment a compilation or test run completes.

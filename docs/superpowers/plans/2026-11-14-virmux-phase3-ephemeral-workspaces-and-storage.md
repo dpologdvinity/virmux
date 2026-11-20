@@ -32,6 +32,7 @@
 ### Task 1: SHA-256 Hashing & Content-Addressable Storage (CAS)
 
 **Files:**
+
 - Create: `include/virmux/sha256.hpp`
 - Create: `include/virmux/cas.hpp`
 - Create: `src/storage/sha256.cpp`
@@ -40,6 +41,7 @@
 - Modify: `meson.build`
 
 **Interfaces:**
+
 ```cpp
 namespace virmux {
 
@@ -105,12 +107,14 @@ class CasStore {
 ### Task 2: In-Memory Scratch Space & Environment Redirection
 
 **Files:**
+
 - Create: `include/virmux/scratch.hpp`
 - Create: `src/storage/scratch.cpp`
 - Create: `tests/unit/test_scratch.cpp`
 - Modify: `meson.build`
 
 **Interfaces:**
+
 ```cpp
 namespace virmux {
 
@@ -163,12 +167,14 @@ class ScratchWorkspace {
 ### Task 3: Ephemeral OverlayFS Mount Namespace Controller
 
 **Files:**
+
 - Create: `include/virmux/overlay.hpp`
 - Create: `src/storage/overlay.cpp`
 - Create: `tests/unit/test_overlay.cpp`
 - Modify: `meson.build`
 
 **Interfaces:**
+
 ```cpp
 namespace virmux {
 
@@ -232,12 +238,14 @@ class OverlayWorkspace {
 ### Task 4: Sandbox Integration & Execution in Overlay Workspace
 
 **Files:**
+
 - Modify: `include/virmux/sandbox.hpp`
 - Modify: `src/core/sandbox.cpp`
 - Create: `tests/unit/test_sandbox_overlay.cpp`
 - Modify: `meson.build`
 
 **Requirements:**
+
 - Update `SandboxConfig` to support:
   - `bool ephemeral{false};`
   - `std::string workspace_dir;`
@@ -278,6 +286,7 @@ class OverlayWorkspace {
 ### Task 5: CLI Subcommands `virmux cas` and `virmux run --ephemeral`
 
 **Files:**
+
 - Modify: `cli/main.cpp`
 - Create: `include/virmux/cli_cas.hpp`
 - Create: `src/cli/cli_cas.cpp`
@@ -285,6 +294,7 @@ class OverlayWorkspace {
 - Modify: `meson.build`
 
 **Requirements:**
+
 - Update `virmux run` argument parser:
   - `--ephemeral`: sets `cfg.ephemeral = true`.
   - `--workspace <path>`: sets `cfg.workspace_dir = path`.
@@ -315,10 +325,12 @@ class OverlayWorkspace {
 ### Task 6: End-to-End Integration Suite & Storage Verification
 
 **Files:**
+
 - Create: `tests/integration/test_ephemeral_workspaces.sh`
 - Modify: `meson.build`
 
 **Requirements:**
+
 - Integration test script verifying:
   1. `virmux run --ephemeral --workspace /tmp/base -- touch new_file.txt`:
      - Verifies `new_file.txt` is NOT present in `/tmp/base` after command exit.

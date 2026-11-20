@@ -5,6 +5,7 @@
 **Goal:** Implement the "12-Terminal Gauntlet" benchmark engine, synthetic workload generators, real-time input-lag PTY latency sampler, and telemetry reporter (`virmux bench run`, `virmux bench report`) comparing unmanaged baseline against Virmux-managed execution.
 
 **Architecture:**
+
 - High-frequency telemetry sampler captures host memory, swap, KSM deduplication, and task status.
 - PTY input-latency probe runs on Core 0–1 measuring interactive shell latency every 50ms.
 - 12 synthetic workload generators emulate 4x Browser (DOM/JS memory allocation), 4x Compiler (multi-threaded CPU burst), 2x Model (tensor math), and 2x Build (I/O streaming).
@@ -15,12 +16,14 @@
 **Spec:** `docs/specs/07-TESTING-AND-BENCHMARKS.md`
 
 ## Global Constraints
+
 - Linux kernel 5.10+ standard operation without requiring root.
 - C++20 standard; `-Wall -Wextra -Wpedantic -Werror` clean.
 - Never write or commit absolute home paths (`/home/<username>/`), always use `~` or `$HOME`.
 - Conventional commits (`feat:`, `fix:`, `test:`, `docs:`, `chore:`).
 
 ## Review Focus
+
 1. Benchmark worker termination: Ensure all child processes in the 12-terminal gauntlet are cleanly terminated even on early abort (`SIGINT`/`SIGTERM`).
 2. Telemetry sampler thread safety: Concurrent access between background sampling thread and report aggregator.
 3. Input lag probe accuracy: PTY round-trip measurement using monotonic high-resolution clock (`std::chrono::steady_clock`).

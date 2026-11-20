@@ -1,4 +1,5 @@
 # Virmux — System Design Specification
+
 ## 00. Overview & Core Architecture
 
 ### 1. Executive Summary
@@ -7,7 +8,7 @@
 
 While traditional terminal multiplexers like `tmux` multiplex screen real estate and input streams, `virmux` multiplexes physical hardware resources: CPU cores, cache hierarchies, physical DRAM, swap, and disk I/O. It enables developers and automated agent swarms to run 10–30 concurrent, heavy workloads (e.g., headless browser test suites, C++/Rust compilations, model training, Docker builds, Blender rendering) on a single workstation or laptop without system lag, scheduler thrashing, or Out-Of-Memory (OOM) crashes.
 
-```
+```text
 +-----------------------------------------------------------------------+
 |                       virmux CLI & TUI Interface                      |
 |       virmux run <cmd>  |  virmux sh  |  virmux top  |  virmux attach  |
@@ -34,11 +35,13 @@ While traditional terminal multiplexers like `tmux` multiplex screen real estate
 ### 2. The Core Problem: Why Systems Collapse Under Multi-Tenant Local Workloads
 
 Modern development tools are engineered to be greedy. When a tool initializes, it inspects host hardware capacity:
+
 1. **Thread Spawning:** `nproc`, `os.cpu_count()`, and `sysconf(_SC_NPROCESSORS_ONLN)` report the total logical core count (e.g., 12 cores). Test runners (`playwright`, `pytest -n auto`, `vitest`), build systems (`cmake`, `ninja`, `make`, `cargo`), and runtime thread pools (`libgomp`, `OpenBLAS`, `MKL`, PyTorch) spawn 12 worker processes or threads by default.
 2. **Buffer Allocation:** Runtimes inspect `MemTotal` from `/proc/meminfo` and tune garbage collection thresholds and internal allocation arenas for the entire machine.
 3. **GPU Domination:** Frameworks like PyTorch preallocate up to 90% of total VRAM through the CUDA caching allocator on startup.
 
 When 10–20 independent terminal sessions or autonomous agents run simultaneously on a 12-core, 16GB machine:
+
 - **120+ active worker threads** fight for 12 physical execution units.
 - **Cache Invalidation:** Constant context-switching evicts L1/L2/L3 caches, dropping CPU instruction throughput by up to 80%.
 - **Memory Thrashing:** Total memory demand surges to 30–50 GB, overflowing RAM and saturating swap. In WSL, this manifests as total host lockup under the `vmmem` process.
@@ -51,7 +54,7 @@ When 10–20 independent terminal sessions or autonomous agents run simultaneous
 `virmux` solves this by introducing four coordinated subsystems:
 
 | Subsystem | Key Mechanisms | Outcome |
-|---|---|---|
+| --- | --- | --- |
 | **Memory Packing** | KSM deduplication, `zram` compression, `process_madvise(MADV_PAGEOUT)`, `posix_fadvise` cache flush | Multiplies effective RAM by 3×–4×; eliminates swap thrashing |
 | **CPU Multiplexing** | `cpuset.cpus` core shielding, Admission Control token bucket, `cgroup.freeze` on I/O wait, `SCHED_IDLE` | Eliminates scheduler thrashing; keeps interactive shell 100% fluid |
 | **Storage Virtualization** | Ephemeral OverlayFS workspaces, shared tmpfs, content-addressable build cache (CAS) | 12 full workspaces share 1 disk footprint; zero duplicate compilations |
@@ -71,7 +74,7 @@ When 10–20 independent terminal sessions or autonomous agents run simultaneous
 
 ### 5. Architectural Directory Layout
 
-```
+```text
 virmux/
 ├── docs/
 │   └── specs/

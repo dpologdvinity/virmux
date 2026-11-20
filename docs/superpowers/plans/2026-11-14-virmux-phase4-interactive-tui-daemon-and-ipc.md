@@ -9,6 +9,7 @@
 **Tech Stack:** C++20, Linux Unix Domain Sockets (`AF_UNIX`), Ncurses (`libncursesw`), Linux cgroups v2 (`cgroup.freeze`), procfs (`/proc/<pid>/stat`, `/proc/<pid>/status`, `/proc/<pid>/smaps_rollup`), Unity test framework, Meson build system, Bash integration testing.
 
 **Spec:**
+
 - `docs/specs/06-CLI-AND-TUI-SPEC.md`
 - `docs/specs/05-FAULT-ISOLATION-LIFECYCLE.md`
 - `docs/specs/02-CPU-SCHEDULING-SUBSYSTEM.md`
@@ -43,12 +44,14 @@
 ### Task 1: IPC Protocol, Binary TLV Framing & Socket Transport
 
 **Files:**
+
 - Create: `include/virmux/ipc.hpp`
 - Create: `src/ipc/ipc.cpp`
 - Create: `tests/unit/test_ipc.cpp`
 - Modify: `meson.build`
 
 **Requirements:**
+
 - Define `IpcHeader` (packed 12 bytes):
   - `magic` (uint32_t): `0x564D5558` (`"VMUX"`).
   - `version` (uint16_t): `1`.
@@ -99,12 +102,14 @@
 ### Task 2: Session Registry & Lifecycle Controller
 
 **Files:**
+
 - Create: `include/virmux/session.hpp`
 - Create: `src/daemon/session.cpp`
 - Create: `tests/unit/test_session.cpp`
 - Modify: `meson.build`
 
 **Requirements:**
+
 - Define `SessionState`:
   - `INITIALIZING`, `RUNNING_BURST`, `RUNNING_NORMAL`, `WAITING_IO`, `FROZEN`, `DEAD`.
 - Define `SessionInfo`:
@@ -150,12 +155,14 @@
 ### Task 3: Supervisor Daemon Server
 
 **Files:**
+
 - Create: `include/virmux/daemon.hpp`
 - Create: `src/daemon/daemon.cpp`
 - Create: `tests/unit/test_daemon.cpp`
 - Modify: `meson.build`
 
 **Requirements:**
+
 - Implement `SupervisorDaemon`:
   - Manages Unix socket listener (`AF_UNIX`, `SOCK_STREAM`, `listen()`).
   - Stale socket detection: tests connecting to existing socket. If connection fails (`ECONNREFUSED` or `ENOENT`), unlinks stale socket before binding.
@@ -192,6 +199,7 @@
 ### Task 4: CLI Control Subcommands & Sandbox Registration
 
 **Files:**
+
 - Modify: `cli/main.cpp`
 - Create: `include/virmux/cli_daemon.hpp`
 - Create: `src/cli/cli_daemon.cpp`
@@ -200,6 +208,7 @@
 - Modify: `meson.build`
 
 **Requirements:**
+
 - Implement CLI subcommands:
   - `virmux daemon [--foreground]`: runs supervisor daemon process.
   - `virmux list [--json]`: connects to daemon, queries session list, outputs ASCII table or JSON.
@@ -230,6 +239,7 @@
 ### Task 5: Interactive TUI Dashboard (`virmux top`) with Ncurses
 
 **Files:**
+
 - Create: `include/virmux/tui.hpp`
 - Create: `src/tui/tui.cpp`
 - Create: `tests/unit/test_tui.cpp`
@@ -237,6 +247,7 @@
 - Modify: `meson.build`
 
 **Requirements:**
+
 - Dependency: Link `ncursesw` via Meson `dependency('ncursesw')`.
 - Implement `VirmuxTui`:
   - Initializes curses mode (`initscr()`, `raw()`, `noecho()`, `keypad()`, `curs_set(0)`).
@@ -282,10 +293,12 @@
 ### Task 6: End-to-End Integration Suite & System Verification
 
 **Files:**
+
 - Create: `tests/integration/test_daemon_tui.sh`
 - Modify: `meson.build`
 
 **Requirements:**
+
 - Automated integration script (`test_daemon_tui.sh`):
   - Starts background `virmux daemon` with custom `VIRMUX_SOCKET`.
   - Tests `virmux list` and `virmux list --json` when no sessions are active.
@@ -308,6 +321,7 @@
 ---
 
 ## Execution Order
+
 1. Task 1: IPC Protocol, Binary TLV Framing & Socket Transport
 2. Task 2: Session Registry & Lifecycle Controller
 3. Task 3: Supervisor Daemon Server

@@ -1,4 +1,5 @@
 # Virmux — System Design Specification
+
 ## 07. Testing, Verification & Benchmark Strategy
 
 ### 1. Architectural Objective
@@ -9,7 +10,7 @@ Because `virmux` interfaces directly with Linux kernel subsystems (cgroups v2, K
 
 ### 2. Testing Pyramid
 
-```
+```text
                 / \
                /   \     End-to-End Stress Matrix (12-terminal concurrent loads)
               /-----\
@@ -24,6 +25,7 @@ Because `virmux` interfaces directly with Linux kernel subsystems (cgroups v2, K
 ### 3. Unit Test Suite (Unity Framework in C)
 
 Located in `tests/unit/`:
+
 1. **`test_admission_gate.c`:**
    - Tests thread-safe ticket acquisition and release.
    - Tests FIFO ordering when `active_heavy == max_concurrent`.
@@ -41,6 +43,7 @@ Located in `tests/unit/`:
 ### 4. Integration Verification Suite
 
 Located in `tests/integration/`:
+
 1. **`test_cgroup_lifecycle.sh`:**
    - Spawns a dummy process in a test cgroup.
    - Verifies `cgroup.freeze` halts CPU consumption to 0%.
@@ -63,6 +66,7 @@ Located in `bench/`:
 `virmux-bench` runs a standardized 12-terminal stress test to measure real-world performance gains:
 
 #### Benchmark Protocol: The "12-Terminal Gauntlet"
+
 - **Workload:**
   - 4 sessions running `npx playwright test` (headless Chromium).
   - 4 sessions running CMake C++ compilations (`make -j`).
@@ -73,8 +77,9 @@ Located in `bench/`:
   2. **Virmux Managed:** Running all 12 tasks under `virmux`.
 
 #### Key Metrics Tracked
+
 | Metric | Expected Baseline | Expected With Virmux |
-|---|---|---|
+| --- | --- | --- |
 | **Peak Host RAM (RSS)** | 28+ GB (100% swap saturation, thrashing) | **<10 GB** (KSM + zram active) |
 | **Host Terminal Input Lag** | >800 ms (unusable UI freeze) | **<5 ms** (Core 0-1 shielding) |
 | **Total Wall-Clock Completion** | 185 seconds (cache thrashing penalty) | **52 seconds** (Admission gate) |

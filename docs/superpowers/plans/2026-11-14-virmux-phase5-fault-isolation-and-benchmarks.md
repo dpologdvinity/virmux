@@ -5,6 +5,7 @@
 **Goal:** Implement deterministic Linux OOM priority hierarchy (`oom_score_adj`), fork-bomb protection (`pids.max` & `RLIMIT_NPROC`), inactivity auto-freeze with heap pageout, and experimental session checkpointing (`virmux checkpoint` / `restore`).
 
 **Architecture:**
+
 1. The supervisor daemon marks itself protected against kernel OOM kills (`oom_score_adj = -900`).
 2. Sandboxed worker children are marked sacrificial (`oom_score_adj = +800`) before `execvp` so kernel OOM terminates greedy leaf tasks first.
 3. Cgroup v2 `pids.max` and `RLIMIT_NPROC` ceilings contain fork-bombs from exhausting the host process table.

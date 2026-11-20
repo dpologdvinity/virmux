@@ -78,6 +78,7 @@ sudo add-apt-repository -y ppa:criu/ppa && sudo apt update && sudo apt install -
    _Detects:_ Use-after-free, buffer overflows, memory leaks, and stack misalignment with zero false positives at near-native speed.
 
 2. **Valgrind Memcheck (Deep auditing):**
+
    ```bash
    valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes \
        ./build/virmux run -- /bin/echo "test"

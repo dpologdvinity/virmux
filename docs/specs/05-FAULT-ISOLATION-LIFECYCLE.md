@@ -1,11 +1,12 @@
 # Virmux — System Design Specification
+
 ## 05. Fault Isolation & Lifecycle Management Subsystem
 
 ### 1. Architectural Objective
 
 The Fault Isolation Subsystem ensures deterministic blast-radius containment. If a runaway process leaks 50 GB of memory, executes a fork-bomb, or triggers a fatal segmentation fault in Session 1, **it must never crash Session 2, the `virmux` supervisor, or the host desktop environment**.
 
-```
+```text
 +-------------------------------------------------------------------------+
 |                  Linux Kernel OOM Killer Priority Hierarchy             |
 |                                                                         |
@@ -28,13 +29,16 @@ The Fault Isolation Subsystem ensures deterministic blast-radius containment. If
 ### 2. Deterministic OOM Killer Shielding (`oom_score_adj`)
 
 #### The Problem
+
 When the Linux kernel runs out of physical memory and swap, the Out-Of-Memory (OOM) killer selects a victim using a heuristic (`badness` score). In unmanaged systems, the OOM killer frequently chooses the largest process by RSS—which is often the user's IDE, browser, or X server—killing the entire desktop and destroying unsaved work.
 
 #### The Implementation
+
 `virmux` explicitly configures `/proc/<pid>/oom_score_adj` for every process in its hierarchy:
 
 1. **Host & Supervisor Immunity:**
    The `virmux` supervisor process marks itself protected:
+
    ```c
    void virmux_protect_self(void) {
        int fd = open("/proc/self/oom_score_adj", O_WRONLY);
@@ -44,8 +48,10 @@ When the Linux kernel runs out of physical memory and swap, the Out-Of-Memory (O
        }
    }
    ```
+
 2. **Worker Sacrificial Priority:**
    When spawning a command sandbox, `virmux` writes a positive score to the child's `oom_score_adj` before executing `execve`:
+
    ```c
    void virmux_set_worker_oom_score(pid_t child_pid) {
        char path[64];
@@ -57,6 +63,7 @@ When the Linux kernel runs out of physical memory and swap, the Out-Of-Memory (O
        }
    }
    ```
+
 3. **Outcome:**
    If a Playwright test or model script leaks memory, the kernel terminates **only that specific leaf process**. The parent session receives a clean `SIGCHLD`, logs an out-of-memory error code, and the other 11 sessions continue running undisturbed.
 
@@ -66,7 +73,7 @@ When the Linux kernel runs out of physical memory and swap, the Out-Of-Memory (O
 
 Each session managed by `virmux` transitions through a deterministic state machine:
 
-```
+```text
                   +-------------------------+
                   |       INITIALIZING      |
                   +------------+------------+
@@ -109,9 +116,11 @@ Each session managed by `virmux` transitions through a deterministic state machi
 > **Note:** CRIU checkpoint/restore is an experimental feature enabled via `virmux checkpoint --experimental <session-id>`. It requires root capabilities (`CAP_SYS_ADMIN`) and kernel support. Standard `virmux` operation does not depend on CRIU.
 
 #### The Problem
+
 A user is running a multi-hour model training task or large simulation in Session 1, but urgently needs to run an intensive full-suite test in Session 2 that requires maximum physical RAM.
 
 #### The Implementation
+
 `virmux` integrates with **CRIU (Checkpoint/Restore In Userspace)**:
 
 1. **`virmux checkpoint <session-id>`:**

@@ -32,6 +32,6 @@ bash scripts/doctor.sh
 
 ## Relevant Logs & Stack Traces
 
-```
+```text
 Paste any relevant output, daemon logs, or terminal traces here
 ```
