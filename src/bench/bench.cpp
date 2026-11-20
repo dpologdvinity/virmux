@@ -11,6 +11,7 @@
 #include <pty.h>
 #include <sched.h>
 #include <signal.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
@@ -1504,6 +1505,141 @@ std::vector<BenchmarkTaskConfig> BenchmarkRunner::build_tasks(
   return tasks;
 }
 
+namespace {
+
+/**
+ * @brief A workload process forked ahead of time and parked until released.
+ *
+ * @ref start_fd is the runner's end of a socket pair: sending one byte lets
+ * the child run its workload; closing it without sending cancels the task
+ * (the child exits 0 without doing any work).
+ */
+struct ParkedTask {
+  pid_t pid{-1};
+  int start_fd{-1};
+};
+
+/**
+ * @brief Body of a parked workload child: wait for release, then run.
+ * @return Process exit status.
+ */
+int run_parked_task(const BenchmarkTaskConfig& task, bool managed,
+                    int start_fd) {
+  // Own process group so reap_children() can kill the whole workload tree.
+  ::setpgid(0, 0);
+
+  char go = 0;
+  ssize_t n = 0;
+  do {
+    n = ::read(start_fd, &go, 1);
+  } while (n < 0 && errno == EINTR);
+  ::close(start_fd);
+  if (n != 1) {
+    return 0;  // Cancelled before admission.
+  }
+
+  if (managed) {
+    set_worker_oom_score(0);
+
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    long ncores = sysconf(_SC_NPROCESSORS_ONLN);
+    if (ncores > 2) {
+      for (long c = 2; c < ncores; ++c) {
+        CPU_SET(c, &cpuset);
+      }
+      sched_setaffinity(0, sizeof(cpuset), &cpuset);
+    } else if (ncores == 2) {
+      CPU_SET(1, &cpuset);
+      sched_setaffinity(0, sizeof(cpuset), &cpuset);
+    }
+  }
+
+  return run_synthetic_workload(task.type, task.duration_seconds,
+                                task.target_alloc_mb, nullptr);
+}
+
+/**
+ * @brief Forks one parked workload process per task.
+ *
+ * Must run before the suite starts any thread. Workload children allocate
+ * memory and (compiler workload) start threads without exec'ing; after a
+ * fork() from a multi-threaded process, any lock another thread held at fork
+ * time (allocator, stdio, runtime internals) would stay locked forever in the
+ * child, and ThreadSanitizer refuses to start threads there at all. Forking
+ * everything up front from a single thread avoids that, while parking keeps
+ * the admission-gate semantics: a task's workload starts only when its worker
+ * thread releases it.
+ *
+ * @return One entry per task; entries with pid -1 failed to launch.
+ */
+std::vector<ParkedTask> fork_parked_tasks(
+    const std::vector<BenchmarkTaskConfig>& tasks, bool managed) {
+  std::vector<ParkedTask> parked(tasks.size());
+  std::vector<int> child_fds(tasks.size(), -1);
+  for (size_t i = 0; i < tasks.size(); ++i) {
+    int fds[2];
+    if (::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds) == 0) {
+      parked[i].start_fd = fds[0];
+      child_fds[i] = fds[1];
+    }
+  }
+
+  for (size_t i = 0; i < tasks.size(); ++i) {
+    if (child_fds[i] < 0) {
+      continue;
+    }
+    pid_t pid = ::fork();
+    if (pid == 0) {
+      // Keep only this task's end; release every other inherited socket so
+      // cancellation (runner closing its end) is observed as EOF.
+      for (size_t j = 0; j < tasks.size(); ++j) {
+        if (parked[j].start_fd >= 0) {
+          ::close(parked[j].start_fd);
+        }
+        if (j != i && child_fds[j] >= 0) {
+          ::close(child_fds[j]);
+        }
+      }
+      ::_exit(run_parked_task(tasks[i], managed, child_fds[i]));
+    }
+    ::close(child_fds[i]);
+    child_fds[i] = -1;
+    if (pid < 0) {
+      ::close(parked[i].start_fd);
+      parked[i].start_fd = -1;
+      continue;
+    }
+    // Also set the group from the parent so a kill(-pid) issued before the
+    // child runs its own setpgid() still reaches it.
+    ::setpgid(pid, pid);
+    parked[i].pid = pid;
+  }
+
+  for (auto& slot : parked) {
+    if (slot.pid < 0 && slot.start_fd >= 0) {
+      ::close(slot.start_fd);
+      slot.start_fd = -1;
+    }
+  }
+  return parked;
+}
+
+/** @brief Cancels a parked task that was never released and reaps it. */
+void cancel_parked_task(ParkedTask& slot) {
+  if (slot.start_fd >= 0) {
+    ::close(slot.start_fd);
+    slot.start_fd = -1;
+  }
+  if (slot.pid > 0) {
+    while (::waitpid(slot.pid, nullptr, 0) < 0 && errno == EINTR) {
+    }
+    slot.pid = -1;
+  }
+}
+
+}  // namespace
+
 BenchmarkResult BenchmarkRunner::execute_suite(
     const std::vector<BenchmarkTaskConfig>& tasks, bool managed,
     int duration_sec) {
@@ -1521,6 +1657,18 @@ BenchmarkResult BenchmarkRunner::execute_suite(
     std::lock_guard<std::mutex> lock(pids_mutex_);
     active_pids_.clear();
   }
+
+  // Fork every workload process now, before this suite starts any thread
+  // (telemetry, probe, workers); see fork_parked_tasks().
+  std::vector<ParkedTask> parked = fork_parked_tasks(tasks, managed);
+  struct ParkedCleaner {
+    std::vector<ParkedTask>& slots;
+    ~ParkedCleaner() {
+      for (auto& slot : slots) {
+        cancel_parked_task(slot);
+      }
+    }
+  } parked_cleaner{parked};
 
   InputLatencyProbe probe;
   TelemetrySampler telemetry;
@@ -1544,10 +1692,18 @@ BenchmarkResult BenchmarkRunner::execute_suite(
   std::vector<std::thread> workers;
   workers.reserve(tasks.size());
 
-  for (const auto& task : tasks) {
-    workers.emplace_back([this, task, managed, &gate, &telemetry,
+  for (size_t task_idx = 0; task_idx < tasks.size(); ++task_idx) {
+    const BenchmarkTaskConfig& task = tasks[task_idx];
+    ParkedTask& slot = parked[task_idx];
+    workers.emplace_back([this, task, managed, &slot, &gate, &telemetry,
                           &success_count, &failed_count, &oom_count]() {
+      if (slot.pid < 0) {
+        failed_count++;  // The workload process could not be launched.
+        return;
+      }
+
       if (stop_flag_.load(std::memory_order_relaxed)) {
+        cancel_parked_task(slot);
         return;
       }
 
@@ -1562,49 +1718,27 @@ BenchmarkResult BenchmarkRunner::execute_suite(
         }
       }
 
-      if (stop_flag_.load(std::memory_order_relaxed)) {
-        return;
-      }
-
-      pid_t pid = ::fork();
-      if (pid < 0) {
-        failed_count++;
-        return;
-      }
-
-      if (pid == 0) {
-        ::setpgid(0, 0);
-
-        if (managed) {
-          set_worker_oom_score(0);
-
-          cpu_set_t cpuset;
-          CPU_ZERO(&cpuset);
-          long ncores = sysconf(_SC_NPROCESSORS_ONLN);
-          if (ncores > 2) {
-            for (long c = 2; c < ncores; ++c) {
-              CPU_SET(c, &cpuset);
-            }
-            sched_setaffinity(0, sizeof(cpuset), &cpuset);
-          } else if (ncores == 2) {
-            CPU_SET(1, &cpuset);
-            sched_setaffinity(0, sizeof(cpuset), &cpuset);
-          }
-        }
-
-        int rc = run_synthetic_workload(task.type, task.duration_seconds,
-                                        task.target_alloc_mb, nullptr);
-        ::_exit(rc);
-      }
-
+      const pid_t pid = slot.pid;
+      bool registered = false;
       {
+        // Register under the lock so a concurrent reap_children() either
+        // sees the pid (and kills it) or we observe the stop and cancel.
         std::lock_guard<std::mutex> lock(pids_mutex_);
-        if (stop_flag_.load(std::memory_order_relaxed)) {
-          ::kill(-pid, SIGKILL);
-          ::kill(pid, SIGKILL);
+        if (!stop_flag_.load(std::memory_order_relaxed)) {
+          active_pids_.push_back(pid);
+          registered = true;
         }
-        active_pids_.push_back(pid);
       }
+      if (!registered) {
+        cancel_parked_task(slot);
+        return;
+      }
+
+      // Admitted: release the parked workload process.
+      const char go = '1';
+      (void)::send(slot.start_fd, &go, 1, MSG_NOSIGNAL);
+      ::close(slot.start_fd);
+      slot.start_fd = -1;
       telemetry.add_target_pid(pid);
 
       int status = 0;
@@ -1616,6 +1750,7 @@ BenchmarkResult BenchmarkRunner::execute_suite(
       }
 
       if (wr > 0) {
+        slot.pid = -1;  // Reaped; nothing left for ParkedCleaner.
         std::lock_guard<std::mutex> lock(pids_mutex_);
         auto it = std::find(active_pids_.begin(), active_pids_.end(), pid);
         if (it != active_pids_.end()) {

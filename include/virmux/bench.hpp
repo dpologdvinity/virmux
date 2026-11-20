@@ -417,6 +417,12 @@ struct BenchmarkComparison {
 /**
  * @brief Benchmark runner orchestrating synthetic workload tasks in baseline
  * and managed modes.
+ *
+ * Each suite forks its workload processes (which run without exec'ing) before
+ * starting any of its own threads, so call the run_* methods from a thread
+ * that is the only one in the process. Cancel via request_stop() from a
+ * signal handler (as the CLI does) rather than from a helper thread that is
+ * alive while a suite starts.
  */
 class BenchmarkRunner {
  public:

@@ -8,8 +8,16 @@ extern "C" {
 #include "unity/unity.h"
 }
 
+#include <fcntl.h>
+#include <pthread.h>
+#include <sys/time.h>
+#include <unistd.h>
+
+#include <atomic>
 #include <cmath>
+#include <csignal>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
@@ -17,11 +25,63 @@ extern "C" {
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "virmux/bench.hpp"
 #include "virmux/cli_bench.hpp"
 #include "virmux/cli_parse.hpp"
+
+namespace {
+
+/// When set, the pthread_atfork() prepare handler records thread counts.
+std::atomic<bool> g_track_fork_threads{false};
+/// Highest thread count observed in this process at any fork() call.
+std::atomic<long> g_max_threads_at_fork{0};
+/// Number of fork() calls observed while tracking.
+std::atomic<int> g_forks_observed{0};
+
+/** @brief Reads "Threads:" from /proc/self/status (0 if unavailable). */
+long current_thread_count() {
+  int fd = ::open("/proc/self/status", O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return 0;
+  }
+  char buf[4096];
+  ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
+  ::close(fd);
+  if (n <= 0) {
+    return 0;
+  }
+  buf[n] = '\0';
+  const char* line = std::strstr(buf, "Threads:");
+  return line != nullptr ? std::strtol(line + 8, nullptr, 10) : 0;
+}
+
+void record_threads_at_fork() {
+  if (!g_track_fork_threads.load(std::memory_order_relaxed)) {
+    return;
+  }
+  g_forks_observed.fetch_add(1, std::memory_order_relaxed);
+  long threads = current_thread_count();
+  long prev = g_max_threads_at_fork.load(std::memory_order_relaxed);
+  while (threads > prev &&
+         !g_max_threads_at_fork.compare_exchange_weak(prev, threads)) {
+  }
+}
+
+/// Runner targeted by the SIGALRM handler in the cancellation test.
+std::atomic<virmux::BenchmarkRunner*> g_alarm_runner{nullptr};
+
+void stop_runner_on_alarm(int /*sig*/) {
+  virmux::BenchmarkRunner* runner =
+      g_alarm_runner.load(std::memory_order_relaxed);
+  if (runner != nullptr) {
+    runner->request_stop();
+  }
+}
+
+}  // namespace
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -470,17 +530,27 @@ void test_runner_stop_cancellation(void) {
 
   auto start_time = std::chrono::steady_clock::now();
 
-  std::thread stopper([&runner]() {
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    runner.stop();
-  });
+  // Cancel the way the CLI does (signal handler -> request_stop()) rather than
+  // from a helper thread: the runner forks its workload processes, and a
+  // fork() from a multi-threaded process leaves the children in an undefined
+  // state whenever they allocate or start threads.
+  struct sigaction sa{};
+  struct sigaction old_alrm{};
+  sa.sa_handler = stop_runner_on_alarm;
+  sigemptyset(&sa.sa_mask);
+  TEST_ASSERT_EQUAL_INT(0, ::sigaction(SIGALRM, &sa, &old_alrm));
+  g_alarm_runner.store(&runner);
+  struct itimerval fire_once{};
+  fire_once.it_value.tv_usec = 50 * 1000;
+  TEST_ASSERT_EQUAL_INT(0, ::setitimer(ITIMER_REAL, &fire_once, nullptr));
 
-  // Request 10-second run; should abort early via runner.stop()
+  // Request 10-second run; should abort early via request_stop()
   auto result = runner.run_baseline(10, 2);
 
-  if (stopper.joinable()) {
-    stopper.join();
-  }
+  struct itimerval disarm{};
+  ::setitimer(ITIMER_REAL, &disarm, nullptr);
+  g_alarm_runner.store(nullptr);
+  ::sigaction(SIGALRM, &old_alrm, nullptr);
 
   auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::steady_clock::now() - start_time)
@@ -488,6 +558,42 @@ void test_runner_stop_cancellation(void) {
 
   // Run should have aborted well before 10 seconds (typically < 1000ms)
   TEST_ASSERT_TRUE(elapsed_ms < 3000);
+}
+
+void test_runner_forks_workloads_while_single_threaded(void) {
+  // Workload children allocate memory and (compiler workload) start threads
+  // without exec'ing. That is only well-defined if they were forked while the
+  // runner process had a single thread; otherwise locks held by the runner's
+  // telemetry/worker threads at fork time stay locked forever in the child
+  // (and ThreadSanitizer aborts the child).
+  static bool handler_registered = false;
+  if (!handler_registered) {
+    TEST_ASSERT_EQUAL_INT(
+        0, ::pthread_atfork(record_threads_at_fork, nullptr, nullptr));
+    handler_registered = true;
+  }
+
+  // Sanitizer runtimes may keep internal helper threads (ThreadSanitizer
+  // starts one on the first pthread_create()). Spawn and join a thread first
+  // so any such helper already exists and is part of the baseline.
+  std::thread([] {}).join();
+  const long baseline_threads = current_thread_count();
+  TEST_ASSERT_TRUE(baseline_threads >= 1);
+
+  virmux::BenchmarkRunner runner(true /* quick */);
+  g_max_threads_at_fork.store(0);
+  g_forks_observed.store(0);
+  g_track_fork_threads.store(true);
+  // 4 tasks cover every workload type, including the threaded compiler one.
+  auto base_res = runner.run_baseline(1, 4);
+  auto mgd_res = runner.run_managed(1, 4);
+  g_track_fork_threads.store(false);
+
+  TEST_ASSERT_TRUE(g_forks_observed.load() >= 8);
+  // No thread of the runner itself may be alive at any fork.
+  TEST_ASSERT_EQUAL_INT(baseline_threads, g_max_threads_at_fork.load());
+  TEST_ASSERT_EQUAL_INT(4, base_res.successful_tasks);
+  TEST_ASSERT_EQUAL_INT(4, mgd_res.successful_tasks);
 }
 
 int main(void) {
@@ -505,5 +611,6 @@ int main(void) {
   RUN_TEST(test_quick_runner_execution);
   RUN_TEST(test_cli_run_and_report_file_roundtrip);
   RUN_TEST(test_runner_stop_cancellation);
+  RUN_TEST(test_runner_forks_workloads_while_single_threaded);
   return UNITY_END();
 }
