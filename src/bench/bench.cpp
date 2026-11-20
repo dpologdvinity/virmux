@@ -17,8 +17,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -838,6 +840,67 @@ std::string_view trim_ws(std::string_view s) {
   return s;
 }
 
+/**
+ * @brief Return the index just past the closing quote of the JSON string
+ * literal whose opening quote is at @p open, honouring backslash escapes.
+ * @return Index after the closing quote, or npos if unterminated.
+ */
+size_t skip_json_string(std::string_view json, size_t open) {
+  for (size_t i = open + 1; i < json.size(); ++i) {
+    if (json[i] == '\\') {
+      ++i;  // Skip the escaped character, whatever it is.
+    } else if (json[i] == '"') {
+      return i + 1;
+    }
+  }
+  return std::string_view::npos;
+}
+
+/**
+ * @brief Escape arbitrary bytes for embedding in a JSON string literal.
+ */
+std::string escape_json_string(std::string_view in) {
+  std::string out;
+  out.reserve(in.size() + 2);
+  for (const char c : in) {
+    switch (c) {
+      case '"':
+        out += "\\\"";
+        break;
+      case '\\':
+        out += "\\\\";
+        break;
+      case '\n':
+        out += "\\n";
+        break;
+      case '\r':
+        out += "\\r";
+        break;
+      case '\t':
+        out += "\\t";
+        break;
+      case '\b':
+        out += "\\b";
+        break;
+      case '\f':
+        out += "\\f";
+        break;
+      default:
+        if (static_cast<unsigned char>(c) < 0x20) {
+          char buf[8];
+          std::snprintf(
+              buf, sizeof(buf), "\\u%04x",
+              static_cast<unsigned int>(static_cast<unsigned char>(c)));
+          out += buf;
+        } else {
+          out += c;
+        }
+        break;
+    }
+  }
+  return out;
+}
+
 std::optional<std::string_view> extract_json_obj(std::string_view json,
                                                  std::string_view key) {
   std::string quoted = "\"" + std::string(key) + "\"";
@@ -857,7 +920,14 @@ std::optional<std::string_view> extract_json_obj(std::string_view json,
   size_t start = pos;
   int depth = 0;
   for (size_t i = start; i < json.size(); ++i) {
-    if (json[i] == '{') {
+    if (json[i] == '"') {
+      // Braces inside string values do not affect nesting depth.
+      size_t end = skip_json_string(json, i);
+      if (end == std::string_view::npos) {
+        return std::nullopt;
+      }
+      i = end - 1;
+    } else if (json[i] == '{') {
       depth++;
     } else if (json[i] == '}') {
       depth--;
@@ -884,12 +954,58 @@ std::string parse_str_field(std::string_view obj, std::string_view key,
   if (pos == std::string_view::npos) {
     return def;
   }
-  size_t val_start = pos + 1;
-  size_t val_end = obj.find('"', val_start);
-  if (val_end == std::string_view::npos) {
-    return def;
+  // Decode up to the first unescaped quote. Escapes mirror
+  // escape_json_string(): \u00XX decodes to the single byte XX; any other
+  // \uXXXX sequence is kept verbatim.
+  std::string val;
+  for (size_t i = pos + 1; i < obj.size(); ++i) {
+    const char c = obj[i];
+    if (c == '"') {
+      return val;
+    }
+    if (c != '\\') {
+      val += c;
+      continue;
+    }
+    if (++i >= obj.size()) {
+      break;
+    }
+    switch (obj[i]) {
+      case 'n':
+        val += '\n';
+        break;
+      case 'r':
+        val += '\r';
+        break;
+      case 't':
+        val += '\t';
+        break;
+      case 'b':
+        val += '\b';
+        break;
+      case 'f':
+        val += '\f';
+        break;
+      case 'u': {
+        unsigned int cp = 0;
+        const std::string_view hex = obj.substr(i + 1, 4);
+        const auto [ptr, ec] =
+            std::from_chars(hex.data(), hex.data() + hex.size(), cp, 16);
+        if (hex.size() == 4 && ec == std::errc() &&
+            ptr == hex.data() + hex.size() && cp <= 0xFF) {
+          val += static_cast<char>(cp);
+          i += 4;
+        } else {
+          val += "\\u";
+        }
+        break;
+      }
+      default:
+        val += obj[i];  // Covers \" \\ \/ and unknown escapes.
+        break;
+    }
   }
-  return std::string(obj.substr(val_start, val_end - val_start));
+  return def;  // Unterminated string literal.
 }
 
 double parse_double_field(std::string_view obj, std::string_view key,
@@ -1182,7 +1298,8 @@ std::string format_comparison_json(const BenchmarkComparison& comp) {
   std::ostringstream oss;
   oss << "{\n";
   oss << "  \"baseline\": {\n";
-  oss << "    \"mode\": \"" << comp.baseline.mode << "\",\n";
+  oss << "    \"mode\": \"" << escape_json_string(comp.baseline.mode)
+      << "\",\n";
   oss << "    \"task_count\": " << comp.baseline.task_count << ",\n";
   oss << "    \"wall_time_sec\": " << std::fixed << std::setprecision(4)
       << comp.baseline.wall_time_sec << ",\n";
@@ -1202,7 +1319,7 @@ std::string format_comparison_json(const BenchmarkComparison& comp) {
   oss << "    \"failed_tasks\": " << comp.baseline.failed_tasks << "\n";
   oss << "  },\n";
   oss << "  \"managed\": {\n";
-  oss << "    \"mode\": \"" << comp.managed.mode << "\",\n";
+  oss << "    \"mode\": \"" << escape_json_string(comp.managed.mode) << "\",\n";
   oss << "    \"task_count\": " << comp.managed.task_count << ",\n";
   oss << "    \"wall_time_sec\": " << comp.managed.wall_time_sec << ",\n";
   oss << "    \"peak_rss_bytes\": " << comp.managed.peak_rss_bytes << ",\n";

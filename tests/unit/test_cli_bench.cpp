@@ -173,6 +173,41 @@ void test_json_parse_int_field_out_of_range(void) {
   TEST_ASSERT_EQUAL_INT(5, parsed->baseline.successful_tasks);
 }
 
+/**
+ * @brief Regression (found by fuzz_bench_report): braces inside string
+ * values must not terminate the enclosing object early.
+ */
+void test_json_parse_braces_inside_strings(void) {
+  auto parsed = virmux::parse_comparison_json(
+      "{\"baseline\": {\"mode\": \"a}b{\", \"task_count\": 3}}");
+  TEST_ASSERT_TRUE(parsed.has_value());
+  TEST_ASSERT_EQUAL_STRING("a}b{", parsed->baseline.mode.c_str());
+  TEST_ASSERT_EQUAL_INT(3, parsed->baseline.task_count);
+}
+
+/**
+ * @brief Regression (found by fuzz_bench_report): format_comparison_json()
+ * must escape string values so its output always parses back to the same
+ * mode, whatever bytes the mode contains.
+ */
+void test_json_roundtrip_special_mode_chars(void) {
+  virmux::BenchmarkComparison comp;
+  comp.baseline.mode = "we\\ird \"q\" {x}\n\t\x01";
+  comp.baseline.task_count = 4;
+  comp.managed.mode = "trailing backslash\\";
+  comp.managed.task_count = 2;
+
+  auto parsed =
+      virmux::parse_comparison_json(virmux::format_comparison_json(comp));
+  TEST_ASSERT_TRUE(parsed.has_value());
+  TEST_ASSERT_EQUAL_STRING(comp.baseline.mode.c_str(),
+                           parsed->baseline.mode.c_str());
+  TEST_ASSERT_EQUAL_INT(4, parsed->baseline.task_count);
+  TEST_ASSERT_EQUAL_STRING(comp.managed.mode.c_str(),
+                           parsed->managed.mode.c_str());
+  TEST_ASSERT_EQUAL_INT(2, parsed->managed.task_count);
+}
+
 void test_format_comparison_table(void) {
   virmux::BenchmarkComparison comp;
   comp.baseline.mode = "baseline";
@@ -381,6 +416,8 @@ int main(void) {
   RUN_TEST(test_json_format_and_parse_roundtrip);
   RUN_TEST(test_json_parse_invalid);
   RUN_TEST(test_json_parse_int_field_out_of_range);
+  RUN_TEST(test_json_parse_braces_inside_strings);
+  RUN_TEST(test_json_roundtrip_special_mode_chars);
   RUN_TEST(test_format_comparison_table);
   RUN_TEST(test_cli_arg_parsing);
   RUN_TEST(test_quick_runner_execution);
