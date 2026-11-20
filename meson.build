@@ -560,6 +560,7 @@ if fuzzing
     'ipc_frame',
     'daemon_request',
     'session_list_json',
+    'bench_report',
   ]
   foreach name : fuzz_targets
     fuzz_exe = executable(
