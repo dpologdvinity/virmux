@@ -132,12 +132,14 @@ std::vector<VmaRange> MemoryManager::scan_process_vmas(
     bool is_stack = (pathname == "[stack]" || pathname.starts_with("[stack:"));
 
     if (!is_special_kernel) {
-      if ((dev == "00:00" || dev == "0:0") && inode_num == 0) {
-        is_anon = true;
-      } else if (pathname.empty() || pathname == "[heap]" ||
-                 pathname == "[stack]" || pathname.starts_with("[anon")) {
-        is_anon = true;
-      }
+      // Anonymous if not backed by a device/inode, or if it is one of the
+      // kernel-labelled anonymous regions (heap, main stack, [anon:...]).
+      const bool no_backing_file =
+          (dev == "00:00" || dev == "0:0") && inode_num == 0;
+      const bool anon_label = pathname.empty() || pathname == "[heap]" ||
+                              pathname == "[stack]" ||
+                              pathname.starts_with("[anon");
+      is_anon = no_backing_file || anon_label;
     }
 
     if (anonymous_only && !is_anon) {

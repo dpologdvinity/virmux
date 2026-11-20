@@ -74,12 +74,12 @@ bool CgroupSlice::setup(const std::string& base_cgroup_path,
   } else if (name_.empty()) {
     path_ = base_cgroup_path;
   } else {
-    std::string suffix = "/" + name_;
-    if (base_cgroup_path.size() >= suffix.size() &&
-        base_cgroup_path.compare(base_cgroup_path.size() - suffix.size(),
-                                 suffix.size(), suffix) == 0) {
-      path_ = base_cgroup_path;
-    } else if (base_cgroup_path == name_) {
+    // The base path already names this slice if it *is* the slice name or
+    // ends with "/<name>"; otherwise the slice is created beneath it.
+    const std::string suffix = "/" + name_;
+    const bool already_named =
+        base_cgroup_path == name_ || base_cgroup_path.ends_with(suffix);
+    if (already_named) {
       path_ = base_cgroup_path;
     } else {
       std::filesystem::path p(base_cgroup_path);
