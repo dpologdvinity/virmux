@@ -12,11 +12,16 @@ extern "C" {
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
+#include <iostream>
+#include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "virmux/bench.hpp"
 #include "virmux/cli_bench.hpp"
+#include "virmux/cli_parse.hpp"
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -327,6 +332,80 @@ void test_cli_arg_parsing(void) {
   }
 }
 
+void test_parse_positive_int(void) {
+  // Valid inputs
+  TEST_ASSERT_TRUE(virmux::parse_positive_int("1").has_value());
+  TEST_ASSERT_EQUAL_INT(1, *virmux::parse_positive_int("1"));
+  TEST_ASSERT_EQUAL_INT(12, *virmux::parse_positive_int("12"));
+  TEST_ASSERT_EQUAL_INT(2147483647, *virmux::parse_positive_int("2147483647"));
+  TEST_ASSERT_EQUAL_INT(64, *virmux::parse_positive_int("64", 64));
+
+  // Rejected inputs: non-numeric, partial numbers, signs, whitespace, zero,
+  // negatives, overflow and values above the caller-supplied maximum.
+  const char* const invalid[] = {"",           "abc",
+                                 "5abc",       "abc5",
+                                 "1.5",        " 5",
+                                 "5 ",         "+5",
+                                 "-5",         "0",
+                                 "-0",         "0x10",
+                                 "2147483648", "99999999999999999999"};
+  for (const char* text : invalid) {
+    TEST_ASSERT_FALSE_MESSAGE(virmux::parse_positive_int(text).has_value(),
+                              text);
+  }
+  TEST_ASSERT_FALSE(virmux::parse_positive_int("65", 64).has_value());
+}
+
+namespace {
+
+/**
+ * @brief Runs `virmux bench run <extra...>` and captures what it wrote to
+ * std::cerr.
+ */
+int run_bench_capturing_stderr(std::initializer_list<const char*> extra,
+                               std::string& err_out) {
+  std::vector<char*> argv = {const_cast<char*>("virmux"),
+                             const_cast<char*>("bench"),
+                             const_cast<char*>("run")};
+  for (const char* a : extra) {
+    argv.push_back(const_cast<char*>(a));
+  }
+  std::ostringstream captured;
+  std::streambuf* old_buf = std::cerr.rdbuf(captured.rdbuf());
+  const int rc = virmux::cmd_bench(static_cast<int>(argv.size()), argv.data());
+  std::cerr.rdbuf(old_buf);
+  err_out = captured.str();
+  return rc;
+}
+
+}  // namespace
+
+void test_cli_rejects_non_numeric_bench_arguments(void) {
+  std::string err;
+
+  TEST_ASSERT_EQUAL_INT(1, run_bench_capturing_stderr({"--tasks", "abc"}, err));
+  TEST_ASSERT_TRUE(err.find("invalid value for --tasks: 'abc'") !=
+                   std::string::npos);
+
+  // Trailing garbage used to be silently truncated by atoi() and run a bench.
+  TEST_ASSERT_EQUAL_INT(
+      1, run_bench_capturing_stderr(
+             {"--tasks=2x", "--duration", "1", "--mode", "baseline"}, err));
+  TEST_ASSERT_TRUE(err.find("invalid value for --tasks: '2x'") !=
+                   std::string::npos);
+
+  TEST_ASSERT_EQUAL_INT(
+      1, run_bench_capturing_stderr(
+             {"--tasks", "1", "--duration", "1s", "--mode", "baseline"}, err));
+  TEST_ASSERT_TRUE(err.find("invalid value for --duration: '1s'") !=
+                   std::string::npos);
+
+  TEST_ASSERT_EQUAL_INT(
+      1, run_bench_capturing_stderr({"--duration=99999999999"}, err));
+  TEST_ASSERT_TRUE(err.find("invalid value for --duration") !=
+                   std::string::npos);
+}
+
 void test_quick_runner_execution(void) {
   virmux::BenchmarkRunner runner(true /* quick */);
   TEST_ASSERT_TRUE(runner.is_quick());
@@ -420,6 +499,8 @@ int main(void) {
   RUN_TEST(test_json_roundtrip_special_mode_chars);
   RUN_TEST(test_format_comparison_table);
   RUN_TEST(test_cli_arg_parsing);
+  RUN_TEST(test_parse_positive_int);
+  RUN_TEST(test_cli_rejects_non_numeric_bench_arguments);
   RUN_TEST(test_quick_runner_execution);
   RUN_TEST(test_cli_run_and_report_file_roundtrip);
   RUN_TEST(test_runner_stop_cancellation);

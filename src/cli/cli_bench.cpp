@@ -8,15 +8,16 @@
 #include <signal.h>
 
 #include <atomic>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
 
 #include "virmux/bench.hpp"
+#include "virmux/cli_parse.hpp"
 
 namespace virmux {
 
@@ -72,6 +73,29 @@ void print_bench_report_usage(std::ostream& out) {
       << "  -h, --help          Show this help message\n";
 }
 
+/**
+ * @brief Parses the value of a positive-integer option such as `--tasks`.
+ *
+ * Malformed values ("abc", "5x", "-1", overflow) are reported on stderr instead
+ * of being silently coerced the way std::atoi would.
+ *
+ * @param option Option name used in the error message (e.g. "--tasks").
+ * @param value Raw option value.
+ * @param out Receives the parsed value on success; untouched on failure.
+ * @return true on success, false if the value was rejected.
+ */
+bool parse_count_option(std::string_view option, std::string_view value,
+                        int& out) {
+  const std::optional<int> parsed = parse_positive_int(value);
+  if (!parsed) {
+    std::cerr << "Error: invalid value for " << option << ": '" << value
+              << "' (expected a positive integer)\n";
+    return false;
+  }
+  out = *parsed;
+  return true;
+}
+
 int handle_bench_run(int argc, char* const argv[], int start_idx) {
   int tasks = 12;
   int duration = 5;
@@ -102,20 +126,28 @@ int handle_bench_run(int argc, char* const argv[], int start_idx) {
         std::cerr << "Error: --tasks requires an argument\n";
         return 1;
       }
-      tasks = std::atoi(argv[++i]);
+      if (!parse_count_option("--tasks", argv[++i], tasks)) {
+        return 1;
+      }
       explicit_tasks = true;
     } else if (arg.starts_with("--tasks=")) {
-      tasks = std::atoi(std::string(arg.substr(8)).c_str());
+      if (!parse_count_option("--tasks", arg.substr(8), tasks)) {
+        return 1;
+      }
       explicit_tasks = true;
     } else if (arg == "--duration") {
       if (i + 1 >= argc || argv[i + 1] == nullptr) {
         std::cerr << "Error: --duration requires an argument\n";
         return 1;
       }
-      duration = std::atoi(argv[++i]);
+      if (!parse_count_option("--duration", argv[++i], duration)) {
+        return 1;
+      }
       explicit_duration = true;
     } else if (arg.starts_with("--duration=")) {
-      duration = std::atoi(std::string(arg.substr(11)).c_str());
+      if (!parse_count_option("--duration", arg.substr(11), duration)) {
+        return 1;
+      }
       explicit_duration = true;
     } else if (arg == "--mode") {
       if (i + 1 >= argc || argv[i + 1] == nullptr) {
@@ -141,14 +173,6 @@ int handle_bench_run(int argc, char* const argv[], int start_idx) {
     }
   }
 
-  if (tasks <= 0) {
-    std::cerr << "Error: --tasks must be a positive integer\n";
-    return 1;
-  }
-  if (duration <= 0) {
-    std::cerr << "Error: --duration must be a positive integer\n";
-    return 1;
-  }
   if (mode != "all" && mode != "managed" && mode != "baseline") {
     std::cerr << "Error: unrecognized mode '" << mode
               << "'. Must be 'all', 'managed', or 'baseline'\n";
@@ -233,7 +257,7 @@ int handle_bench_report(int argc, char* const argv[], int start_idx) {
       input_path = argv[++i];
     } else if (arg.starts_with("--input=")) {
       input_path = std::string(arg.substr(8));
-    } else if (!arg.starts_with("-") && input_path.empty()) {
+    } else if (!arg.starts_with('-') && input_path.empty()) {
       input_path = std::string(arg);
     } else {
       std::cerr << "Error: unrecognized option for bench report: '" << arg

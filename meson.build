@@ -70,6 +70,7 @@ virmux_core_lib = static_library(
     'src/memory/memory_manager.cpp',
     'src/cli/cli_stats.cpp',
     'src/cli/cli_bench.cpp',
+    'src/cli/cli_parse.cpp',
     'src/cli/cli_cas.cpp',
     'src/cli/cli_daemon.cpp',
     'src/storage/sha256.cpp',
