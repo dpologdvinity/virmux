@@ -76,19 +76,23 @@ class Sha256Context {
     if (len == 0 || data == nullptr) {
       return;
     }
+    // Bytes already buffered. Always equal to buffer_len_, but deriving it
+    // from count_ makes the [0, 64) bound provable to the compiler, so the
+    // memcpy offsets below can never be seen as overrunning buffer_.
+    const size_t used = static_cast<size_t>(count_ % 64);
     count_ += len;
     size_t offset = 0;
 
-    if (buffer_len_ > 0) {
-      size_t fill = 64 - buffer_len_;
+    if (used > 0) {
+      size_t fill = 64 - used;
       if (len >= fill) {
-        std::memcpy(buffer_.data() + buffer_len_, data, fill);
+        std::memcpy(buffer_.data() + used, data, fill);
         transform(buffer_.data());
         buffer_len_ = 0;
         offset = fill;
       } else {
-        std::memcpy(buffer_.data() + buffer_len_, data, len);
-        buffer_len_ += len;
+        std::memcpy(buffer_.data() + used, data, len);
+        buffer_len_ = used + len;
         return;
       }
     }
