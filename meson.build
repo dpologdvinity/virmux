@@ -561,6 +561,7 @@ if fuzzing
     'daemon_request',
     'session_list_json',
     'bench_report',
+    'size_bytes',
   ]
   foreach name : fuzz_targets
     fuzz_exe = executable(
