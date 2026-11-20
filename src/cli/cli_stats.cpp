@@ -197,21 +197,27 @@ void print_stats_table(const HostMemoryStats& host, const KsmStats& ksm) {
 }
 
 int cmd_stats(int argc, char* const argv[]) {
+  if (argv == nullptr || argc <= 0) {
+    return 1;
+  }
+
   int start_idx = 0;
-  if (argc > 1 && argv != nullptr && argv[1] != nullptr &&
-      std::string_view(argv[1]) == "stats") {
+  if (argc > 1 && argv[1] != nullptr && std::string_view(argv[1]) == "stats") {
     start_idx = 2;
-  } else if (argc > 0 && argv != nullptr && argv[0] != nullptr) {
+  } else if (argv[0] != nullptr) {
     std::string_view a0(argv[0]);
-    if (a0 == "stats" || a0.ends_with("/stats")) {
-      start_idx = 1;
-    } else if (a0 == "virmux" || a0.ends_with("/virmux")) {
+    if (a0 == "stats" || a0.ends_with("/stats") || a0 == "virmux" ||
+        a0.ends_with("/virmux")) {
       start_idx = 1;
     }
   }
 
   bool json_mode = false;
   for (int i = start_idx; i < argc; ++i) {
+    if (argv[i] == nullptr) {
+      std::cerr << "Error: null argument at position " << i << "\n";
+      return 1;
+    }
     std::string_view arg = argv[i];
     if (arg == "-h" || arg == "--help") {
       print_stats_usage(std::cout);
@@ -240,15 +246,17 @@ int cmd_stats(int argc, char* const argv[]) {
 }
 
 int cmd_pack(int argc, char* const argv[]) {
+  if (argv == nullptr || argc <= 0) {
+    return 1;
+  }
+
   int start_idx = 0;
-  if (argc > 1 && argv != nullptr && argv[1] != nullptr &&
-      std::string_view(argv[1]) == "pack") {
+  if (argc > 1 && argv[1] != nullptr && std::string_view(argv[1]) == "pack") {
     start_idx = 2;
-  } else if (argc > 0 && argv != nullptr && argv[0] != nullptr) {
+  } else if (argv[0] != nullptr) {
     std::string_view a0(argv[0]);
-    if (a0 == "pack" || a0.ends_with("/pack")) {
-      start_idx = 1;
-    } else if (a0 == "virmux" || a0.ends_with("/virmux")) {
+    if (a0 == "pack" || a0.ends_with("/pack") || a0 == "virmux" ||
+        a0.ends_with("/virmux")) {
       start_idx = 1;
     }
   }
@@ -257,6 +265,10 @@ int cmd_pack(int argc, char* const argv[]) {
   std::vector<pid_t> pids;
 
   for (int i = start_idx; i < argc; ++i) {
+    if (argv[i] == nullptr) {
+      std::cerr << "Error: null argument at position " << i << "\n";
+      return 1;
+    }
     std::string_view arg = argv[i];
     if (arg == "-h" || arg == "--help") {
       print_pack_usage(std::cout);
@@ -264,7 +276,7 @@ int cmd_pack(int argc, char* const argv[]) {
     }
     if (arg == "--all") {
       all_mode = true;
-    } else if (arg.starts_with("-")) {
+    } else if (arg.starts_with('-')) {
       std::cerr << "Error: unrecognized option '" << arg << "'\n";
       print_pack_usage(std::cerr);
       return 1;

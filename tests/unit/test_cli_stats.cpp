@@ -154,6 +154,27 @@ void test_cmd_pack(void) {
   TEST_ASSERT_EQUAL_INT(0, virmux::cmd_pack(3, argv_pid));
 }
 
+/**
+ * @brief A null or empty argv must be rejected rather than dereferenced, and
+ * a null element inside argc must not be turned into a std::string_view.
+ */
+void test_cmd_stats_pack_reject_null_argv(void) {
+  char prog[] = "virmux";
+  char stats_cmd[] = "stats";
+  char pack_cmd[] = "pack";
+
+  TEST_ASSERT_NOT_EQUAL(0, virmux::cmd_stats(0, nullptr));
+  TEST_ASSERT_NOT_EQUAL(0, virmux::cmd_stats(3, nullptr));
+  TEST_ASSERT_NOT_EQUAL(0, virmux::cmd_pack(0, nullptr));
+  TEST_ASSERT_NOT_EQUAL(0, virmux::cmd_pack(3, nullptr));
+
+  char* stats_null_elem[] = {prog, stats_cmd, nullptr};
+  TEST_ASSERT_NOT_EQUAL(0, virmux::cmd_stats(3, stats_null_elem));
+
+  char* pack_null_elem[] = {prog, pack_cmd, nullptr};
+  TEST_ASSERT_NOT_EQUAL(0, virmux::cmd_pack(3, pack_null_elem));
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_format_bytes_boundaries);
@@ -161,5 +182,6 @@ int main(void) {
   RUN_TEST(test_print_stats_table);
   RUN_TEST(test_cmd_stats);
   RUN_TEST(test_cmd_pack);
+  RUN_TEST(test_cmd_stats_pack_reject_null_argv);
   return UNITY_END();
 }
