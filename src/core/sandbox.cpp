@@ -11,6 +11,8 @@
 #include "virmux/sandbox.hpp"
 
 #include <fcntl.h>
+#include <sched.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -19,6 +21,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -26,6 +29,9 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 #include "virmux/cgroup.hpp"
 #include "virmux/daemon.hpp"
@@ -171,6 +177,167 @@ std::string expand_home_path(const std::string& path) {
 }
 
 static std::atomic<uint64_t> s_sandbox_counter{0};
+
+/**
+ * @brief Everything the sandbox child needs, prepared by the parent before
+ * clone().
+ *
+ * The child runs between clone() and execve(). If the caller is
+ * multi-threaded (spawn_command is a public library API), other threads may
+ * hold malloc, stdio or environment locks at clone time, and those stay locked
+ * forever in the child. The child therefore performs only async-signal-safe
+ * work (raw syscalls on pre-built strings); every allocation, path join and
+ * environment edit happens here in the parent.
+ */
+struct ChildLaunchPlan {
+  char* const* argv{nullptr};
+  char* const* envp{nullptr};
+  /// Non-null: the child was cloned into fresh user + mount namespaces and
+  /// must configure them and mount this overlay before chdir-ing into it.
+  OverlayWorkspace* overlay{nullptr};
+  uid_t orig_uid{0};
+  gid_t orig_gid{0};
+  /// Working directory to enter (nullptr = inherit the parent's).
+  const char* workdir{nullptr};
+  /// Overlay only: fallback when @ref workdir is not reachable in the mount.
+  const char* workdir_fallback{nullptr};
+  /// "<cgroup>/cgroup.procs" to join before exec (nullptr = none).
+  const char* cgroup_procs_path{nullptr};
+  bool apply_nproc_limit{false};
+  rlim_t nproc_limit{0};
+};
+
+/// oom_score_adj applied to sandboxed children so they are sacrificed first.
+constexpr char kSandboxOomScoreAdj[] = "800\n";
+
+/// Stack for the cloned child; it only runs a few syscalls before execve().
+constexpr size_t kChildStackSize = 1024 * 1024;
+
+/** @brief Writes NUL-terminated @p text to stderr. Async-signal-safe. */
+void child_report(const char* text) noexcept {
+  ssize_t ignored = ::write(STDERR_FILENO, text, std::strlen(text));
+  (void)ignored;
+}
+
+/** @brief Writes @p data to the file at @p path. Async-signal-safe. */
+bool child_write_file(const char* path, const char* data) noexcept {
+  int fd = ::open(path, O_WRONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return false;
+  }
+  size_t len = std::strlen(data);
+  ssize_t written = ::write(fd, data, len);
+  ::close(fd);
+  return written == static_cast<ssize_t>(len);
+}
+
+/**
+ * @brief Entry point of the cloned sandbox child. Async-signal-safe only.
+ * @return Exit status if execve() fails (126 = setup/exec error, 127 = not
+ * found or workspace unreachable); does not return on success.
+ */
+int sandbox_child_main(void* arg) {
+  const auto& plan = *static_cast<const ChildLaunchPlan*>(arg);
+
+  // 1. Ephemeral: the kernel already placed us in new user + mount
+  // namespaces at clone() time; map IDs and mount the overlay.
+  if (plan.overlay != nullptr) {
+    if (!OverlayWorkspace::configure_user_mount_namespace(plan.orig_uid,
+                                                          plan.orig_gid)) {
+      child_report("error: [overlay] failed to enter user/mount namespace\n");
+      return 126;
+    }
+    if (!plan.overlay->mount_in_current_namespace()) {
+      child_report("error: [overlay] failed to mount overlayfs in namespace\n");
+      return 126;
+    }
+    if (::chdir(plan.workdir) != 0 && ::chdir(plan.workdir_fallback) != 0) {
+      child_report("error: [overlay] failed to chdir to workspace '");
+      child_report(plan.workdir);
+      child_report("'\n");
+      return 127;
+    }
+  } else if (plan.workdir != nullptr && ::chdir(plan.workdir) != 0) {
+    return 127;
+  }
+
+  // 2. Attach to the cgroup before exec so grandchildren are always covered.
+  if (plan.cgroup_procs_path != nullptr) {
+    (void)child_write_file(plan.cgroup_procs_path, "0\n");
+  }
+
+  // Fork-bomb fallback: RLIMIT_NPROC ceiling when cgroup pids.max is absent.
+  if (plan.apply_nproc_limit) {
+    rlim_t limit = plan.nproc_limit;
+    struct rlimit cur_rl;
+    if (::getrlimit(RLIMIT_NPROC, &cur_rl) == 0 && limit > cur_rl.rlim_max) {
+      limit = cur_rl.rlim_max;
+    }
+    struct rlimit rl{limit, limit};
+    (void)::setrlimit(RLIMIT_NPROC, &rl);
+  }
+
+  // 3. Sacrificial OOM priority.
+  (void)child_write_file("/proc/self/oom_score_adj", kSandboxOomScoreAdj);
+
+  // 4. Execute with the pre-built environment (PATH search uses the
+  // inherited, unmodified PATH).
+  ::execvpe(plan.argv[0], plan.argv, plan.envp);
+  return errno == ENOENT ? 127 : 126;
+}
+
+/**
+ * @brief Copies the current environment, replacing or adding @p overrides.
+ * @return Owned "KEY=VALUE" strings; point an envp array into them.
+ */
+std::vector<std::string> build_child_environment(
+    const std::vector<std::pair<std::string, std::string>>& overrides) {
+  std::vector<std::string> env;
+  for (char** entry = environ; entry != nullptr && *entry != nullptr; ++entry) {
+    std::string_view kv(*entry);
+    std::string_view key = kv.substr(0, kv.find('='));
+    bool overridden = std::any_of(
+        overrides.begin(), overrides.end(),
+        [key](const auto& ov) { return key == std::string_view(ov.first); });
+    if (!overridden) {
+      env.emplace_back(kv);
+    }
+  }
+  for (const auto& [key, value] : overrides) {
+    env.push_back(key + "=" + value);
+  }
+  return env;
+}
+
+/**
+ * @brief Starts sandbox_child_main(@p plan) via clone() and returns its pid.
+ *
+ * clone() is used instead of fork() so that, for ephemeral runs, the user and
+ * mount namespaces are created atomically with the process. The alternative,
+ * unshare(CLONE_NEWUSER) after fork(), fails with EINVAL whenever the child is
+ * not single-threaded, which happens in practice: ThreadSanitizer starts a
+ * background thread in every fork() child, and preloaded libraries may start
+ * threads from pthread_atfork() handlers. No CLONE_VM: the child gets a
+ * copy-on-write address space, so the stack can be unmapped right away.
+ *
+ * @return Child pid, or -1 on failure.
+ */
+pid_t clone_sandbox_child(ChildLaunchPlan& plan, bool new_namespaces) {
+  void* stack = ::mmap(nullptr, kChildStackSize, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0);
+  if (stack == MAP_FAILED) {
+    return -1;
+  }
+  int flags = SIGCHLD;
+  if (new_namespaces) {
+    flags |= CLONE_NEWUSER | CLONE_NEWNS;
+  }
+  pid_t pid =
+      ::clone(sandbox_child_main, static_cast<char*>(stack) + kChildStackSize,
+              flags, &plan);
+  ::munmap(stack, kChildStackSize);
+  return pid;
+}
 
 uint64_t count_user_threads() {
   uint64_t count = 0;
@@ -363,7 +530,60 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
   uint64_t baseline_threads =
       (cfg.max_pids > 0 && !cgroup_pids_active) ? count_user_threads() : 0;
 
-  pid_t pid = ::fork();
+  // Child environment, built here because setenv() after clone() is not
+  // async-signal-safe.
+  std::vector<std::pair<std::string, std::string>> env_overrides;
+  if (scratch && scratch->is_valid()) {
+    env_overrides.emplace_back("TMPDIR", scratch->path());
+    env_overrides.emplace_back("TEMP", scratch->path());
+    env_overrides.emplace_back("TMP", scratch->path());
+  }
+  if (!preload_val.empty()) {
+    env_overrides.emplace_back("LD_PRELOAD", preload_val);
+  }
+  env_overrides.emplace_back(VIRMUX_ENV_VIRTUAL_CORES, vcores_str);
+  if (meminfo_ready) {
+    env_overrides.emplace_back(VIRMUX_ENV_SPOOFED_MEMINFO, meminfo_path);
+  }
+  env_overrides.emplace_back("OMP_NUM_THREADS", vcores_str);
+  env_overrides.emplace_back("OPENBLAS_NUM_THREADS", vcores_str);
+  env_overrides.emplace_back("MKL_NUM_THREADS", vcores_str);
+  env_overrides.emplace_back("NUMEXPR_NUM_THREADS", vcores_str);
+  std::vector<std::string> child_env = build_child_environment(env_overrides);
+  std::vector<char*> child_envp;
+  child_envp.reserve(child_env.size() + 1);
+  for (auto& entry : child_env) {
+    child_envp.push_back(entry.data());
+  }
+  child_envp.push_back(nullptr);
+
+  const std::string cgroup_procs_path =
+      slice.is_valid() ? slice.path() + "/cgroup.procs" : std::string();
+
+  ChildLaunchPlan plan;
+  plan.argv = argv;
+  plan.envp = child_envp.data();
+  // An already-mounted overlay needs no namespaces (and no chdir) in the child.
+  const bool enter_namespaces =
+      is_ephemeral && overlay && !overlay->is_mounted();
+  if (enter_namespaces) {
+    plan.overlay = overlay.get();
+    plan.orig_uid = orig_uid;
+    plan.orig_gid = orig_gid;
+    plan.workdir = resolved_workspace.c_str();
+    plan.workdir_fallback = overlay->merged_dir().c_str();
+  } else if (explicit_workspace) {
+    plan.workdir = resolved_workspace.c_str();
+  }
+  if (!cgroup_procs_path.empty()) {
+    plan.cgroup_procs_path = cgroup_procs_path.c_str();
+  }
+  if (cfg.max_pids > 0 && !cgroup_pids_active) {
+    plan.apply_nproc_limit = true;
+    plan.nproc_limit = static_cast<rlim_t>(baseline_threads + cfg.max_pids);
+  }
+
+  pid_t pid = clone_sandbox_child(plan, enter_namespaces);
   if (pid < 0) {
     if (scratch) {
       scratch->cleanup();
@@ -372,83 +592,6 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
       overlay->teardown();
     }
     return -1;
-  }
-
-  if (pid == 0) {
-    // --- In child process ---
-    // 1. If ephemeral, enter unprivileged user and mount namespace, then mount
-    // overlay
-    if (is_ephemeral && overlay && !overlay->is_mounted()) {
-      if (!OverlayWorkspace::enter_user_mount_namespace(orig_uid, orig_gid)) {
-        std::fprintf(stderr,
-                     "error: [overlay] failed to enter user/mount namespace\n");
-        ::_exit(126);
-      }
-      if (!overlay->mount_in_current_namespace()) {
-        std::fprintf(
-            stderr,
-            "error: [overlay] failed to mount overlayfs in namespace\n");
-        ::_exit(126);
-      }
-      if (::chdir(resolved_workspace.c_str()) != 0 &&
-          ::chdir(overlay->merged_dir().c_str()) != 0) {
-        std::fprintf(stderr,
-                     "error: [overlay] failed to chdir to workspace '%s'\n",
-                     resolved_workspace.c_str());
-        ::_exit(127);
-      }
-    } else if (explicit_workspace) {
-      if (::chdir(resolved_workspace.c_str()) != 0) {
-        ::_exit(127);
-      }
-    }
-
-    // 2. Attach process to cgroup
-    if (slice.is_valid()) {
-      slice.attach_pid(0);
-    }
-
-    // Fork-bomb fallback: enforce RLIMIT_NPROC ceiling if configured and cgroup
-    // unavailable
-    if (cfg.max_pids > 0 && !cgroup_pids_active) {
-      rlim_t limit = static_cast<rlim_t>(baseline_threads + cfg.max_pids);
-      struct rlimit cur_rl;
-      if (::getrlimit(RLIMIT_NPROC, &cur_rl) == 0 && limit > cur_rl.rlim_max) {
-        limit = cur_rl.rlim_max;
-      }
-      struct rlimit rl{limit, limit};
-      (void)::setrlimit(RLIMIT_NPROC, &rl);
-    }
-
-    // 3. Set oom_score_adj to sacrificial priority (+800)
-    set_process_oom_score(0, 800);
-
-    // 4. Scratch environment variables (TMPDIR, TEMP, TMP)
-    if (scratch && scratch->is_valid()) {
-      ::setenv("TMPDIR", scratch->path().c_str(), 1);
-      ::setenv("TEMP", scratch->path().c_str(), 1);
-      ::setenv("TMP", scratch->path().c_str(), 1);
-    }
-
-    // 5. Inject runtime virtualization and interceptor environment
-    // (pre-allocated)
-    if (!preload_val.empty()) {
-      ::setenv("LD_PRELOAD", preload_val.c_str(), 1);
-    }
-
-    ::setenv(VIRMUX_ENV_VIRTUAL_CORES, vcores_str.c_str(), 1);
-    if (meminfo_ready) {
-      ::setenv(VIRMUX_ENV_SPOOFED_MEMINFO, meminfo_path.c_str(), 1);
-    }
-    ::setenv("OMP_NUM_THREADS", vcores_str.c_str(), 1);
-    ::setenv("OPENBLAS_NUM_THREADS", vcores_str.c_str(), 1);
-    ::setenv("MKL_NUM_THREADS", vcores_str.c_str(), 1);
-    ::setenv("NUMEXPR_NUM_THREADS", vcores_str.c_str(), 1);
-
-    // 6. Execute target command
-    ::execvp(argv[0], argv);
-    int err = errno;
-    ::_exit(err == ENOENT ? 127 : 126);
   }
 
   // --- In parent process ---

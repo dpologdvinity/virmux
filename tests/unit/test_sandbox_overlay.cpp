@@ -8,9 +8,11 @@ extern "C" {
 #include "unity/unity.h"
 }
 
+#include <pthread.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -34,6 +36,33 @@ std::string create_test_temp_dir(const char* prefix) {
 void cleanup_test_dir(const std::string& path) {
   std::error_code ec;
   fs::remove_all(path, ec);
+}
+
+/**
+ * @brief When set, every fork() child immediately starts a helper thread.
+ *
+ * Models runtimes that make fork() children multi-threaded behind the
+ * application's back: ThreadSanitizer starts its background thread in every
+ * child of a single-threaded parent, and preloaded libraries may do the same
+ * from pthread_atfork() handlers. unshare(CLONE_NEWUSER) fails with EINVAL in
+ * any multi-threaded process, so a sandbox launcher that relies on calling it
+ * after fork() breaks in those environments.
+ */
+std::atomic<bool> g_thread_in_fork_child{false};
+
+void* idle_helper_thread(void* /*unused*/) {
+  ::pause();
+  return nullptr;
+}
+
+void start_thread_in_fork_child() {
+  if (!g_thread_in_fork_child.load(std::memory_order_relaxed)) {
+    return;
+  }
+  pthread_t tid;
+  if (::pthread_create(&tid, nullptr, idle_helper_thread, nullptr) == 0) {
+    ::pthread_detach(tid);
+  }
 }
 
 }  // namespace
@@ -242,6 +271,39 @@ void test_sandbox_ephemeral_fail_closed_on_invalid_dir(void) {
   TEST_ASSERT_EQUAL_INT(-1, exit_code);
 }
 
+void test_sandbox_ephemeral_survives_threads_started_in_fork_child(void) {
+  std::string temp_dir = create_test_temp_dir("virmux_sb_atfork");
+
+  // Handlers cannot be unregistered; the flag keeps it inert elsewhere.
+  static bool handler_registered = false;
+  if (!handler_registered) {
+    TEST_ASSERT_EQUAL_INT(
+        0, ::pthread_atfork(nullptr, nullptr, start_thread_in_fork_child));
+    handler_registered = true;
+  }
+
+  virmux::SandboxConfig cfg{
+      .ephemeral = true,
+      .workspace_dir = temp_dir,
+  };
+
+  char arg0[] = "/bin/sh";
+  char arg1[] = "-c";
+  char arg2[] = "echo changed > marker.txt && test -f marker.txt";
+  char* argv[] = {arg0, arg1, arg2, nullptr};
+
+  g_thread_in_fork_child.store(true, std::memory_order_relaxed);
+  int exit_code = virmux::spawn_command(cfg, argv);
+  g_thread_in_fork_child.store(false, std::memory_order_relaxed);
+
+  // The sandboxed child must still enter its user + mount namespace and run
+  // the command inside the overlay, leaving the host workspace untouched.
+  TEST_ASSERT_EQUAL_INT(0, exit_code);
+  TEST_ASSERT_FALSE(fs::exists(temp_dir + "/marker.txt"));
+
+  cleanup_test_dir(temp_dir);
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_sandbox_ephemeral_cow_isolation);
@@ -251,5 +313,6 @@ int main(void) {
   RUN_TEST(test_sandbox_custom_scratch_dir);
   RUN_TEST(test_sandbox_ephemeral_default_current_path);
   RUN_TEST(test_sandbox_ephemeral_fail_closed_on_invalid_dir);
+  RUN_TEST(test_sandbox_ephemeral_survives_threads_started_in_fork_child);
   return UNITY_END();
 }
