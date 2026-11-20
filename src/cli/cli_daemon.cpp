@@ -485,7 +485,7 @@ int cmd_freeze(int argc, char* const argv[]) {
       print_freeze_usage(std::cout);
       return 0;
     }
-    if (arg.starts_with("-")) {
+    if (arg.starts_with('-')) {
       std::cerr << "Error: unrecognized option '" << arg << "'\n";
       print_freeze_usage(std::cerr);
       return 1;
@@ -537,7 +537,7 @@ int cmd_thaw(int argc, char* const argv[]) {
       print_thaw_usage(std::cout);
       return 0;
     }
-    if (arg.starts_with("-")) {
+    if (arg.starts_with('-')) {
       std::cerr << "Error: unrecognized option '" << arg << "'\n";
       print_thaw_usage(std::cerr);
       return 1;
@@ -589,7 +589,7 @@ int cmd_kill(int argc, char* const argv[]) {
       print_kill_usage(std::cout);
       return 0;
     }
-    if (arg.starts_with("-")) {
+    if (arg.starts_with('-')) {
       std::cerr << "Error: unrecognized option '" << arg << "'\n";
       print_kill_usage(std::cerr);
       return 1;
@@ -641,7 +641,7 @@ int cmd_checkpoint(int argc, char* const argv[]) {
       print_checkpoint_usage(std::cout);
       return 0;
     }
-    if (arg.starts_with("-")) {
+    if (arg.starts_with('-')) {
       std::cerr << "Error: unrecognized option '" << arg << "'\n";
       print_checkpoint_usage(std::cerr);
       return 1;
@@ -698,7 +698,7 @@ int cmd_restore(int argc, char* const argv[]) {
       print_restore_usage(std::cout);
       return 0;
     }
-    if (arg.starts_with("-")) {
+    if (arg.starts_with('-')) {
       std::cerr << "Error: unrecognized option '" << arg << "'\n";
       print_restore_usage(std::cerr);
       return 1;
