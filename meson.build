@@ -558,6 +558,7 @@ test(
 if fuzzing
   fuzz_targets = [
     'ipc_frame',
+    'daemon_request',
   ]
   foreach name : fuzz_targets
     fuzz_exe = executable(
