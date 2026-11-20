@@ -23,6 +23,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
@@ -954,8 +955,18 @@ uint64_t parse_uint64_field(std::string_view obj, std::string_view key,
 }
 
 int parse_int_field(std::string_view obj, std::string_view key, int def = 0) {
-  return static_cast<int>(
-      parse_double_field(obj, key, static_cast<double>(def)));
+  const double v = parse_double_field(obj, key, static_cast<double>(def));
+  // double -> int truncation is UB unless the truncated value fits in int,
+  // i.e. v lies strictly inside (INT_MIN - 1, INT_MAX + 1). Both bounds are
+  // exactly representable as doubles. NaN fails both comparisons.
+  constexpr double kLower =
+      static_cast<double>(std::numeric_limits<int>::min()) - 1.0;
+  constexpr double kUpper =
+      static_cast<double>(std::numeric_limits<int>::max()) + 1.0;
+  if (!(v > kLower && v < kUpper)) {
+    return def;
+  }
+  return static_cast<int>(v);
 }
 
 BenchmarkResult parse_result_block(std::string_view obj) {

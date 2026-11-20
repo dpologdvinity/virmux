@@ -157,6 +157,22 @@ void test_json_parse_invalid(void) {
       virmux::parse_comparison_json("{\"random_key\": 123}").has_value());
 }
 
+/**
+ * @brief Regression (found by fuzz_bench_report): integer fields holding
+ * numbers outside int's range must fall back to their default instead of
+ * performing an out-of-range double -> int conversion (UB).
+ */
+void test_json_parse_int_field_out_of_range(void) {
+  auto parsed = virmux::parse_comparison_json(
+      "{\"baseline\": {\"task_count\": 1e300, \"oom_killed_count\": -3e9,"
+      " \"failed_tasks\": 2147483648, \"successful_tasks\": 5}}");
+  TEST_ASSERT_TRUE(parsed.has_value());
+  TEST_ASSERT_EQUAL_INT(0, parsed->baseline.task_count);
+  TEST_ASSERT_EQUAL_INT(0, parsed->baseline.oom_killed_count);
+  TEST_ASSERT_EQUAL_INT(0, parsed->baseline.failed_tasks);
+  TEST_ASSERT_EQUAL_INT(5, parsed->baseline.successful_tasks);
+}
+
 void test_format_comparison_table(void) {
   virmux::BenchmarkComparison comp;
   comp.baseline.mode = "baseline";
@@ -364,6 +380,7 @@ int main(void) {
   RUN_TEST(test_comparison_calculation_helpers);
   RUN_TEST(test_json_format_and_parse_roundtrip);
   RUN_TEST(test_json_parse_invalid);
+  RUN_TEST(test_json_parse_int_field_out_of_range);
   RUN_TEST(test_format_comparison_table);
   RUN_TEST(test_cli_arg_parsing);
   RUN_TEST(test_quick_runner_execution);
