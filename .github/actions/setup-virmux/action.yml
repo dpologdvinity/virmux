@@ -1,0 +1,54 @@
+# Shared runner preparation for every job that builds or runs virmux on an
+# Ubuntu GitHub-hosted runner (x86_64 or arm64).
+#
+# Installs the toolchain and libraries virmux links against, then relaxes the
+# runner's kernel restrictions so the integration tests can exercise user
+# namespaces, overlayfs and cgroups v2 the way they run on a developer box.
+name: Set up virmux build environment
+description: Install virmux build dependencies and enable kernel features its tests need.
+
+inputs:
+  compiler:
+    description: Compiler family to install (gcc or clang).
+    required: false
+    default: gcc
+  extra-packages:
+    description: Additional apt packages, space separated.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install system dependencies
+      shell: bash
+      env:
+        COMPILER: ${{ inputs.compiler }}
+        EXTRA_PACKAGES: ${{ inputs.extra-packages }}
+      run: |
+        packages=(build-essential meson ninja-build python3 util-linux
+                  libncurses-dev libncursesw5-dev)
+        if [[ "$COMPILER" == clang ]]; then
+          packages+=(clang)
+        fi
+        read -ra extra <<< "$EXTRA_PACKAGES"
+        packages+=("${extra[@]}")
+        sudo apt-get update -q
+        sudo apt-get install -y -q --no-install-recommends "${packages[@]}"
+
+    - name: Enable kernel prerequisites
+      shell: bash
+      run: |
+        # Ubuntu 24.04 blocks unprivileged user namespaces via AppArmor; the
+        # sysctl does not exist on 22.04, hence the tolerated failure.
+        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
+        sudo sysctl -w kernel.unprivileged_userns_clone=1 2>/dev/null || true
+        # Let session cgroups be created without root.
+        sudo chmod -R a+rw /sys/fs/cgroup 2>/dev/null || true
+        # Clang 18's ASan/TSan/libFuzzer runtimes crash under the 32-bit
+        # mmap ASLR entropy used by newer runner kernels.
+        sudo sysctl -w vm.mmap_rnd_bits=28
+
+    - name: Diagnose host capabilities
+      shell: bash
+      run: bash scripts/doctor.sh
