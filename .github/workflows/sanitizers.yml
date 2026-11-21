@@ -1,62 +1,62 @@
+# Run the full test suite under Clang's runtime sanitizers.
+#
+# - address+undefined: memory errors and UB in the C/C++ core and the
+#   LD_PRELOAD interceptor. UBSan only *reports* by default; halt_on_error
+#   makes any UB finding fail the job instead of scrolling past in the log.
+# - thread: the supervisor daemon, telemetry sampler and session manager share
+#   state across threads and fork() worker processes, so data races and
+#   unsafe fork-after-threads patterns are checked on every change.
 name: Sanitizers
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
-    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  sanitizer:
-    name: Clang Address & Undefined Sanitizer (ASan/UBSan)
+  sanitize:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ASan + UBSan
+            sanitize: address,undefined
+          - name: TSan
+            sanitize: thread
+    env:
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+      TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            clang \
-            meson \
-            ninja-build \
-            ccache \
-            python3 \
-            util-linux \
-            libncurses-dev \
-            libncursesw5-dev
+      - uses: ./.github/actions/setup-virmux
+        with:
+          compiler: clang
 
-      - name: Configure runner kernel prerequisites
-        run: |
-          # Enable unprivileged user namespaces on Ubuntu 24.04 (AppArmor restriction)
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
-          # Ensure unprivileged user namespace clone is permitted
-          sudo sysctl -w kernel.unprivileged_userns_clone=1 2>/dev/null || true
-          # Grant cgroups v2 write permissions if mounted
-          sudo chmod -R a+rw /sys/fs/cgroup 2>/dev/null || true
-
-      - name: System diagnostic check
-        run: bash scripts/doctor.sh
-
-      - name: Configure Meson with ASan / UBSan
+      - name: Configure
         env:
           CC: clang
           CXX: clang++
+          SANITIZE: ${{ matrix.sanitize }}
         run: |
-          meson setup build-asan \
-            -Db_sanitize=address,undefined \
+          meson setup build \
+            -Db_sanitize="$SANITIZE" \
             -Db_lundef=false \
             -Dwarning_level=3 \
             -Dwerror=true
 
-      - name: Compile with Sanitizers
-        run: ninja -C build-asan
+      - name: Build
+        run: ninja -C build
 
-      - name: Run Test Suite with Sanitizers
-        run: meson test -C build-asan --verbose --print-errorlogs
+      - name: Test
+        run: meson test -C build --print-errorlogs
