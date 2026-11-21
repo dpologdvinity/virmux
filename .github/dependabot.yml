@@ -1,15 +1,30 @@
+# Dependency update policy.
+#
+# GitHub Actions are pinned to commit SHAs (tags are mutable, and virmux is
+# security-sensitive); Dependabot keeps those pins and their `# vX.Y.Z`
+# comments current. Updates are grouped so one PR exercises the whole CI
+# surface instead of several PRs that each run every workflow.
 version: 2
 updates:
-  - package-ecosystem: "github-actions"
-    directory: "/"
+  - package-ecosystem: github-actions
+    directories: ["/", "/.github/actions/*"]
     schedule:
-      interval: "weekly"
+      interval: weekly
     commit-message:
       prefix: "chore(ci)"
+    labels: [dependencies, ci]
+    groups:
+      actions:
+        patterns: ["*"]
 
-  - package-ecosystem: "npm"
+  # Only markdownlint-cli2 (docs linting) lives here.
+  - package-ecosystem: npm
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: monthly
     commit-message:
       prefix: "chore(deps)"
+    labels: [dependencies]
+    groups:
+      npm:
+        patterns: ["*"]
