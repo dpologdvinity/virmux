@@ -334,11 +334,12 @@ void test_cli_arg_parsing(void) {
 
 void test_parse_positive_int(void) {
   // Valid inputs
-  TEST_ASSERT_TRUE(virmux::parse_positive_int("1").has_value());
-  TEST_ASSERT_EQUAL_INT(1, *virmux::parse_positive_int("1"));
-  TEST_ASSERT_EQUAL_INT(12, *virmux::parse_positive_int("12"));
-  TEST_ASSERT_EQUAL_INT(2147483647, *virmux::parse_positive_int("2147483647"));
-  TEST_ASSERT_EQUAL_INT(64, *virmux::parse_positive_int("64", 64));
+  // (value_or(-1) keeps a rejected input from looking like a valid result.)
+  TEST_ASSERT_EQUAL_INT(1, virmux::parse_positive_int("1").value_or(-1));
+  TEST_ASSERT_EQUAL_INT(12, virmux::parse_positive_int("12").value_or(-1));
+  TEST_ASSERT_EQUAL_INT(2147483647,
+                        virmux::parse_positive_int("2147483647").value_or(-1));
+  TEST_ASSERT_EQUAL_INT(64, virmux::parse_positive_int("64", 64).value_or(-1));
 
   // Rejected inputs: non-numeric, partial numbers, signs, whitespace, zero,
   // negatives, overflow and values above the caller-supplied maximum.
