@@ -64,10 +64,10 @@ jobs:
       - name: Test
         run: meson test -C build --print-errorlogs
 
-
       # Lets reviewers download and try a pull request's build directly.
       - name: Upload binaries
-        if: matrix.buildtype == 'release' && matrix.compiler.cc == 'gcc'
+        # One upload per architecture; 22.04 would duplicate the x86_64 name.
+        if: matrix.buildtype == 'release' && matrix.compiler.cc == 'gcc' && matrix.os != 'ubuntu-22.04'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: virmux-${{ runner.arch }}
@@ -92,6 +92,14 @@ jobs:
           - { cc: gcc, cxx: g++ }
           - { cc: clang, cxx: clang++ }
     steps:
+      # The host's AppArmor userns restriction also applies to unconfined
+      # privileged containers; as real root here, lift it like the
+      # setup-virmux action does on the bare runners.
+      - name: Allow unprivileged user namespaces
+        run: |
+          f=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          if [ -e "$f" ]; then echo 0 > "$f"; fi
+
       - name: Install toolchain
         run: |
           dnf install -y -q git gcc-c++ clang meson ninja-build ncurses-devel util-linux
