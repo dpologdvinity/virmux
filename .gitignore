@@ -36,8 +36,8 @@ core.*
 docs/agents/STEPS-FOR-OWNER.md
 
 # libFuzzer artifacts (see tests/fuzz/README.md)
-crash-*
-leak-*
-timeout-*
-oom-*
-slow-unit-*
+/crash-*
+/leak-*
+/timeout-*
+/oom-*
+/slow-unit-*
