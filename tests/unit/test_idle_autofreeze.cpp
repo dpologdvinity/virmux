@@ -14,6 +14,8 @@ extern "C" {
 
 #include <chrono>
 #include <csignal>
+#include <cstdint>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -70,12 +72,20 @@ void test_stat_cpu_ticks_parsing(void) {
 
   std::filesystem::remove_all(tmp_dir);
 
-  // 2. Real process stat reading (/proc/1/stat)
+  // 2. Real process stat reading (/proc/self). PID 1 is not used: in
+  // containers it is often an idle placeholder with zero CPU ticks. Burn
+  // ~50 ms of CPU so this process has accumulated at least one tick.
+  const std::clock_t burn_until = std::clock() + CLOCKS_PER_SEC / 20;
+  volatile uint64_t sink = 0;
+  while (std::clock() < burn_until) {
+    sink = sink + 1;
+  }
+
   virmux::SessionRegistry real_reg;
   virmux::SessionRegistration real_req;
-  real_req.name = "systemd-or-init";
-  real_req.pid = 1;
-  real_req.command = "/sbin/init";
+  real_req.name = "self";
+  real_req.pid = ::getpid();
+  real_req.command = "test_idle_autofreeze";
 
   uint64_t real_id = real_reg.register_session(real_req);
   real_reg.refresh_telemetry();
