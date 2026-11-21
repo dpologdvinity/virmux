@@ -28,7 +28,7 @@
 |  +--------------------+  +--------------------+  +-------------------+  |
 +------------------------------------+------------------------------------+
                                      |
-                                     | fork() / execvp()
+                                     | clone() / execvpe()
 +------------------------------------v------------------------------------+
 |                         Target Sandboxed Process                        |
 |                     (Playwright, GCC, PyTorch, Node)                    |
@@ -63,7 +63,8 @@
    - Restores checkpoints on daemon restart by scanning checkpoint storage on startup.
 
 3. **`src/core/sandbox.cpp` (Fault Isolation & Blast Radius):**
-   - Deterministic OOM score adjuster (`set_process_oom_score`): writes `-900` to supervisor daemon (shielded from kernel OOM) and `+800` to worker children before `execvp` (sacrificial leaf tasks).
+   - Deterministic OOM score adjuster (`set_process_oom_score`): writes `-900` to supervisor daemon (shielded from kernel OOM) and `+800` to worker children before `execvpe` (sacrificial leaf tasks).
+   - Child launch: the parent prepares envp, chdir targets, cgroup and rlimit values, then starts the child with `clone()` (with `CLONE_NEWUSER | CLONE_NEWNS` for ephemeral runs, so namespaces are created atomically instead of via `unshare()` in a possibly multi-threaded child). The child only makes async-signal-safe syscalls before `execvpe`.
    - Fork-bomb containment: clamps cgroups v2 `pids.max` on slice with defensive `setrlimit(RLIMIT_NPROC)` fallback when cgroups are unavailable.
 
 4. **`src/ipc/` (Binary Framing & Transport):**
@@ -107,7 +108,7 @@
     - Synthetic workload generators simulating real-world concurrency profiles: `BROWSER` (page allocation + dirtying + sleep), `COMPILER` (matrix multiplication CPU burn), `MODEL` (large buffer tensor allocation + dirtying), `BUILD` (ephemeral disk I/O file generation + deletion).
     - Monotonic PTY input latency probe (`InputLatencyProbe`) measuring interactive keystroke round-trip latency under synthetic load via non-canonical raw slave PTY.
     - System telemetry sampler (`TelemetrySampler`) tracking `/proc/meminfo` (MemTotal, MemAvailable, SwapUsed) and KSM deduplication deltas.
-    - Comparative gauntlet runner (`BenchmarkRunner`) executing baseline unmanaged concurrent tasks vs virmux-managed tasks (with `AdmissionGate`, Core 0-1 shielding, and OOM score adjustment) across a 12-terminal matrix.
+    - Comparative gauntlet runner (`BenchmarkRunner`) executing baseline unmanaged concurrent tasks vs virmux-managed tasks (with `AdmissionGate`, Core 0-1 shielding, and OOM score adjustment) across a 12-terminal matrix. Workload processes are forked and parked before the suite starts any thread, then released by their worker thread after admission, so no fork happens in a multi-threaded process.
     - JSON export and human-readable comparative reporting (`format_comparison_table`, `format_comparison_json`).
 
 ---
