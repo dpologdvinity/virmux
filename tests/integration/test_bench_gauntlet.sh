@@ -134,17 +134,17 @@ echo -e "\n${BOLD}Test 2: Report generation (--input and stdin pipe)${RESET}"
 # Sub-test 2a: virmux bench report --input <path>
 REPORT_FILE_OUT="$("$VIRMUX" bench report --input "$QUICK_JSON")"
 
-if ! echo "$REPORT_FILE_OUT" | grep -qi "Peak.*RAM"; then
+if ! grep -qi "Peak.*RAM" <<<"$REPORT_FILE_OUT"; then
   log_error "Report (--input) missing 'Peak RAM' metric in table output"
   exit 1
 fi
 
-if ! echo "$REPORT_FILE_OUT" | grep -qi "Input Lag"; then
+if ! grep -qi "Input Lag" <<<"$REPORT_FILE_OUT"; then
   log_error "Report (--input) missing 'Input Lag' metric in table output"
   exit 1
 fi
 
-if ! echo "$REPORT_FILE_OUT" | grep -qi "Wall-Clock Time"; then
+if ! grep -qi "Wall-Clock Time" <<<"$REPORT_FILE_OUT"; then
   log_error "Report (--input) missing 'Wall-Clock Time' metric in table output"
   exit 1
 fi
@@ -154,17 +154,17 @@ log_success "virmux bench report --input verified ANSI table columns (Peak RAM, 
 # Sub-test 2b: stdin pipe
 REPORT_PIPE_OUT=$(cat "$QUICK_JSON" | "$VIRMUX" bench report)
 
-if ! echo "$REPORT_PIPE_OUT" | grep -qi "Peak.*RAM"; then
+if ! grep -qi "Peak.*RAM" <<<"$REPORT_PIPE_OUT"; then
   log_error "Report (stdin) missing 'Peak RAM' metric in table output"
   exit 1
 fi
 
-if ! echo "$REPORT_PIPE_OUT" | grep -qi "Input Lag"; then
+if ! grep -qi "Input Lag" <<<"$REPORT_PIPE_OUT"; then
   log_error "Report (stdin) missing 'Input Lag' metric in table output"
   exit 1
 fi
 
-if ! echo "$REPORT_PIPE_OUT" | grep -qi "Wall-Clock Time"; then
+if ! grep -qi "Wall-Clock Time" <<<"$REPORT_PIPE_OUT"; then
   log_error "Report (stdin) missing 'Wall-Clock Time' metric in table output"
   exit 1
 fi

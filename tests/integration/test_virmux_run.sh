@@ -81,7 +81,7 @@ log_success "virmux run --cores 4 correctly spoofed os.cpu_count() == 4"
 echo -e "\n${BOLD}Test 2: Virtual /proc/meminfo reporting${RESET}"
 
 MEM_OUT=$("$VIRMUX" run --mem 1G -- grep MemTotal /proc/meminfo)
-if echo "$MEM_OUT" | grep -q "1048576 kB"; then
+if grep -q "1048576 kB" <<<"$MEM_OUT"; then
   log_success "virmux run --mem 1G reported synthetic MemTotal: 1048576 kB (1GB)"
 else
   log_error "MemTotal mismatch for 1G: expected '1048576 kB', got '${MEM_OUT}'"
@@ -89,7 +89,7 @@ else
 fi
 
 MEM_OUT_2G=$("$VIRMUX" run --mem 2G -- grep MemTotal /proc/meminfo)
-if echo "$MEM_OUT_2G" | grep -q "2097152 kB"; then
+if grep -q "2097152 kB" <<<"$MEM_OUT_2G"; then
   log_success "virmux run --mem 2G reported synthetic MemTotal: 2097152 kB (2GB)"
 else
   log_error "MemTotal mismatch for 2G: expected '2097152 kB', got '${MEM_OUT_2G}'"
@@ -131,7 +131,7 @@ chmod +x "$MOCK_TOOL"
 BROWSER_OUT=$("$VIRMUX" run -- /bin/sh -c "\"${MOCK_CHROMIUM}\" --remote-debugging-port=9222 http://localhost:8080")
 
 for flag in "--disable-gpu" "--single-process" "--disable-software-rasterizer" "--remote-debugging-port=9222" "http://localhost:8080"; do
-  if ! echo "$BROWSER_OUT" | grep -q -- "$flag"; then
+  if ! grep -q -- "$flag" <<<"$BROWSER_OUT"; then
     log_error "Expected flag '${flag}' not found in mock browser argv output"
     echo "Actual output:" >&2
     echo "$BROWSER_OUT" >&2
@@ -142,7 +142,7 @@ log_success "Mock browser binary intercepted and slim flags injected"
 
 # Verify non-browser binary does not receive slim flags
 TOOL_OUT=$("$VIRMUX" run -- /bin/sh -c "\"${MOCK_TOOL}\" --verbose")
-if echo "$TOOL_OUT" | grep -q -- "--disable-gpu"; then
+if grep -q -- "--disable-gpu" <<<"$TOOL_OUT"; then
   log_error "Non-browser tool unexpectedly received slim flags"
   exit 1
 fi

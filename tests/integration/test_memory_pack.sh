@@ -87,7 +87,7 @@ echo -e "\n${BOLD}Test 1: virmux stats table output${RESET}"
 
 STATS_OUT=$("$VIRMUX" stats)
 for expected in "Host Physical & Swap Memory" "Kernel Samepage Merging" "zram In-RAM Compressed Swap"; do
-  if ! echo "$STATS_OUT" | grep -q -- "$expected"; then
+  if ! grep -q -- "$expected" <<<"$STATS_OUT"; then
     log_error "Expected section '${expected}' not found in 'virmux stats' output"
     echo "$STATS_OUT" >&2
     exit 1
@@ -151,7 +151,7 @@ fi
 WORKER_PID=$(cat "$WORKER_PID_FILE")
 
 PACK_OUT=$("$VIRMUX" pack "$WORKER_PID")
-if echo "$PACK_OUT" | grep -q "Compacted 1 process(es)"; then
+if grep -q "Compacted 1 process(es)" <<<"$PACK_OUT"; then
   log_success "virmux pack compacted live target process (${PACK_OUT})"
 else
   log_error "virmux pack failed to compact target process: ${PACK_OUT}"

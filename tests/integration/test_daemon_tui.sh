@@ -161,13 +161,13 @@ SESSION_NAME=$(echo "$LIST_JSON" | python3 -c "import sys, json; data = json.loa
 SH_PID=$(echo "$LIST_JSON" | python3 -c "import sys, json; data = json.load(sys.stdin); print(data[0]['pid'])")
 CHILD_WORKERS=$(pgrep -P "$SH_PID" 2>/dev/null || true)
 
-if ! echo "$TABLE_OUT" | grep -q "RUNNING"; then
+if ! grep -q "RUNNING" <<<"$TABLE_OUT"; then
   log_error "'virmux list' table output does not contain 'RUNNING'"
   echo "$TABLE_OUT" >&2
   exit 1
 fi
 
-if ! echo "$TABLE_OUT" | grep -q "$SESSION_NAME"; then
+if ! grep -q "$SESSION_NAME" <<<"$TABLE_OUT"; then
   log_error "'virmux list' table output does not contain session name '$SESSION_NAME'"
   echo "$TABLE_OUT" >&2
   exit 1
@@ -248,7 +248,7 @@ echo -e "\n${BOLD}Test 5: Headless TUI Snapshot${RESET}"
 
 OUTPUT=$("$VIRMUX" top --headless)
 for expected in "VIRMUX v" "Linux" "Cores" "Host Load:" "[j/k] Navigate" "[K] Kill"; do
-  if ! echo "$OUTPUT" | grep -Fq "$expected"; then
+  if ! grep -Fq "$expected" <<<"$OUTPUT"; then
     log_error "Headless TUI snapshot missing expected substring: '$expected'"
     echo "$OUTPUT" >&2
     exit 1

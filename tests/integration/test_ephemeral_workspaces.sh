@@ -138,7 +138,7 @@ mkdir -p "$TEST_CAS_DIR/objects/${MOCK_KEY:0:2}"
 echo "sample mock cas payload" > "$TEST_CAS_DIR/objects/${MOCK_KEY:0:2}/$MOCK_KEY"
 
 STATS_TABLE_OUT=$("$VIRMUX" cas stats)
-if ! echo "$STATS_TABLE_OUT" | grep -q "Virmux Content-Addressable Storage (CAS)"; then
+if ! grep -q "Virmux Content-Addressable Storage (CAS)" <<<"$STATS_TABLE_OUT"; then
   log_error "Header 'Virmux Content-Addressable Storage (CAS)' not found in 'virmux cas stats' output"
   echo "$STATS_TABLE_OUT" >&2
   exit 1
@@ -154,7 +154,7 @@ log_success "virmux cas stats table and JSON schema verified successfully"
 echo -e "\n${BOLD}Test 5: virmux cas clean${RESET}"
 
 CLEAN_OUT=$("$VIRMUX" cas clean --max-bytes 0)
-if ! echo "$CLEAN_OUT" | grep -q "Pruned"; then
+if ! grep -q "Pruned" <<<"$CLEAN_OUT"; then
   log_error "'virmux cas clean --max-bytes 0' did not report pruned objects: ${CLEAN_OUT}"
   exit 1
 fi
