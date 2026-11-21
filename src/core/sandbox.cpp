@@ -323,6 +323,12 @@ std::vector<std::string> build_child_environment(
  * threads from pthread_atfork() handlers. No CLONE_VM: the child gets a
  * copy-on-write address space, so the stack can be unmapped right away.
  *
+ * Sanitizer caveat (accepted): clone() bypasses the sanitizer runtimes'
+ * fork-time lock handling, so a sanitizer-internal lock held by another
+ * thread at clone time would stay held in the child. The child only issues
+ * a few intercepted libc calls before execvpe(), and no hang has been
+ * observed across repeated TSan/ASan runs; production builds are unaffected.
+ *
  * @return Child pid, or -1 on failure.
  */
 pid_t clone_sandbox_child(ChildLaunchPlan& plan, bool new_namespaces) {
