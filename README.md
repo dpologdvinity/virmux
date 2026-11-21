@@ -5,6 +5,9 @@
 
 [![CI](https://github.com/dpologdvinity/virmux/actions/workflows/ci.yml/badge.svg)](https://github.com/dpologdvinity/virmux/actions/workflows/ci.yml)
 [![Sanitizers](https://github.com/dpologdvinity/virmux/actions/workflows/sanitizers.yml/badge.svg)](https://github.com/dpologdvinity/virmux/actions/workflows/sanitizers.yml)
+[![Lint](https://github.com/dpologdvinity/virmux/actions/workflows/lint.yml/badge.svg)](https://github.com/dpologdvinity/virmux/actions/workflows/lint.yml)
+[![Fuzz](https://github.com/dpologdvinity/virmux/actions/workflows/fuzz.yml/badge.svg)](https://github.com/dpologdvinity/virmux/actions/workflows/fuzz.yml)
+[![CodeQL](https://github.com/dpologdvinity/virmux/actions/workflows/codeql.yml/badge.svg)](https://github.com/dpologdvinity/virmux/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Standard: C++20 / C17](https://img.shields.io/badge/Standard-C%2B%2B20%20%7C%20C17-blue.svg)](https://en.wikipedia.org/wiki/C%2B%2B20)
 [![Platform: Linux / WSL2](https://img.shields.io/badge/Platform-Linux%20%7C%20WSL2-orange.svg)](https://learn.microsoft.com/en-us/windows/wsl/)

@@ -5,6 +5,21 @@ All notable changes to `virmux` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- CI: lint workflow (pinned clang-format/clang-tidy, markdownlint, actionlint), arm64 and newest-toolchain (Fedora) builds, coverage summary, TSan, CodeQL, libFuzzer fuzzing on PRs and nightly, and attested release tarballs on version tags.
+- libFuzzer harnesses for IPC frames, daemon requests, session-list JSON, bench report JSON and size arguments (`-Dfuzzing=true`).
+
+### Fixed
+
+- Synthetic `/proc/meminfo` is only exported to sandboxes when fully written.
+- Backgrounded daemon exits if it cannot report readiness, and treats a failed `chdir("/")` as an init failure.
+- Session-list JSON parsing no longer reads past the end of its input, and rejects overflowing timestamps.
+- Bench comparison JSON: range-checked integers, string-aware brace matching and escaped `mode` values.
+- Page-cache eviction tests are skipped instead of failing when `/tmp` is tmpfs.
+
 ## [0.1.0] - 2026-11-14
 
 ### Added
