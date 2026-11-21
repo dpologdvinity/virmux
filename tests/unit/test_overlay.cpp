@@ -55,7 +55,7 @@ void cleanup_test_dir(const std::string& path) {
  */
 template <typename Body>
 pid_t clone_child(Body& body, int extra_flags) {
-  constexpr size_t kStackSize = 1024 * 1024;
+  constexpr size_t kStackSize = size_t{1024} * 1024;
   void* stack = ::mmap(nullptr, kStackSize, PROT_READ | PROT_WRITE,
                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0);
   if (stack == MAP_FAILED) {

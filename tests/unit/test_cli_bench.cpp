@@ -541,7 +541,7 @@ void test_runner_stop_cancellation(void) {
   TEST_ASSERT_EQUAL_INT(0, ::sigaction(SIGALRM, &sa, &old_alrm));
   g_alarm_runner.store(&runner);
   struct itimerval fire_once{};
-  fire_once.it_value.tv_usec = 50 * 1000;
+  fire_once.it_value.tv_usec = 50000;  // 50 ms
   TEST_ASSERT_EQUAL_INT(0, ::setitimer(ITIMER_REAL, &fire_once, nullptr));
 
   // Request 10-second run; should abort early via request_stop()

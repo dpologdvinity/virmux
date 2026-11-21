@@ -211,7 +211,7 @@ struct ChildLaunchPlan {
 constexpr char kSandboxOomScoreAdj[] = "800\n";
 
 /// Stack for the cloned child; it only runs a few syscalls before execve().
-constexpr size_t kChildStackSize = 1024 * 1024;
+constexpr size_t kChildStackSize = size_t{1024} * 1024;
 
 /** @brief Writes NUL-terminated @p text to stderr. Async-signal-safe. */
 void child_report(const char* text) noexcept {
@@ -304,7 +304,10 @@ std::vector<std::string> build_child_environment(
     }
   }
   for (const auto& [key, value] : overrides) {
-    env.push_back(key + "=" + value);
+    std::string entry = key;
+    entry += '=';
+    entry += value;
+    env.push_back(std::move(entry));
   }
   return env;
 }
