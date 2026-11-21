@@ -1,0 +1,156 @@
+# Publish a GitHub release when a `vX.Y.Z` tag is pushed.
+#
+# virmux installs an LD_PRELOAD library into every sandboxed process, so users
+# need to know exactly what they are running. Each release therefore ships:
+#   - x86_64 and arm64 tarballs built natively on Ubuntu 22.04 (oldest
+#     supported glibc, so the binaries also run on newer distros),
+#   - a SHA256SUMS file,
+#   - SLSA build-provenance attestations, verifiable with
+#     `gh attestation verify <tarball> --repo dpologdvinity/virmux`,
+#   - release notes taken from the matching CHANGELOG.md section.
+# Every tarball is extracted and smoke-tested before anything is published.
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Validate tag and extract notes
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check tag matches meson project version
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          project_version=$(sed -nE "s/^  version: '([^']+)',$/\1/p" meson.build)
+          if [[ "$version" != "$project_version" ]]; then
+            echo "::error::Tag $TAG does not match meson.build version $project_version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Extract release notes from CHANGELOG.md
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [[ ! -s release-notes.md ]]; then
+            echo "::error::CHANGELOG.md has no '## [$VERSION]' section"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-notes
+          path: release-notes.md
+
+  build:
+    name: Build ${{ matrix.arch }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    env:
+      DIST: virmux-${{ needs.prepare.outputs.version }}-linux-${{ matrix.arch }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-virmux
+
+      - name: Build
+        run: |
+          meson setup build --buildtype=release -Db_ndebug=true \
+            --prefix=/ --libdir=lib -Dwarning_level=3 -Dwerror=true
+          ninja -C build
+
+      - name: Test
+        run: meson test -C build --print-errorlogs
+
+      # Layout matches what virmux searches at runtime: bin/virmux finds
+      # ../lib/libvirmux_intercept.so, so the tree can be unpacked under any
+      # prefix (/usr/local, ~/.local, /opt/virmux).
+      - name: Package
+        run: |
+          meson install -C build --destdir "$PWD/stage/$DIST" --strip
+          cp LICENSE README.md CHANGELOG.md "stage/$DIST/"
+          tar -C stage -czf "$DIST.tar.gz" "$DIST"
+
+      - name: Smoke-test the packaged tarball
+        run: |
+          mkdir smoke
+          tar -C smoke -xzf "$DIST.tar.gz"
+          bin="smoke/$DIST/bin/virmux"
+          "$bin" --version | grep -Fx "virmux $VERSION"
+          preload=$("$bin" run -- printenv LD_PRELOAD)
+          [[ "$preload" == *"/smoke/$DIST/lib/libvirmux_intercept.so"* ]] || {
+            echo "::error::Sandboxed process did not preload the packaged interceptor: '$preload'"
+            exit 1
+          }
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-${{ matrix.arch }}
+          path: ${{ env.DIST }}.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum virmux-*.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/virmux-*.tar.gz
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "virmux $TAG" \
+            --notes-file dist/release-notes.md \
+            --verify-tag \
+            dist/virmux-*.tar.gz dist/SHA256SUMS
