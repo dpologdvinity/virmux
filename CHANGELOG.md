@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Session-list JSON parsing no longer reads past the end of its input, and rejects overflowing timestamps.
 - Bench comparison JSON: range-checked integers, string-aware brace matching and escaped `mode` values.
 - Page-cache eviction tests are skipped instead of failing when `/tmp` is tmpfs.
+- `bench run --tasks/--duration` and `top --refresh` reject malformed or out-of-range values instead of silently misreading them.
+- `checkpoint` fails (and removes the partial checkpoint) when nothing could be frozen, instead of reporting success.
+- Sessions are only reported running after a successful thaw; vanished processes are marked dead, and RSS no longer reports stale values.
+- Sandboxed commands are launched with `clone()` and an async-signal-safe child, fixing ephemeral runs started from multi-threaded processes.
+- Benchmark workloads are forked before any thread starts, removing a fork-after-threads deadlock risk.
 
 ## [0.1.0] - 2026-11-14
 

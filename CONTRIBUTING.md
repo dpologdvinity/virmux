@@ -72,6 +72,10 @@ npm run lint:md
 actionlint
 ```
 
+If the Fuzz workflow fails on your pull request, the uploaded reproducer may
+expose a bug that predates your change. It is still a real bug: fix it or open
+an issue with the reproducer attached.
+
 GitHub Actions are pinned to commit SHAs; Dependabot updates them weekly in a
 single grouped pull request.
 
