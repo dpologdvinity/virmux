@@ -54,6 +54,7 @@ reproduced locally with the command shown.
 | **Fuzz** (`fuzz.yml`) | libFuzzer on every parser of untrusted socket/JSON input: 2 minutes per target on PRs, 15 minutes nightly with an accumulated corpus. | See [`tests/fuzz/README.md`](tests/fuzz/README.md) |
 | **CodeQL** (`codeql.yml`) | Taint-tracking security analysis across the socket, `/proc` and mount boundaries; weekly re-scan for new queries. | GitHub only |
 | **Release** (`release.yml`) | On a `vX.Y.Z` tag: smoke-tested x86_64/arm64 tarballs, `SHA256SUMS` and SLSA provenance (`gh attestation verify`). The tag must match `version` in `meson.build`, and `CHANGELOG.md` must have a section for it. | `meson install -C build --destdir stage` |
+| **Claude** (`claude.yml`) | On-demand assistant: mention `@claude` in an issue, PR comment or review to diagnose CI failures, answer questions or push a fix. Only the owner and collaborators can trigger it; automatic review is left to CodeRabbit. | GitHub only |
 
 ### Local lint tools
 
