@@ -1,0 +1,53 @@
+# CodeQL semantic security analysis of the C/C++ sources.
+#
+# virmux parses messages from a Unix socket any local process can reach,
+# reads /proc and sysfs, builds overlay mounts and execs user commands inside
+# namespaces. CodeQL's security-extended queries track tainted data across
+# those boundaries (path injection, unchecked sizes, TOCTOU file access) in a
+# way compiler warnings and sanitizers cannot. The weekly run picks up newly
+# published queries even when the code has not changed.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (c-cpp)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-virmux
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          languages: c-cpp
+          build-mode: manual
+          queries: security-extended
+
+      - name: Build
+        run: |
+          meson setup build --buildtype=debug
+          ninja -C build
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          category: /language:c-cpp
