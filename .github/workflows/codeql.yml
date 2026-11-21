@@ -19,9 +19,11 @@ on:
 permissions:
   contents: read
 
+# Scheduled runs get their own group and are never cancelled, so a push to
+# main cannot abort the long nightly/weekly analysis.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   analyze:
