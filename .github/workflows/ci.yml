@@ -81,10 +81,12 @@ jobs:
     runs-on: ubuntu-24.04
     # --privileged lets the sandbox create user namespaces and overlay mounts;
     # a tmpfs /tmp avoids stacking overlayfs on the container's own overlay
-    # root, and doubles as coverage for distros whose /tmp is tmpfs.
+    # root, and doubles as coverage for distros whose /tmp is tmpfs. --init
+    # runs a real PID 1 that reaps orphans: the daemon detaches via setsid(),
+    # and without a reaper its exit leaves a zombie that still looks alive.
     container:
       image: fedora:latest
-      options: --privileged --tmpfs /tmp:exec
+      options: --privileged --init --tmpfs /tmp:exec
     strategy:
       fail-fast: false
       matrix:
