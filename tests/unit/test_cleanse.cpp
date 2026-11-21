@@ -8,8 +8,10 @@ extern "C" {
 }
 
 #include <fcntl.h>
+#include <linux/magic.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/vfs.h>
 #include <unistd.h>
 
 #include <cstdlib>
@@ -68,6 +70,32 @@ bool is_file_in_page_cache(const std::string& path, size_t size) {
   return false;
 }
 
+/**
+ * @brief Whether page cache eviction is observable for files under dir.
+ *
+ * tmpfs and ramfs (the default /tmp on Fedora and Arch) keep file data only
+ * in the page cache, so eviction is impossible there and residency assertions
+ * cannot hold.
+ */
+bool page_cache_evictable(const char* dir) {
+  struct statfs fs{};
+  if (::statfs(dir, &fs) != 0) {
+    return true;
+  }
+  return fs.f_type != TMPFS_MAGIC && fs.f_type != RAMFS_MAGIC;
+}
+
+/**
+ * @brief Mark the current test ignored when /tmp cannot evict page cache.
+ *
+ * Unity's TEST_IGNORE longjmps out of the running test, so this is safe to
+ * call from a helper.
+ */
+void skip_unless_tmp_evictable() {
+  if (!page_cache_evictable("/tmp")) {
+    TEST_IGNORE_MESSAGE("/tmp is tmpfs/ramfs; eviction not observable");
+  }
+}
 }  // namespace
 
 void test_cleanse_path_evicts_cache_without_deleting_file(void) {
@@ -90,6 +118,7 @@ void test_cleanse_path_evicts_cache_without_deleting_file(void) {
 }
 
 void test_cleanse_path_actually_evicts_page_cache(void) {
+  skip_unless_tmp_evictable();
   char file_template[] = "/tmp/virmux_cleanse_page_cache_XXXXXX";
   int fd = ::mkstemp(file_template);
   TEST_ASSERT_TRUE(fd >= 0);
@@ -138,6 +167,7 @@ void test_cleanse_path_actually_evicts_page_cache(void) {
 }
 
 void test_cleanse_path_directory_recursive(void) {
+  skip_unless_tmp_evictable();
   char dir_template[] = "/tmp/virmux_cleanse_dir_XXXXXX";
   char* tmp_dir = ::mkdtemp(dir_template);
   TEST_ASSERT_NOT_NULL(tmp_dir);
@@ -196,6 +226,7 @@ void test_cleanse_path_directory_recursive(void) {
 }
 
 void test_cleanse_path_directory_continues_past_unreadable(void) {
+  skip_unless_tmp_evictable();
   char dir_template[] = "/tmp/virmux_cleanse_perm_XXXXXX";
   char* tmp_dir = ::mkdtemp(dir_template);
   TEST_ASSERT_NOT_NULL(tmp_dir);
