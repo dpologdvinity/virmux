@@ -1,10 +1,41 @@
+# clang-tidy configuration for virmux — enforced as a zero-findings CI gate.
+#
+# Enabled families:
+#   bugprone-*        likely bugs (unchecked conversions, swallowed errors, ...)
+#   clang-analyzer-*  path-sensitive static analysis (null derefs, dead stores,
+#                     leaks, blocking calls inside critical sections, ...)
+#   performance-*     avoidable copies / allocations with mechanical fixes
+#
+# Exclusions (each is a deliberate decision, not a suppression of real bugs):
+#   bugprone-easily-swappable-parameters
+#       Fires on nearly every function taking two ints/strings (e.g. POSIX-style
+#       (fd, flags) or (path, mode) signatures). Fixing it would mean wrapping
+#       every scalar in a strong type, which is out of proportion for this
+#       codebase; the signal-to-noise ratio is too low to gate CI on.
+#   bugprone-signed-bitwise
+#       Flags the standard POSIX flag idiom (O_WRONLY | O_CREAT, S_IRUSR | ...)
+#       because the libc macros are signed ints. These expressions are correct
+#       by definition of the POSIX API and cannot be rewritten without casts
+#       that would only obscure them.
+#   performance-enum-size
+#       Suggests shrinking every enum's underlying type to uint8_t. None of our
+#       enums are stored in bulk, so there is no measurable gain, and the
+#       underlying type is a deliberate interface decision: IpcMsgType is the
+#       16-bit message-type field of the IPC wire protocol and must stay
+#       uint16_t. The rest of performance-* is enforced.
+#
+# Every finding is an error (WarningsAsErrors). Only the project's own headers
+# are analysed; the vendored Unity test framework (tests/unity) and system
+# headers are excluded. Use NOLINT only for genuine false positives, always as
+# `NOLINT(check-name): reason`.
 Checks: >
   -*,
   bugprone-*,
   clang-analyzer-*,
-  cppcoreguidelines-*,
-  modernize-*,
   performance-*,
-  readability-*
-WarningsAsErrors: ''
-HeaderFilterRegex: '.*'
+  -bugprone-easily-swappable-parameters,
+  -bugprone-signed-bitwise,
+  -performance-enum-size
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*/(include/virmux|src)/.*\.(h|hpp)$'
+ExcludeHeaderFilterRegex: '.*/tests/unity/.*'

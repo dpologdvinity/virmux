@@ -91,6 +91,12 @@ single grouped pull request.
 ## Code Quality & Hygiene
 
 - **Standard:** C17 standard compliance with `-Wall -Wextra -Wpedantic -Werror`.
+- **Static Analysis:** `clang-tidy` (pinned to 23.1.3, `pipx install clang-tidy==23.1.3`) is a zero-findings gate using the curated checks in `.clang-tidy` (`bugprone-*`, `clang-analyzer-*`, `performance-*`; every finding is an error). Run it before pushing:
+  ```bash
+  CC=clang CXX=clang++ meson setup build-tidy
+  run-clang-tidy.py -p build-tidy -quiet '^(?!.*/tests/unity/).*/(src|cli|tests)/.*\.(c|cpp)$'
+  ```
+  Fix findings at the root cause. Suppress only genuine false positives, as `// NOLINTNEXTLINE(check-name): reason`.
 - **No Memory Leaks:** All heap allocations must be paired with deterministic cleanups. Code is verified with AddressSanitizer (`-Db_sanitize=address`).
 - **No Absolute Home Paths:** Never commit or hardcode absolute home paths. Always use `~`, `$HOME`, or repo-relative paths.
 - **Secrets:** Never commit API keys, tokens, or local credentials.
