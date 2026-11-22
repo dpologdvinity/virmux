@@ -247,4 +247,43 @@ class CgroupSlice {
   bool write_file(const std::string& filename, const std::string& value);
 };
 
+/// virmux's own directory under the delegation root; runs live beneath it.
+inline constexpr const char* kVirmuxCgroupDir = "virmux";
+
+/**
+ * @brief Controllers from @p available that should be enabled for children
+ * but are not yet in @p enabled (only cpu, cpuset, memory and pids).
+ * @param available Contents of cgroup.controllers.
+ * @param enabled Contents of cgroup.subtree_control.
+ * @return Controller names in @p available's order.
+ */
+[[nodiscard]] std::vector<std::string> controllers_to_enable(
+    const std::string& available, const std::string& enabled);
+
+/**
+ * @brief Create the cgroup for one run: `<D>/virmux/<name>`.
+ *
+ * Creates `<D>/virmux` if needed and enables in it every controller that D
+ * hands down. Only cgroups virmux created itself are ever written: D's own
+ * files are never touched. The returned slice removes its directory (rmdir)
+ * when destroyed; a cgroup that still has processes is left for
+ * sweep_stale_runs().
+ * @param delegation Result of find_cgroup_delegation().
+ * @param name Run cgroup name, conventionally "run-<pid>-<seq>".
+ * @return The slice; check is_valid() (false without delegation or on error).
+ */
+[[nodiscard]] CgroupSlice create_run(const CgroupDelegation& delegation,
+                                     const std::string& name);
+
+/**
+ * @brief Remove `run-<pid>-<seq>` cgroups under @p virmux_dir whose creating
+ * virmux process no longer exists.
+ *
+ * Uses rmdir only, so a cgroup that still holds processes (EBUSY) or has
+ * children is left alone.
+ * @param virmux_dir The `<D>/virmux` directory.
+ * @return Number of cgroups removed.
+ */
+size_t sweep_stale_runs(const std::string& virmux_dir);
+
 }  // namespace virmux

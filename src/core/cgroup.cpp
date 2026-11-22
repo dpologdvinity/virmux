@@ -7,13 +7,18 @@
 #include "virmux/cgroup.hpp"
 
 #include <fcntl.h>
+#include <signal.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <sstream>
 #include <string_view>
@@ -112,10 +117,10 @@ CgroupSlice::CgroupSlice(std::string name) : name_(std::move(name)) {}
 
 CgroupSlice::~CgroupSlice() {
   if (created_ && !path_.empty()) {
-    std::error_code ec;
-    std::filesystem::remove(path_, ec);
-    // Error on removal (e.g. active child processes or EBUSY) is safely
-    // swallowed
+    // cgroupfs directories are removed with rmdir even though they list
+    // control files. EBUSY (processes outlived us) is expected and tolerated;
+    // sweep_stale_runs() retries later.
+    (void)::rmdir(path_.c_str());
   }
 }
 
@@ -131,8 +136,7 @@ CgroupSlice::CgroupSlice(CgroupSlice&& other) noexcept
 CgroupSlice& CgroupSlice::operator=(CgroupSlice&& other) noexcept {
   if (this != &other) {
     if (created_ && !path_.empty()) {
-      std::error_code ec;
-      std::filesystem::remove(path_, ec);
+      (void)::rmdir(path_.c_str());
     }
     name_ = std::move(other.name_);
     path_ = std::move(other.path_);
@@ -359,5 +363,87 @@ const std::string& CgroupSlice::name() const noexcept { return name_; }
 bool CgroupSlice::is_valid() const noexcept { return valid_; }
 
 bool CgroupSlice::valid() const noexcept { return valid_; }
+
+std::vector<std::string> controllers_to_enable(const std::string& available,
+                                               const std::string& enabled) {
+  static constexpr std::string_view kWanted[] = {"cpu", "cpuset", "memory",
+                                                 "pids"};
+  std::vector<std::string> on;
+  std::istringstream enabled_in(enabled);
+  for (std::string c; enabled_in >> c;) {
+    on.push_back(c);
+  }
+  std::vector<std::string> todo;
+  std::istringstream available_in(available);
+  for (std::string c; available_in >> c;) {
+    const bool wanted = std::find(std::begin(kWanted), std::end(kWanted), c) !=
+                        std::end(kWanted);
+    if (wanted && std::find(on.begin(), on.end(), c) == on.end()) {
+      todo.push_back(c);
+    }
+  }
+  return todo;
+}
+
+CgroupSlice create_run(const CgroupDelegation& delegation,
+                       const std::string& name) {
+  CgroupSlice slice(name);
+  if (!delegation.usable() || delegation.root.empty() || name.empty()) {
+    return slice;
+  }
+  const std::string base = delegation.root + "/" + kVirmuxCgroupDir;
+  if (::mkdir(base.c_str(), 0755) != 0 && errno != EEXIST) {
+    return slice;
+  }
+
+  // Hand every controller D offers down to the runs. Each is enabled on its
+  // own so one refusal (say, cpuset) does not block the others.
+  auto slurp = [](const std::string& file) {
+    std::ifstream in(file);
+    std::ostringstream text;
+    text << in.rdbuf();
+    return text.str();
+  };
+  const std::string control = base + "/cgroup.subtree_control";
+  for (const auto& c : controllers_to_enable(
+           slurp(base + "/cgroup.controllers"), slurp(control))) {
+    const int fd = ::open(control.c_str(), O_WRONLY | O_CLOEXEC);
+    if (fd >= 0) {
+      ScopedFd scoped(fd);
+      const std::string req = "+" + c;
+      (void)::write(scoped.get(), req.data(), req.size());
+    }
+  }
+
+  (void)slice.setup(base);
+  return slice;
+}
+
+size_t sweep_stale_runs(const std::string& virmux_dir) {
+  size_t removed = 0;
+  std::error_code ec;
+  for (const auto& entry :
+       std::filesystem::directory_iterator(virmux_dir, ec)) {
+    const std::string fname = entry.path().filename().string();
+    if (!fname.starts_with("run-")) {
+      continue;
+    }
+    // run-<pid>-<seq>: the pid of the virmux process that created it.
+    const char* digits = fname.c_str() + 4;
+    char* end = nullptr;
+    errno = 0;
+    const long pid = std::strtol(digits, &end, 10);
+    if (end == digits || *end != '-' || errno != 0 || pid <= 0) {
+      continue;
+    }
+    if (::kill(static_cast<pid_t>(pid), 0) == 0 || errno != ESRCH) {
+      continue;  // creator alive (or not ours to judge)
+    }
+    if (::rmdir(entry.path().c_str()) == 0) {
+      ++removed;
+    }
+  }
+  return removed;
+}
 
 }  // namespace virmux

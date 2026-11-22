@@ -9,6 +9,7 @@ extern "C" {
 
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -16,8 +17,10 @@ extern "C" {
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
+#include <iterator>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "unit/fake_cgroupfs.hpp"
 #include "virmux/cgroup.hpp"
@@ -423,6 +426,110 @@ void test_delegation_missing_proc_self_cgroup_falls_back(void) {
   TEST_ASSERT_FALSE(virmux::find_cgroup_delegation(probe).usable());
 }
 
+// ---------------------------------------------------------------------------
+// Run cgroups
+// ---------------------------------------------------------------------------
+
+void test_controllers_to_enable_skips_enabled_and_unknown(void) {
+  const auto todo = virmux::controllers_to_enable(
+      "cpuset cpu io memory pids hugetlb\n", "cpu\n");
+  const std::vector<std::string> expected{"cpuset", "memory", "pids"};
+  TEST_ASSERT_TRUE(expected == todo);
+  TEST_ASSERT_TRUE(virmux::controllers_to_enable("", "").empty());
+}
+
+void test_destructor_removes_created_cgroup_with_rmdir(void) {
+  virmux::testing::FakeCgroupFs fs;
+  fs.add("deleg", true);
+  fs.add("deleg/virmux", true);
+  const virmux::CgroupDelegation d{
+      .kind = virmux::DelegationKind::kUserManager,
+      .root = fs.path("deleg"),
+      .self = "",
+      .reason = "",
+  };
+  const std::string run_dir = fs.path("deleg/virmux/run-1-0");
+  {
+    virmux::CgroupSlice slice = virmux::create_run(d, "run-1-0");
+    // A plain directory has no kernel-populated cgroup.procs: not valid.
+    TEST_ASSERT_FALSE(slice.is_valid());
+    TEST_ASSERT_TRUE(std::filesystem::is_directory(run_dir));
+  }
+  TEST_ASSERT_FALSE(std::filesystem::exists(run_dir));
+  // Never removes the shared virmux dir or the delegation root.
+  TEST_ASSERT_TRUE(std::filesystem::is_directory(fs.path("deleg/virmux")));
+}
+
+void test_create_run_without_delegation_is_invalid(void) {
+  virmux::CgroupSlice slice =
+      virmux::create_run(virmux::CgroupDelegation{}, "run-1-0");
+  TEST_ASSERT_FALSE(slice.is_valid());
+}
+
+void test_sweep_removes_only_dead_runs(void) {
+  char tmpl[] = "/tmp/virmux_sweep_XXXXXX";
+  const char* base = mkdtemp(tmpl);
+  TEST_ASSERT_NOT_NULL(base);
+
+  pid_t dead = fork();
+  TEST_ASSERT_TRUE(dead >= 0);
+  if (dead == 0) {
+    _exit(0);
+  }
+  TEST_ASSERT_EQUAL_INT(dead, waitpid(dead, nullptr, 0));
+
+  const std::string b(base);
+  const std::string dead_run = b + "/run-" + std::to_string(dead) + "-0";
+  const std::string live_run = b + "/run-" + std::to_string(getpid()) + "-3";
+  const std::string busy_dead = b + "/run-" + std::to_string(dead) + "-1";
+  std::filesystem::create_directories(dead_run);
+  std::filesystem::create_directories(live_run);
+  std::filesystem::create_directories(b + "/run-garbage");
+  std::filesystem::create_directories(b + "/other");
+  // Stands in for a cgroup whose processes outlived virmux (rmdir -> EBUSY).
+  std::filesystem::create_directories(busy_dead + "/child");
+
+  TEST_ASSERT_EQUAL_size_t(1, virmux::sweep_stale_runs(b));
+  TEST_ASSERT_FALSE(std::filesystem::exists(dead_run));
+  TEST_ASSERT_TRUE(std::filesystem::exists(live_run));
+  TEST_ASSERT_TRUE(std::filesystem::exists(busy_dead));
+  TEST_ASSERT_TRUE(std::filesystem::exists(b + "/run-garbage"));
+  TEST_ASSERT_TRUE(std::filesystem::exists(b + "/other"));
+  TEST_ASSERT_EQUAL_size_t(0, virmux::sweep_stale_runs(b + "/missing"));
+
+  std::filesystem::remove_all(b);
+}
+
+void test_create_run_on_real_delegation(void) {
+  const auto d = virmux::find_cgroup_delegation(virmux::CgroupProbe::current());
+  if (!d.usable() || d.root.rfind("/sys/fs/cgroup", 0) != 0) {
+    TEST_IGNORE_MESSAGE("no delegated cgroup subtree on this machine");
+  }
+  const std::string name = "run-" + std::to_string(getpid()) + "-test";
+  std::string path;
+  {
+    virmux::CgroupSlice slice = virmux::create_run(d, name);
+    TEST_ASSERT_TRUE(slice.is_valid());
+    path = slice.path();
+    TEST_ASSERT_EQUAL_STRING((d.root + "/virmux/" + name).c_str(),
+                             path.c_str());
+    // Every controller the delegation root hands down is enabled for runs.
+    std::ifstream offered_file(d.root + "/cgroup.subtree_control");
+    std::ifstream have_file(path + "/cgroup.controllers");
+    std::string have((std::istreambuf_iterator<char>(have_file)), {});
+    have = " " + have;
+    std::string ctrl;
+    while (offered_file >> ctrl) {
+      if (ctrl == "cpu" || ctrl == "memory" || ctrl == "pids" ||
+          ctrl == "cpuset") {
+        TEST_ASSERT_NOT_NULL_MESSAGE(
+            std::strstr(have.c_str(), (" " + ctrl).c_str()), ctrl.c_str());
+      }
+    }
+  }
+  TEST_ASSERT_FALSE(std::filesystem::exists(path));
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_scoped_fd_closes_descriptor);
@@ -441,6 +548,11 @@ int main(void) {
   RUN_TEST(test_delegation_fully_writable_tree_prefers_user_manager);
   RUN_TEST(test_delegation_root_without_user_manager_uses_cgroup_root);
   RUN_TEST(test_delegation_missing_proc_self_cgroup_falls_back);
+  RUN_TEST(test_controllers_to_enable_skips_enabled_and_unknown);
+  RUN_TEST(test_destructor_removes_created_cgroup_with_rmdir);
+  RUN_TEST(test_create_run_without_delegation_is_invalid);
+  RUN_TEST(test_sweep_removes_only_dead_runs);
+  RUN_TEST(test_create_run_on_real_delegation);
   RUN_TEST(test_cgroup_move_semantics);
   RUN_TEST(test_cgroup_uninitialized_slice_operations);
   return UNITY_END();
