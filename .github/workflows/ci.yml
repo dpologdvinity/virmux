@@ -144,6 +144,8 @@ jobs:
       - uses: ./.github/actions/setup-virmux
         with:
           relax-cgroups: false
+          # systemd-run --user talks to the user manager over the session bus.
+          extra-packages: dbus-user-session
 
       - name: Configure
         run: meson setup build --buildtype=debug -Dwarning_level=3 -Dwerror=true
@@ -162,6 +164,11 @@ jobs:
             [[ -S "/run/user/${uid}/bus" ]] && break
             sleep 1
           done
+          if [[ ! -S "/run/user/${uid}/bus" ]]; then
+            echo "::error::user bus /run/user/${uid}/bus never appeared"
+            systemctl status "user@${uid}.service" --no-pager || true
+            exit 1
+          fi
           echo "XDG_RUNTIME_DIR=/run/user/${uid}" >> "$GITHUB_ENV"
           cat "/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service/cgroup.subtree_control"
 
