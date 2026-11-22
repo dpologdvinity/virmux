@@ -19,7 +19,13 @@ prefix=$(mktemp -d "${TMPDIR:-/tmp}/virmux-prefix.XXXXXX")
 trap 'rm -rf -- "$prefix"' EXIT
 
 cd "$repo_root"
-meson setup "$build_dir" --wipe --buildtype=release --prefix="$prefix" >/dev/null
+setup_args=(--buildtype=release --prefix="$prefix")
+# Each run uses a fresh prefix, so an existing build dir must be wiped. Only
+# pass --wipe then: meson < 1.0 (Ubuntu 22.04) rejects it for a new directory.
+if [[ -d "$build_dir/meson-private" ]]; then
+  setup_args+=(--wipe)
+fi
+meson setup "$build_dir" "${setup_args[@]}" >/dev/null
 ninja -C "$build_dir" >/dev/null
 meson install -C "$build_dir" --quiet
 
