@@ -102,7 +102,8 @@
 
 9. **`src/intercept/` (`libvirmux_intercept.so`):**
    - Dynamic library injected via `LD_PRELOAD`.
-   - Intercepts `sysconf(_SC_NPROCESSORS_ONLN)` and `/proc/meminfo` to spoof available hardware resources.
+   - Intercepts `sysconf(_SC_NPROCESSORS_ONLN)`, `get_nprocs()` and read-only opens of `/proc/meminfo`, `/proc/cpuinfo` and `/sys/devices/system/cpu/online` (through `open`/`openat` and their 64-bit variants, and `fopen`/`fopen64`, which glibc and C++ streams use without going through the interposable `open`). A path-to-environment table maps each file to the synthetic copy the sandbox wrote (`VIRMUX_SPOOFED_MEMINFO`, `VIRMUX_SPOOFED_CPUINFO`, `VIRMUX_SPOOFED_CPU_ONLINE`); opens that could write are never redirected.
+   - The synthetic files come from `src/core/hw_view.cpp`: meminfo from `compute_memory_limits()`, cpuinfo filtered to the pinned CPUs (`filter_cpuinfo()`), and the online list (`format_online()`). `compute_thread_env()` sets thread-pool variables (OpenMP, BLAS, `GOMAXPROCS`, Rayon, Cargo, CMake, `PYTHON_CPU_COUNT`) with an "at most N" policy. `sched_getaffinity` is not faked: Go bypasses libc, and a fake mask would make OpenMP bind to the wrong CPUs, so real pinning provides that view.
    - Intercepts Chromium/Node process launches to inject low-memory flags (`--single-process`, `--disable-gpu`, `--renderer-process-limit=1`).
 
 10. **`src/bench/` (Stress Benchmark & Gauntlet Engine):**

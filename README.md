@@ -42,11 +42,18 @@ MemTotal:        2097152 kB
 
 So `npm test`, `make -j$(nproc)`, `pytest -n auto`, PyTorch and friends start 2
 workers instead of 10, with no changes to your project. This works for every
-user, with no special permissions. It covers programs that use the system C
-library (Node, Python, most C/C++ and Rust tools) and anything that reads
-`OMP_NUM_THREADS`. The command is also pinned to that many real CPUs, so Go and
-other statically linked programs count the right number of cores too (pass
-`--no-pin` to keep all CPUs available).
+user, with no special permissions. `nproc`, Python, Node, Go, Rust,
+`/proc/cpuinfo`, `/sys/devices/system/cpu/online` and `/proc/meminfo` all agree,
+because the command is also pinned to that many real CPUs (pass `--no-pin` to
+keep all CPUs available). Statically linked programs that read `/proc/meminfo`
+themselves still see the real amount of memory.
+
+Thread-pool variables are set to the core count as well: `OMP_NUM_THREADS`,
+`OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, `NUMEXPR_NUM_THREADS`, `GOMAXPROCS`,
+`RAYON_NUM_THREADS`, `CARGO_BUILD_JOBS`, `CMAKE_BUILD_PARALLEL_LEVEL` and
+`PYTHON_CPU_COUNT`. If you already set one to a smaller number, your value is
+kept; larger or invalid values are lowered to the core count. `MAKEFLAGS` is
+left alone.
 
 **It also:**
 
