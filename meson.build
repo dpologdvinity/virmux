@@ -59,6 +59,7 @@ virmux_core_lib = static_library(
   [
     'src/core/version.cpp',
     'src/core/cgroup.cpp',
+    'src/core/hw_view.cpp',
     'src/sched/gate.cpp',
     'src/core/sandbox.cpp',
     'src/core/checkpoint.cpp',
@@ -194,6 +195,14 @@ test_cgroup_exe = executable(
 )
 
 test('test_cgroup', test_cgroup_exe, suite: 'unit')
+
+test_hw_view_exe = executable(
+  'test_hw_view',
+  'tests/unit/test_hw_view.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_hw_view', test_hw_view_exe, suite: 'unit')
 
 test_gate_exe = executable(
   'test_gate',

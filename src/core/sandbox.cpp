@@ -27,7 +27,6 @@
 #include <cstring>
 #include <filesystem>
 #include <memory>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -36,6 +35,7 @@
 #include "virmux/cgroup.hpp"
 #include "virmux/daemon.hpp"
 #include "virmux/gate.hpp"
+#include "virmux/hw_view.hpp"
 #include "virmux/intercept.h"
 #include "virmux/overlay.hpp"
 #include "virmux/scratch.hpp"
@@ -43,28 +43,6 @@
 namespace virmux {
 
 namespace {
-
-/**
- * @brief Format synthetic /proc/meminfo content based on configured memory
- * limit.
- * @param memory_limit_bytes Soft/hard memory ceiling in bytes.
- * @return Formatted meminfo text string.
- */
-std::string generate_synthetic_meminfo(uint64_t memory_limit_bytes) {
-  uint64_t total_kb = memory_limit_bytes / 1024;
-  uint64_t free_kb = (total_kb * 3) / 4;
-  uint64_t avail_kb = (total_kb * 7) / 8;
-  uint64_t swap_total_kb = total_kb / 4;
-  uint64_t swap_free_kb = swap_total_kb;
-
-  std::ostringstream oss;
-  oss << "MemTotal:        " << total_kb << " kB\n"
-      << "MemFree:         " << free_kb << " kB\n"
-      << "MemAvailable:    " << avail_kb << " kB\n"
-      << "SwapTotal:       " << swap_total_kb << " kB\n"
-      << "SwapFree:        " << swap_free_kb << " kB\n";
-  return oss.str();
-}
 
 /**
  * @brief RAII guard ensuring temporary synthetic meminfo file is unlinked.
@@ -490,6 +468,10 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
   uid_t orig_uid = ::getuid();
   gid_t orig_gid = ::getgid();
 
+  // One derivation feeds both the cgroup limits and the synthetic meminfo,
+  // so what the child sees always matches what the kernel enforces.
+  const MemoryLimits mem_limits = compute_memory_limits(cfg.memory_limit_bytes);
+
   // Generate synthetic /proc/meminfo file with unique atomic sequence per call
   uint64_t seq = s_sandbox_counter.fetch_add(1, std::memory_order_relaxed);
   std::string meminfo_path = "/tmp/virmux_" + std::to_string(::getpid()) + "_" +
@@ -500,8 +482,7 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
   // written; a truncated file would corrupt the child's /proc/meminfo view.
   bool meminfo_ready = false;
   if (mem_fd >= 0) {
-    std::string mem_content =
-        generate_synthetic_meminfo(cfg.memory_limit_bytes);
+    std::string mem_content = generate_synthetic_meminfo(mem_limits);
     meminfo_ready = write_all(mem_fd, mem_content);
     ::close(mem_fd);
   }
@@ -538,9 +519,18 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
                            std::to_string(seq) + ".slice";
   CgroupSlice slice(slice_name);
   bool cgroup_pids_active = false;
-  slice.setup("", cfg.memory_limit_bytes, cfg.cpuset_cores);
-  if (slice.is_valid() && cfg.max_pids > 0) {
-    cgroup_pids_active = slice.set_pids_max(cfg.max_pids);
+  slice.setup("", 0, cfg.cpuset_cores);
+  if (slice.is_valid()) {
+    CgroupLimits limits;
+    if (mem_limits.max > 0) {
+      limits.memory_max = mem_limits.max;
+      limits.memory_high = mem_limits.high;
+      limits.swap_max = mem_limits.swap_max;
+    }
+    (void)slice.apply_limits(limits);
+    if (cfg.max_pids > 0) {
+      cgroup_pids_active = slice.set_pids_max(cfg.max_pids);
+    }
   }
 
   // Only scan procfs and compute fallback RLIMIT_NPROC if cgroups pids.max is
