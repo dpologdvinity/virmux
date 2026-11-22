@@ -598,6 +598,20 @@ test(
   suite: 'integration',
 )
 
+# Real cgroup limits through a delegated subtree. Exits 77 (SKIP) without
+# delegation unless VIRMUX_REQUIRE_DELEGATION=1; see CONTRIBUTING.md.
+test(
+  'integration_cgroup_delegation',
+  find_program('bash'),
+  args: [
+    meson.current_source_dir() / 'tests/integration/test_cgroup_delegation.sh',
+    meson.current_build_dir(),
+  ],
+  depends: [virmux_exe, virmux_intercept_lib],
+  timeout: 120,
+  suite: 'delegation',
+)
+
 # ---------------------------------------------------------------------------
 # libFuzzer harnesses (only with -Dfuzzing=true). Each tests/fuzz/fuzz_<name>.cpp
 # becomes ./fuzz_<name>. The matching meson test (suite 'fuzz') replays the
