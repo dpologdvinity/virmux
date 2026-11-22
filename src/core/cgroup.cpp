@@ -112,23 +112,21 @@ bool CgroupSlice::setup(const std::string& base_cgroup_path,
     created_ = true;
   }
 
-  // Configure memory.high soft limit if requested
+  // A cgroup is usable once processes can join it; limits are best-effort and
+  // independent of each other (a non-delegated cpuset must not cost us the
+  // memory limit).
+  valid_ = ::access((std::filesystem::path(path_) / "cgroup.procs").c_str(),
+                    W_OK) == 0;
+  if (!valid_) {
+    return false;
+  }
+
+  CgroupLimits limits;
   if (memory_high_bytes > 0) {
-    if (!set_memory_high(memory_high_bytes)) {
-      valid_ = false;
-      return false;
-    }
+    limits.memory_high = memory_high_bytes;
   }
-
-  // Configure cpuset.cpus if requested
-  if (!cpuset_cpus_str.empty()) {
-    if (!set_cpuset(cpuset_cpus_str)) {
-      valid_ = false;
-      return false;
-    }
-  }
-
-  valid_ = true;
+  limits.cpuset_cpus = cpuset_cpus_str;
+  (void)apply_limits(limits);
   return true;
 }
 
@@ -142,26 +140,71 @@ bool CgroupSlice::write_file(const std::string& filename,
   p /= filename;
   std::string full_path = p.string();
 
-  int fd = ::open(full_path.c_str(), O_WRONLY | O_CLOEXEC | O_CREAT, 0644);
+  // No O_CREAT: on cgroupfs a missing file means the controller is not
+  // enabled here, and on any other filesystem creating it would only hide that.
+  int fd = ::open(full_path.c_str(), O_WRONLY | O_CLOEXEC);
   if (fd < 0) {
-    std::fprintf(stderr,
-                 "warning: [cgroup] failed to open '%s': %s (running in "
-                 "unprivileged fallback mode)\n",
-                 full_path.c_str(), std::strerror(errno));
+    last_errno_ = errno;
     return false;
   }
 
   ScopedFd scoped(fd);
   ssize_t written = ::write(scoped.get(), value.data(), value.size());
   if (written < 0 || static_cast<size_t>(written) != value.size()) {
-    std::fprintf(stderr,
-                 "warning: [cgroup] failed to write to '%s': %s (running in "
-                 "unprivileged fallback mode)\n",
-                 full_path.c_str(), std::strerror(errno));
+    last_errno_ = written < 0 ? errno : EIO;
     return false;
   }
 
+  last_errno_ = 0;
   return true;
+}
+
+std::vector<LimitResult> CgroupSlice::apply_limits(const CgroupLimits& limits) {
+  std::vector<LimitResult> results;
+  auto apply = [&](const char* file, std::string value) {
+    LimitResult r{.file = file, .value = std::move(value)};
+    if (path_.empty()) {
+      r.error = ENOENT;
+    } else {
+      r.applied = write_file(r.file, r.value + "\n");
+      r.error = r.applied ? 0 : last_errno_;
+    }
+    results.push_back(std::move(r));
+  };
+  if (limits.memory_max) {
+    apply("memory.max", std::to_string(*limits.memory_max));
+  }
+  if (limits.memory_high) {
+    apply("memory.high", std::to_string(*limits.memory_high));
+  }
+  if (limits.swap_max) {
+    apply("memory.swap.max", std::to_string(*limits.swap_max));
+  }
+  if (!limits.cpu_max.empty()) {
+    apply("cpu.max", limits.cpu_max);
+  }
+  if (!limits.cpuset_cpus.empty()) {
+    apply("cpuset.cpus", limits.cpuset_cpus);
+  }
+  if (limits.pids_max) {
+    apply("pids.max", *limits.pids_max == 0 ? std::string("max")
+                                            : std::to_string(*limits.pids_max));
+  }
+  return results;
+}
+
+bool CgroupSlice::set_memory_max(uint64_t bytes) {
+  return !path_.empty() &&
+         write_file("memory.max", std::to_string(bytes) + "\n");
+}
+
+bool CgroupSlice::set_swap_max(uint64_t bytes) {
+  return !path_.empty() &&
+         write_file("memory.swap.max", std::to_string(bytes) + "\n");
+}
+
+bool CgroupSlice::set_cpu_max(const std::string& value) {
+  return !path_.empty() && write_file("cpu.max", value + "\n");
 }
 
 bool CgroupSlice::set_memory_high(uint64_t bytes) {

@@ -3,16 +3,42 @@
 #include <sys/types.h>
 
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace virmux {
 
 /**
+ * @brief Resource limits to write into a cgroup. Unset fields are left alone.
+ */
+struct CgroupLimits {
+  std::optional<uint64_t> memory_max;   ///< memory.max (hard ceiling, bytes)
+  std::optional<uint64_t> memory_high;  ///< memory.high (throttle point)
+  std::optional<uint64_t> swap_max;     ///< memory.swap.max (bytes)
+  std::string cpu_max;      ///< cpu.max, e.g. "200000 100000" ("" = unset)
+  std::string cpuset_cpus;  ///< cpuset.cpus list, e.g. "2-3" ("" = unset)
+  std::optional<uint64_t> pids_max;  ///< pids.max (0 writes "max")
+};
+
+/**
+ * @brief Outcome of writing one control file.
+ */
+struct LimitResult {
+  std::string file;   ///< Control file name, e.g. "memory.max".
+  std::string value;  ///< Value that was (or would have been) written.
+  bool applied{false};
+  int error{0};  ///< errno of the failed open/write; 0 when applied.
+};
+
+/**
  * @brief Controller for Linux cgroups v2 slices.
  *
- * Configures resource limits (memory.high, cpuset.cpus), attaches processes,
+ * Configures resource limits (memory, cpu, cpuset, pids), attaches processes,
  * and controls freeze/thaw states. Degrades gracefully under unprivileged
- * environments without throwing exceptions or aborting.
+ * environments without throwing exceptions or aborting. Control files are
+ * only ever written, never created: a missing file means the controller is
+ * not enabled for this cgroup.
  */
 class CgroupSlice {
  public:
@@ -50,12 +76,45 @@ class CgroupSlice {
    * @param memory_high_bytes Soft memory ceiling in bytes (0 to leave unset).
    * @param cpuset_cpus_str Allowed CPU core list (e.g. "2-11", empty to leave
    * unset).
-   * @return true on success, false on permission/path error (unprivileged
-   * fallback).
+   * Limits are applied independently; a limit that cannot be written does
+   * not make the slice invalid.
+   * @return true if the slice is valid (see is_valid()), false on
+   * permission/path error (unprivileged fallback).
    */
   bool setup(const std::string& base_cgroup_path,
              uint64_t memory_high_bytes = 0,
              const std::string& cpuset_cpus_str = "");
+
+  /**
+   * @brief Write every limit set in @p limits, each independently.
+   *
+   * A failure (for example a controller that is not delegated, so its control
+   * file does not exist) never prevents the remaining limits from applying.
+   * @return One result per requested limit, in a fixed order: memory.max,
+   * memory.high, memory.swap.max, cpu.max, cpuset.cpus, pids.max.
+   */
+  std::vector<LimitResult> apply_limits(const CgroupLimits& limits);
+
+  /**
+   * @brief Configure memory.max hard limit.
+   * @param bytes Memory limit in bytes.
+   * @return true on success, false on error.
+   */
+  bool set_memory_max(uint64_t bytes);
+
+  /**
+   * @brief Configure memory.swap.max.
+   * @param bytes Swap limit in bytes.
+   * @return true on success, false on error.
+   */
+  bool set_swap_max(uint64_t bytes);
+
+  /**
+   * @brief Configure cpu.max bandwidth ("<quota> <period>" or "max <period>").
+   * @param value Raw cpu.max value.
+   * @return true on success, false on error.
+   */
+  bool set_cpu_max(const std::string& value);
 
   /**
    * @brief Configure memory.high soft limit.
@@ -113,8 +172,10 @@ class CgroupSlice {
 
   /**
    * @brief Check whether the cgroup slice is valid and functional.
-   * @return true if successfully initialized with write permissions, false
-   * otherwise.
+   *
+   * Valid means the directory exists and its cgroup.procs is writable, so
+   * processes can join it. Limits are reported separately by apply_limits().
+   * @return true if processes can be attached, false otherwise.
    */
   [[nodiscard]] bool is_valid() const noexcept;
 
@@ -130,6 +191,12 @@ class CgroupSlice {
   bool valid_{false};
   bool created_{false};
 
+  int last_errno_{0};
+
+  /**
+   * @brief Write @p value to an existing control file (never creates it).
+   * Silent: failures are recorded in last_errno_ for the caller to report.
+   */
   bool write_file(const std::string& filename, const std::string& value);
 };
 
