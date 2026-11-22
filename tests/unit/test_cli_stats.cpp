@@ -10,9 +10,11 @@ extern "C" {
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
+#include "unit/fake_cgroupfs.hpp"
 #include "virmux/cli_stats.hpp"
 
 void setUp(void) {}
@@ -175,6 +177,35 @@ void test_cmd_stats_pack_reject_null_argv(void) {
   TEST_ASSERT_NOT_EQUAL(0, virmux::cmd_pack(3, pack_null_elem));
 }
 
+void test_find_virmux_cgroups_includes_nested_runs(void) {
+  virmux::testing::FakeCgroupFs fs;
+  const std::string mgr = "user.slice/user-1000.slice/user@1000.service";
+  fs.add("", true);
+  fs.add("virmux.slice", true);  // legacy root-level slice
+  fs.add("user.slice", true);
+  fs.add(mgr, true);
+  fs.add(mgr + "/app.slice", true);
+  fs.add(mgr + "/app.slice/virmuxish.scope", true);  // not ours
+  fs.add(mgr + "/virmux", true);
+  fs.add(mgr + "/virmux/run-10-0", true);
+  fs.add(mgr + "/virmux/run-11-3", true);
+
+  std::vector<std::string> got = virmux::find_virmux_cgroup_procs(fs.root());
+  std::sort(got.begin(), got.end());
+  std::vector<std::string> want{
+      fs.path("virmux.slice") + "/cgroup.procs",
+      fs.path(mgr + "/virmux") + "/cgroup.procs",
+      fs.path(mgr + "/virmux/run-10-0") + "/cgroup.procs",
+      fs.path(mgr + "/virmux/run-11-3") + "/cgroup.procs",
+  };
+  std::sort(want.begin(), want.end());
+  TEST_ASSERT_EQUAL_size_t(want.size(), got.size());
+  for (size_t i = 0; i < want.size(); ++i) {
+    TEST_ASSERT_EQUAL_STRING(want[i].c_str(), got[i].c_str());
+  }
+  TEST_ASSERT_TRUE(virmux::find_virmux_cgroup_procs("/nonexistent").empty());
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_format_bytes_boundaries);
@@ -183,5 +214,6 @@ int main(void) {
   RUN_TEST(test_cmd_stats);
   RUN_TEST(test_cmd_pack);
   RUN_TEST(test_cmd_stats_pack_reject_null_argv);
+  RUN_TEST(test_find_virmux_cgroups_includes_nested_runs);
   return UNITY_END();
 }
