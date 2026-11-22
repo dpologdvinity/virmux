@@ -49,6 +49,78 @@ log_info() {
   echo -e "  [${BLUE}INFO${RESET}] $1"
 }
 
+# Mirrors find_cgroup_delegation() in src/core/cgroup.cpp: where can virmux
+# create its per-run cgroups (<D>/virmux/run-<pid>-<seq>) from this shell?
+check_cgroup_delegation() {
+  local cg_root="/sys/fs/cgroup"
+  local rel own dir delegation="" kind=""
+  rel=$(sed -n 's/^0:://p' /proc/self/cgroup 2>/dev/null)
+  rel="${rel% (deleted)}"
+  if [[ -z "$rel" ]]; then
+    log_warn "No cgroup v2 entry in /proc/self/cgroup; virmux runs without limits"
+    return
+  fi
+  own="${cg_root}${rel%/}"
+  log_info "This shell's cgroup: ${own}"
+
+  writable() { [[ -w "$1/cgroup.procs" && -w "$1/cgroup.subtree_control" ]]; }
+
+  # 1. Nearest systemd user manager (user@<uid>.service) we may write to.
+  dir="$own"
+  while [[ "$dir" == "$cg_root"* ]]; do
+    if [[ "$(basename "$dir")" == "user@$(id -u).service" ]] && writable "$dir"; then
+      delegation="$dir"
+      kind="systemd user manager"
+      break
+    fi
+    [[ "$dir" == "$cg_root" ]] && break
+    dir="$(dirname "$dir")"
+  done
+
+  # 2. Otherwise the highest writable ancestor (root, containers, CI).
+  if [[ -z "$delegation" ]]; then
+    local path="$cg_root" part
+    local -a parts
+    IFS='/' read -r -a parts <<<"${rel#/}"
+    if writable "$path"; then
+      delegation="$path"
+    else
+      for part in "${parts[@]}"; do
+        [[ -z "$part" ]] && continue
+        path="${path}/${part}"
+        if writable "$path"; then
+          delegation="$path"
+          break
+        fi
+      done
+    fi
+    [[ -n "$delegation" ]] && kind="highest writable ancestor"
+  fi
+
+  if [[ -z "$delegation" ]]; then
+    log_warn "No delegated cgroup subtree: virmux runs here get no memory/CPU/pids limits"
+    log_info "$(basename "$own") is outside the systemd user manager (typical for ssh/console logins)."
+    log_info "Run virmux through the user manager instead: systemd-run --user --scope virmux run ..."
+    return
+  fi
+
+  log_pass "Delegated cgroup subtree (${kind}): ${delegation}"
+  local handed
+  handed=$(cat "${delegation}/cgroup.subtree_control" 2>/dev/null || true)
+  log_info "Controllers handed down to virmux runs: ${handed:-none}"
+  local ctrl
+  for ctrl in memory cpu pids; do
+    if [[ " ${handed} " == *" ${ctrl} "* ]]; then
+      log_pass "${ctrl} controller delegated"
+    else
+      log_warn "${ctrl} controller not delegated: virmux cannot enforce ${ctrl} limits"
+    fi
+  done
+  if [[ " ${handed} " != *" cpuset "* ]]; then
+    log_info "cpuset not delegated: virmux pins CPUs with sched_setaffinity instead (same effect for the command)"
+  fi
+}
+
 echo -e "${BOLD}virmux system prerequisite diagnostics${RESET}"
 echo "========================================"
 
@@ -73,12 +145,7 @@ if [[ -f "/sys/fs/cgroup/cgroup.controllers" ]]; then
   log_pass "Unified cgroup v2 hierarchy mounted at /sys/fs/cgroup"
   log_info "Available root controllers: ${CONTROLLERS:-none}"
 
-  # Check delegation or unprivileged access
-  if [[ -w "/sys/fs/cgroup" ]]; then
-    log_pass "cgroups v2 hierarchy is writable (root or privileged delegation)"
-  else
-    log_info "cgroups root is read-only (unprivileged fallback mode enabled for virmux)"
-  fi
+  check_cgroup_delegation
 elif grep -qw "cgroup2" /proc/mounts 2>/dev/null; then
   log_pass "cgroup2 filesystem mounted"
 else
