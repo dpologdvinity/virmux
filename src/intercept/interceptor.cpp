@@ -20,6 +20,7 @@
 
 #include <cerrno>
 #include <cstdarg>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -37,6 +38,7 @@ using openat_fn_t = int (*)(int, const char*, int, ...);
 using execve_fn_t = int (*)(const char*, char* const[], char* const[]) noexcept;
 using mmap_fn_t = void* (*)(void*, size_t, int, int, int, off_t) noexcept;
 using mmap64_fn_t = void* (*)(void*, size_t, int, int, int, off64_t) noexcept;
+using fopen_fn_t = FILE* (*)(const char*, const char*);
 
 static sysconf_fn_t real_sysconf = nullptr;
 static get_nprocs_fn_t real_get_nprocs = nullptr;
@@ -46,6 +48,8 @@ static openat_fn_t real_openat = nullptr;
 static execve_fn_t real_execve = nullptr;
 static mmap_fn_t real_mmap = nullptr;
 static mmap64_fn_t real_mmap64 = nullptr;
+static fopen_fn_t real_fopen = nullptr;
+static fopen_fn_t real_fopen64 = nullptr;
 
 #ifndef MADV_MERGEABLE
 #define MADV_MERGEABLE 12
@@ -99,6 +103,52 @@ inline long get_spoofed_core_count() noexcept {
 }
 
 /**
+ * @brief Files whose contents describe the hardware, and the environment
+ * variable naming the synthetic copy the sandbox prepared for each.
+ */
+struct SpoofedFile {
+  const char* real_path;
+  const char* env_name;
+};
+
+constexpr SpoofedFile kSpoofedFiles[] = {
+    {"/proc/meminfo", VIRMUX_ENV_SPOOFED_MEMINFO},
+    {"/proc/cpuinfo", VIRMUX_ENV_SPOOFED_CPUINFO},
+    {"/sys/devices/system/cpu/online", VIRMUX_ENV_SPOOFED_CPU_ONLINE},
+};
+
+/**
+ * @brief Synthetic replacement for @p pathname, if it names a spoofed file
+ * and the sandbox exported a copy for it.
+ *
+ * Callers only ask for read-only opens: writing must reach (and fail on) the
+ * real file, never modify the synthetic copy.
+ * @return Replacement path, or nullptr to open @p pathname unchanged.
+ */
+const char* spoofed_path_for(const char* pathname) noexcept {
+  if (pathname == nullptr) {
+    return nullptr;
+  }
+  for (const auto& f : kSpoofedFiles) {
+    if (std::strcmp(pathname, f.real_path) == 0) {
+      const char* spoofed = std::getenv(f.env_name);
+      return (spoofed != nullptr && spoofed[0] != '\0') ? spoofed : nullptr;
+    }
+  }
+  return nullptr;
+}
+
+/** @brief True for open(2) flags that can neither write nor create. */
+constexpr bool is_read_only_open(int flags) noexcept {
+  return (flags & O_ACCMODE) == O_RDONLY && (flags & (O_CREAT | O_TRUNC)) == 0;
+}
+
+/** @brief True for an fopen(3) mode that only reads ("r", "rb", "re", ...). */
+bool is_read_only_mode(const char* mode) noexcept {
+  return mode != nullptr && mode[0] == 'r' && std::strchr(mode, '+') == nullptr;
+}
+
+/**
  * @brief Internal open helper shared by explicit open, open64, openat, and
  * openat64 exports.
  * @param dirfd Base directory file descriptor for openat.
@@ -117,26 +167,12 @@ static int do_openat(int dirfd, const char* pathname, int flags, mode_t mode) {
 
   ReentrancyGuard guard;
 
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunknown-warning-option"
-#pragma clang diagnostic ignored "-Wtautological-pointer-compare"
-#elif defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wnonnull-compare"
-#endif
-  if (pathname != nullptr && std::strcmp(pathname, "/proc/meminfo") == 0) {
-    const char* spoofed_path = std::getenv(VIRMUX_ENV_SPOOFED_MEMINFO);
-    if (spoofed_path && spoofed_path[0] != '\0') {
-      pathname = spoofed_path;
+  if (is_read_only_open(flags)) {
+    if (const char* spoofed = spoofed_path_for(pathname)) {
+      pathname = spoofed;
       dirfd = AT_FDCWD;
     }
   }
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#elif defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
 
   if (!real_openat) {
     real_openat = reinterpret_cast<openat_fn_t>(dlsym(RTLD_NEXT, "openat64"));
@@ -152,6 +188,37 @@ static int do_openat(int dirfd, const char* pathname, int flags, mode_t mode) {
 
 static int do_open(const char* pathname, int flags, mode_t mode) {
   return do_openat(AT_FDCWD, pathname, flags, mode);
+}
+
+/**
+ * @brief Internal helper shared by the fopen and fopen64 exports.
+ *
+ * glibc's fopen opens the file through an internal, non-interposable open,
+ * so the open() hooks never see it; C++ file streams (std::ifstream) also end
+ * up here. Read-only modes of spoofed files are redirected the same way.
+ */
+static FILE* do_fopen(const char* pathname, const char* mode, bool is_64) {
+  if (!in_intercept) {
+    ReentrancyGuard guard;
+    if (is_read_only_mode(mode)) {
+      if (const char* spoofed = spoofed_path_for(pathname)) {
+        pathname = spoofed;
+      }
+    }
+  }
+  fopen_fn_t& real = is_64 ? real_fopen64 : real_fopen;
+  if (real == nullptr) {
+    real = reinterpret_cast<fopen_fn_t>(
+        dlsym(RTLD_NEXT, is_64 ? "fopen64" : "fopen"));
+    if (real == nullptr) {
+      real = reinterpret_cast<fopen_fn_t>(dlsym(RTLD_NEXT, "fopen"));
+    }
+  }
+  if (real == nullptr) {
+    errno = ENOSYS;
+    return nullptr;
+  }
+  return real(pathname, mode);
 }
 
 /**
@@ -268,6 +335,12 @@ __attribute__((constructor)) void init_interceptor() noexcept {
   }
   if (!real_execve) {
     real_execve = reinterpret_cast<execve_fn_t>(dlsym(RTLD_NEXT, "execve"));
+  }
+  if (!real_fopen) {
+    real_fopen = reinterpret_cast<fopen_fn_t>(dlsym(RTLD_NEXT, "fopen"));
+  }
+  if (!real_fopen64) {
+    real_fopen64 = reinterpret_cast<fopen_fn_t>(dlsym(RTLD_NEXT, "fopen64"));
   }
   if (!real_mmap) {
     real_mmap = reinterpret_cast<mmap_fn_t>(dlsym(RTLD_NEXT, "mmap"));
@@ -456,6 +529,16 @@ extern "C" __attribute__((visibility("default"))) int openat64(
     va_end(args);
   }
   return do_openat(dirfd, pathname, flags, mode);
+}
+
+extern "C" __attribute__((visibility("default"))) FILE* fopen(
+    const char* pathname, const char* mode) {
+  return do_fopen(pathname, mode, false);
+}
+
+extern "C" __attribute__((visibility("default"))) FILE* fopen64(
+    const char* pathname, const char* mode) {
+  return do_fopen(pathname, mode, true);
 }
 
 extern "C" __attribute__((visibility("default"))) int execve(
