@@ -426,6 +426,14 @@ test(
 )
 
 test(
+  'test_cli_run_no_pin',
+  virmux_exe,
+  args: ['run', '--no-pin', '--cores', '1', '--', '/bin/sh', '-c', 'exit 0'],
+  depends: [virmux_intercept_lib],
+  suite: 'cli',
+)
+
+test(
   'test_cli_version',
   virmux_exe,
   args: ['--version'],

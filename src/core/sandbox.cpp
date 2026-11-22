@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -33,6 +34,7 @@
 #include <vector>
 
 #include "virmux/cgroup.hpp"
+#include "virmux/cpu_select.hpp"
 #include "virmux/daemon.hpp"
 #include "virmux/gate.hpp"
 #include "virmux/hw_view.hpp"
@@ -192,6 +194,10 @@ struct ChildLaunchPlan {
   const char* cgroup_procs_path{nullptr};
   bool apply_nproc_limit{false};
   rlim_t nproc_limit{0};
+  /// Pin to @ref cpu_mask with sched_setaffinity (built here, not in the
+  /// child, so the child stays syscall-only).
+  bool apply_affinity{false};
+  cpu_set_t cpu_mask{};
 };
 
 /// oom_score_adj applied to sandboxed children so they are sacrificed first.
@@ -251,6 +257,11 @@ int sandbox_child_main(void* arg) {
   // 2. Attach to the cgroup before exec so grandchildren are always covered.
   if (plan.cgroup_procs_path != nullptr) {
     (void)child_write_file(plan.cgroup_procs_path, "0\n");
+  }
+
+  // Real pinning: what nproc, Go, Rust and Python's sched_getaffinity see.
+  if (plan.apply_affinity) {
+    (void)::sched_setaffinity(0, sizeof(plan.cpu_mask), &plan.cpu_mask);
   }
 
   // Fork-bomb fallback: RLIMIT_NPROC ceiling when cgroup pids.max is absent.
@@ -333,6 +344,56 @@ pid_t clone_sandbox_child(ChildLaunchPlan& plan, bool new_namespaces) {
               flags, &plan);
   ::munmap(stack, kChildStackSize);
   return pid;
+}
+
+/// cpu.max period: quota = cores * period gives exactly `cores` CPUs' worth.
+constexpr uint64_t kCpuMaxPeriodUs = 100000;
+
+/**
+ * @brief Choose the CPUs the child is pinned to.
+ * @param cfg Sandbox configuration (pin_cpus, cpuset_cores, virtual_cores).
+ * @param rotation Window rotation so concurrent runs spread out.
+ * @return Sorted CPUs, or empty to keep the inherited affinity mask.
+ */
+CpuList plan_cpus(const SandboxConfig& cfg, uint64_t rotation) {
+  if (!cfg.pin_cpus) {
+    return {};
+  }
+  const CpuList avail = available_cpus();
+  if (!cfg.cpuset_cores.empty()) {
+    // An explicit list is honoured as far as this process may use it.
+    if (const auto wanted = parse_cpu_list(cfg.cpuset_cores)) {
+      CpuList both;
+      std::set_intersection(wanted->begin(), wanted->end(), avail.begin(),
+                            avail.end(), std::back_inserter(both));
+      if (!both.empty()) {
+        return both;
+      }
+    }
+  }
+  return select_cpus(avail, cfg.virtual_cores, rotation, {});
+}
+
+/**
+ * @brief One-line summary of limits that could not be applied ("" if none).
+ *
+ * A missing cpuset.cpus (cpuset not delegated; sched_setaffinity already
+ * pins the child) or memory.swap.max (no swap accounting) is expected and not
+ * reported.
+ */
+std::string describe_limit_failures(const std::vector<LimitResult>& results) {
+  std::string failed;
+  for (const auto& r : results) {
+    const bool optional =
+        (r.file == "cpuset.cpus" || r.file == "memory.swap.max") &&
+        r.error == ENOENT;
+    if (r.applied || optional) {
+      continue;
+    }
+    failed += failed.empty() ? "" : ", ";
+    failed += r.file + " (" + std::strerror(r.error) + ")";
+  }
+  return failed.empty() ? failed : "some limits were not applied: " + failed;
 }
 
 uint64_t count_user_threads() {
@@ -511,15 +572,39 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
     }
   }
 
-  std::string vcores_str = std::to_string(cfg.virtual_cores);
+  // Real CPUs for the child (empty = keep the inherited mask). The reported
+  // core count never exceeds what the child can actually run on.
+  const CpuList pinned =
+      plan_cpus(cfg, static_cast<uint64_t>(::getpid()) + seq);
+  const int cores = pinned.empty() ? cfg.virtual_cores
+                                   : std::min(cfg.virtual_cores,
+                                              static_cast<int>(pinned.size()));
+  std::string vcores_str = std::to_string(cores);
 
-  // Set up cgroups v2 slice with unique sub-slice per run (gracefully falls
-  // back if unprivileged)
-  std::string slice_name = "virmux-run-" + std::to_string(::getpid()) + "-" +
-                           std::to_string(seq) + ".slice";
-  CgroupSlice slice(slice_name);
+  // Per-run cgroup in a delegated subtree (systemd user manager, or a
+  // writable ancestor when root / in a container). Without one the run still
+  // proceeds, with a single warning naming the reason.
+  CgroupProbe probe = CgroupProbe::current();
+  probe.root = cfg.cgroup_root;
+  const CgroupDelegation delegation = find_cgroup_delegation(probe);
+  CgroupSlice slice;
+  std::string cgroup_warning;
+  if (delegation.usable()) {
+    (void)sweep_stale_runs(delegation.root + "/" + kVirmuxCgroupDir);
+    slice = create_run(delegation, "run-" + std::to_string(::getpid()) + "-" +
+                                       std::to_string(seq));
+    if (!slice.is_valid()) {
+      cgroup_warning =
+          "no cgroup limits for this run: cannot create a cgroup "
+          "under " +
+          delegation.root + "/" + kVirmuxCgroupDir + " (" +
+          std::strerror(slice.last_error()) + ")";
+    }
+  } else {
+    cgroup_warning = "no cgroup limits for this run: " + delegation.reason;
+  }
+
   bool cgroup_pids_active = false;
-  slice.setup("", 0, cfg.cpuset_cores);
   if (slice.is_valid()) {
     CgroupLimits limits;
     if (mem_limits.max > 0) {
@@ -527,10 +612,23 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
       limits.memory_high = mem_limits.high;
       limits.swap_max = mem_limits.swap_max;
     }
-    (void)slice.apply_limits(limits);
-    if (cfg.max_pids > 0) {
-      cgroup_pids_active = slice.set_pids_max(cfg.max_pids);
+    if (cores > 0) {
+      limits.cpu_max =
+          std::to_string(static_cast<uint64_t>(cores) * kCpuMaxPeriodUs) + " " +
+          std::to_string(kCpuMaxPeriodUs);
     }
+    limits.cpuset_cpus = format_cpu_list(pinned);
+    if (cfg.max_pids > 0) {
+      limits.pids_max = cfg.max_pids;
+    }
+    const std::vector<LimitResult> results = slice.apply_limits(limits);
+    cgroup_pids_active = std::any_of(
+        results.begin(), results.end(),
+        [](const LimitResult& r) { return r.file == "pids.max" && r.applied; });
+    cgroup_warning = describe_limit_failures(results);
+  }
+  if (!cgroup_warning.empty()) {
+    std::fprintf(stderr, "warning: virmux: %s\n", cgroup_warning.c_str());
   }
 
   // Only scan procfs and compute fallback RLIMIT_NPROC if cgroups pids.max is
@@ -585,6 +683,15 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
   }
   if (!cgroup_procs_path.empty()) {
     plan.cgroup_procs_path = cgroup_procs_path.c_str();
+  }
+  if (!pinned.empty()) {
+    plan.apply_affinity = true;
+    CPU_ZERO(&plan.cpu_mask);
+    for (int cpu : pinned) {
+      if (cpu < CPU_SETSIZE) {
+        CPU_SET(cpu, &plan.cpu_mask);
+      }
+    }
   }
   if (cfg.max_pids > 0 && !cgroup_pids_active) {
     plan.apply_nproc_limit = true;

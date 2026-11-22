@@ -33,6 +33,8 @@ struct SandboxConfig {
   std::string scratch_dir{""};
   std::string workspace_path{""};
   AdmissionGate* gate{nullptr};
+  /// cgroup2 mount point used to find a delegated subtree.
+  std::string cgroup_root{"/sys/fs/cgroup"};
 };
 
 /**

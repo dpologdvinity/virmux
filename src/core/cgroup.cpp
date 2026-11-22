@@ -13,7 +13,6 @@
 
 #include <algorithm>
 #include <cerrno>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -184,10 +183,7 @@ bool CgroupSlice::setup(const std::string& base_cgroup_path,
   std::error_code ec;
   bool exists = std::filesystem::exists(path_, ec);
   if (ec) {
-    std::fprintf(stderr,
-                 "warning: [cgroup] failed to inspect '%s': %s (running in "
-                 "unprivileged fallback mode)\n",
-                 path_.c_str(), ec.message().c_str());
+    last_errno_ = ec.value();
     valid_ = false;
     return false;
   }
@@ -195,10 +191,7 @@ bool CgroupSlice::setup(const std::string& base_cgroup_path,
   if (!exists) {
     std::filesystem::create_directories(path_, ec);
     if (ec) {
-      std::fprintf(stderr,
-                   "warning: [cgroup] failed to create cgroup directory '%s': "
-                   "%s (running in unprivileged fallback mode)\n",
-                   path_.c_str(), ec.message().c_str());
+      last_errno_ = ec.value();
       valid_ = false;
       return false;
     }
@@ -211,6 +204,7 @@ bool CgroupSlice::setup(const std::string& base_cgroup_path,
   valid_ = ::access((std::filesystem::path(path_) / "cgroup.procs").c_str(),
                     W_OK) == 0;
   if (!valid_) {
+    last_errno_ = errno;
     return false;
   }
 
@@ -363,6 +357,8 @@ const std::string& CgroupSlice::name() const noexcept { return name_; }
 bool CgroupSlice::is_valid() const noexcept { return valid_; }
 
 bool CgroupSlice::valid() const noexcept { return valid_; }
+
+int CgroupSlice::last_error() const noexcept { return last_errno_; }
 
 std::vector<std::string> controllers_to_enable(const std::string& available,
                                                const std::string& enabled) {

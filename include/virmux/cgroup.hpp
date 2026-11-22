@@ -125,6 +125,7 @@ class CgroupSlice {
    * unset).
    * Limits are applied independently; a limit that cannot be written does
    * not make the slice invalid.
+   * Never prints; see last_error() on failure.
    * @return true if the slice is valid (see is_valid()), false on
    * permission/path error (unprivileged fallback).
    */
@@ -231,6 +232,14 @@ class CgroupSlice {
    * @return true if valid, false otherwise.
    */
   [[nodiscard]] bool valid() const noexcept;
+
+  /**
+   * @brief errno of the most recent failed operation (0 after a success).
+   *
+   * The slice never prints; callers decide how (and whether) to report.
+   * @return errno value.
+   */
+  [[nodiscard]] int last_error() const noexcept;
 
  private:
   std::string name_;
