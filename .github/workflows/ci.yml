@@ -64,6 +64,12 @@ jobs:
       - name: Test
         run: meson test -C build --print-errorlogs
 
+      # An installed virmux must find its interceptor in the distro libdir
+      # (lib/<multiarch-triplet>), not only next to the build tree.
+      - name: Verify installed layout
+        if: matrix.buildtype == 'release'
+        run: scripts/check-install.sh build-install-check
+
       # Lets reviewers download and try a pull request's build directly.
       - name: Upload binaries
         # One upload per architecture; 22.04 would duplicate the x86_64 name.
