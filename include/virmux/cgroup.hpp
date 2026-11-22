@@ -22,6 +22,53 @@ struct CgroupLimits {
 };
 
 /**
+ * @brief Inputs for delegation discovery (injectable for tests).
+ */
+struct CgroupProbe {
+  std::string proc_self_cgroup;        ///< Contents of /proc/self/cgroup.
+  std::string root{"/sys/fs/cgroup"};  ///< cgroup2 mount point.
+  uid_t uid{0};                        ///< Real uid of the caller.
+
+  /** @brief Probe describing the calling process. */
+  static CgroupProbe current();
+};
+
+/** @brief Where virmux may create its own cgroups. */
+enum class DelegationKind {
+  kNone,              ///< Nowhere: run without cgroup limits.
+  kUserManager,       ///< The systemd user manager's user@<uid>.service tree.
+  kWritableAncestor,  ///< Highest writable ancestor (root, containers, CI).
+};
+
+/**
+ * @brief Result of find_cgroup_delegation().
+ */
+struct CgroupDelegation {
+  DelegationKind kind{DelegationKind::kNone};
+  std::string root;    ///< Delegation root D (absolute); "" when kNone.
+  std::string self;    ///< Our own cgroup (absolute); "" if unknown.
+  std::string reason;  ///< One-line explanation when kNone.
+
+  [[nodiscard]] bool usable() const noexcept {
+    return kind != DelegationKind::kNone;
+  }
+};
+
+/**
+ * @brief Find a cgroup subtree the caller may create cgroups in.
+ *
+ * Reads the cgroup v2 ("0::") line of /proc/self/cgroup and walks up from the
+ * caller's cgroup. The nearest `user@<uid>.service` ancestor whose
+ * cgroup.procs and cgroup.subtree_control are writable wins (systemd
+ * delegates cpu/memory/pids there). Otherwise the highest writable ancestor
+ * is used (root, containers). Otherwise there is no delegation, for example a
+ * shell in an ssh/console `session-N.scope`, which cannot leave its scope
+ * without D-Bus; @ref CgroupDelegation::reason then suggests
+ * `systemd-run --user --scope`.
+ */
+[[nodiscard]] CgroupDelegation find_cgroup_delegation(const CgroupProbe& probe);
+
+/**
  * @brief Outcome of writing one control file.
  */
 struct LimitResult {

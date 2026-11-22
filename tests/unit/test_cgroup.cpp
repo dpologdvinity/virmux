@@ -19,6 +19,7 @@ extern "C" {
 #include <sstream>
 #include <string>
 
+#include "unit/fake_cgroupfs.hpp"
 #include "virmux/cgroup.hpp"
 #include "virmux/raii.hpp"
 
@@ -299,6 +300,129 @@ void test_cgroup_uninitialized_slice_operations(void) {
   TEST_ASSERT_FALSE(uninit_slice.thaw());
 }
 
+// ---------------------------------------------------------------------------
+// Delegation discovery
+// ---------------------------------------------------------------------------
+
+namespace {
+
+constexpr const char* kUserMgr = "user.slice/user-1000.slice/user@1000.service";
+constexpr const char* kTmuxScope =
+    "user.slice/user-1000.slice/user@1000.service/app.slice/tmux-1.scope";
+
+/** @brief Typical desktop layout: a root-owned tree with the user manager's
+ * subtree delegated to uid 1000. */
+void add_desktop_tree(const virmux::testing::FakeCgroupFs& fs,
+                      bool user_mgr_writable, bool everything_writable) {
+  const bool mgr = user_mgr_writable || everything_writable;
+  fs.add("", everything_writable);
+  fs.add("user.slice", everything_writable);
+  fs.add("user.slice/user-1000.slice", everything_writable);
+  fs.add("user.slice/user-1000.slice/session-3.scope", everything_writable);
+  fs.add(kUserMgr, mgr);
+  fs.add(std::string(kUserMgr) + "/app.slice", mgr);
+  fs.add(kTmuxScope, mgr);
+}
+
+virmux::CgroupProbe probe_for(const virmux::testing::FakeCgroupFs& fs,
+                              const std::string& rel, uid_t uid) {
+  return virmux::CgroupProbe{
+      .proc_self_cgroup = "0::/" + rel + "\n",
+      .root = fs.root(),
+      .uid = uid,
+  };
+}
+
+}  // namespace
+
+void test_delegation_uses_user_manager_tree(void) {
+  virmux::testing::FakeCgroupFs fs;
+  add_desktop_tree(fs, true, false);
+  const auto d =
+      virmux::find_cgroup_delegation(probe_for(fs, kTmuxScope, 1000));
+  TEST_ASSERT_TRUE(d.usable());
+  TEST_ASSERT_TRUE(d.kind == virmux::DelegationKind::kUserManager);
+  TEST_ASSERT_EQUAL_STRING(fs.path(kUserMgr).c_str(), d.root.c_str());
+  TEST_ASSERT_EQUAL_STRING(fs.path(kTmuxScope).c_str(), d.self.c_str());
+}
+
+void test_delegation_ssh_session_scope_falls_back(void) {
+  if (geteuid() == 0) {
+    TEST_IGNORE_MESSAGE("root bypasses the read-only modes this test needs");
+  }
+  virmux::testing::FakeCgroupFs fs;
+  add_desktop_tree(fs, true, false);
+  const auto d = virmux::find_cgroup_delegation(
+      probe_for(fs, "user.slice/user-1000.slice/session-3.scope", 1000));
+  TEST_ASSERT_FALSE(d.usable());
+  TEST_ASSERT_NOT_NULL(std::strstr(d.reason.c_str(), "session-3.scope"));
+  TEST_ASSERT_NOT_NULL(
+      std::strstr(d.reason.c_str(), "systemd-run --user --scope"));
+}
+
+void test_delegation_cgroup_v1_falls_back(void) {
+  virmux::testing::FakeCgroupFs fs(false);
+  const virmux::CgroupProbe probe{
+      .proc_self_cgroup = "12:memory:/user.slice\n1:name=systemd:/user.slice\n",
+      .root = fs.root(),
+      .uid = 1000,
+  };
+  const auto d = virmux::find_cgroup_delegation(probe);
+  TEST_ASSERT_FALSE(d.usable());
+  TEST_ASSERT_NOT_NULL(std::strstr(d.reason.c_str(), "v2"));
+
+  // Hybrid mode: a 0:: line exists but the mount is not the unified root.
+  const auto hybrid =
+      virmux::find_cgroup_delegation(probe_for(fs, "user.slice", 1000));
+  TEST_ASSERT_FALSE(hybrid.usable());
+  TEST_ASSERT_NOT_NULL(std::strstr(hybrid.reason.c_str(), "v2"));
+}
+
+void test_delegation_other_users_tree_falls_back(void) {
+  if (geteuid() == 0) {
+    TEST_IGNORE_MESSAGE("root bypasses the read-only modes this test needs");
+  }
+  virmux::testing::FakeCgroupFs fs;
+  add_desktop_tree(fs, false, false);
+  const auto d =
+      virmux::find_cgroup_delegation(probe_for(fs, kTmuxScope, 1000));
+  TEST_ASSERT_FALSE(d.usable());
+
+  // A different uid never matches the user@<uid>.service name either.
+  virmux::testing::FakeCgroupFs fs2;
+  add_desktop_tree(fs2, true, false);
+  const auto d2 =
+      virmux::find_cgroup_delegation(probe_for(fs2, kTmuxScope, 1001));
+  TEST_ASSERT_TRUE(d2.kind != virmux::DelegationKind::kUserManager);
+}
+
+void test_delegation_fully_writable_tree_prefers_user_manager(void) {
+  virmux::testing::FakeCgroupFs fs;
+  add_desktop_tree(fs, true, true);  // CI's `chmod -R a+rw /sys/fs/cgroup`
+  const auto d =
+      virmux::find_cgroup_delegation(probe_for(fs, kTmuxScope, 1000));
+  TEST_ASSERT_TRUE(d.kind == virmux::DelegationKind::kUserManager);
+  TEST_ASSERT_EQUAL_STRING(fs.path(kUserMgr).c_str(), d.root.c_str());
+}
+
+void test_delegation_root_without_user_manager_uses_cgroup_root(void) {
+  virmux::testing::FakeCgroupFs fs;
+  fs.add("", true);
+  fs.add("system.slice", true);
+  fs.add("system.slice/ci-runner.service", true);
+  const auto d = virmux::find_cgroup_delegation(
+      probe_for(fs, "system.slice/ci-runner.service", 0));
+  TEST_ASSERT_TRUE(d.kind == virmux::DelegationKind::kWritableAncestor);
+  TEST_ASSERT_EQUAL_STRING(fs.root().c_str(), d.root.c_str());
+}
+
+void test_delegation_missing_proc_self_cgroup_falls_back(void) {
+  virmux::testing::FakeCgroupFs fs;
+  const virmux::CgroupProbe probe{
+      .proc_self_cgroup = "", .root = fs.root(), .uid = 1000};
+  TEST_ASSERT_FALSE(virmux::find_cgroup_delegation(probe).usable());
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_scoped_fd_closes_descriptor);
@@ -310,6 +434,13 @@ int main(void) {
   RUN_TEST(test_cgroup_valid_requires_writable_procs);
   RUN_TEST(test_cgroup_setup_limits_are_independent);
   RUN_TEST(test_cgroup_apply_limits_reports_each_limit);
+  RUN_TEST(test_delegation_uses_user_manager_tree);
+  RUN_TEST(test_delegation_ssh_session_scope_falls_back);
+  RUN_TEST(test_delegation_cgroup_v1_falls_back);
+  RUN_TEST(test_delegation_other_users_tree_falls_back);
+  RUN_TEST(test_delegation_fully_writable_tree_prefers_user_manager);
+  RUN_TEST(test_delegation_root_without_user_manager_uses_cgroup_root);
+  RUN_TEST(test_delegation_missing_proc_self_cgroup_falls_back);
   RUN_TEST(test_cgroup_move_semantics);
   RUN_TEST(test_cgroup_uninitialized_slice_operations);
   return UNITY_END();

@@ -13,11 +13,100 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <optional>
+#include <sstream>
+#include <string_view>
 #include <utility>
 
 #include "virmux/raii.hpp"
 
 namespace virmux {
+
+namespace {
+
+/** @brief True if @p dir's cgroup.procs and cgroup.subtree_control are both
+ * writable, i.e. we may create children and migrate processes there. */
+bool cgroup_writable(const std::string& dir) {
+  return ::access((dir + "/cgroup.procs").c_str(), W_OK) == 0 &&
+         ::access((dir + "/cgroup.subtree_control").c_str(), W_OK) == 0;
+}
+
+/** @brief Extract the path of the cgroup v2 ("0::") line, if any. */
+std::optional<std::string> unified_cgroup_path(const std::string& text) {
+  std::istringstream in(text);
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.starts_with("0::")) {
+      std::string rel = line.substr(3);
+      // A cgroup removed under us is reported with a " (deleted)" suffix.
+      constexpr std::string_view kDeleted = " (deleted)";
+      if (rel.ends_with(kDeleted)) {
+        rel.resize(rel.size() - kDeleted.size());
+      }
+      return rel;
+    }
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
+CgroupProbe CgroupProbe::current() {
+  CgroupProbe probe;
+  std::ifstream in("/proc/self/cgroup");
+  std::ostringstream text;
+  text << in.rdbuf();
+  probe.proc_self_cgroup = text.str();
+  probe.uid = ::getuid();
+  return probe;
+}
+
+CgroupDelegation find_cgroup_delegation(const CgroupProbe& probe) {
+  CgroupDelegation d;
+  const auto rel = unified_cgroup_path(probe.proc_self_cgroup);
+  std::error_code ec;
+  if (!rel || !rel->starts_with("/") ||
+      !std::filesystem::exists(probe.root + "/cgroup.controllers", ec)) {
+    d.reason = "cgroup v2 (unified hierarchy) is not mounted at " + probe.root;
+    return d;
+  }
+
+  // Ancestors from the cgroup root down to our own cgroup.
+  std::vector<std::string> chain{probe.root};
+  std::string own = probe.root;
+  for (const auto& part : std::filesystem::path(*rel).relative_path()) {
+    own += "/" + part.string();
+    chain.push_back(own);
+  }
+  d.self = own;
+
+  // 1. The systemd user manager's subtree, nearest first.
+  const std::string user_mgr = "user@" + std::to_string(probe.uid) + ".service";
+  for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+    if (std::filesystem::path(*it).filename() == user_mgr &&
+        cgroup_writable(*it)) {
+      d.kind = DelegationKind::kUserManager;
+      d.root = *it;
+      return d;
+    }
+  }
+
+  // 2. Otherwise the highest writable ancestor (root, containers, CI).
+  for (const auto& dir : chain) {
+    if (cgroup_writable(dir)) {
+      d.kind = DelegationKind::kWritableAncestor;
+      d.root = dir;
+      return d;
+    }
+  }
+
+  d.reason = "this shell's cgroup (" +
+             std::filesystem::path(own).filename().string() +
+             ") is outside the systemd user manager; run virmux under "
+             "`systemd-run --user --scope virmux run ...` to get limits";
+  return d;
+}
 
 CgroupSlice::CgroupSlice(std::string name) : name_(std::move(name)) {}
 
