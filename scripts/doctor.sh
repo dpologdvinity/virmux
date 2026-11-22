@@ -99,6 +99,10 @@ check_cgroup_delegation() {
 
   if [[ -z "$delegation" ]]; then
     log_warn "No delegated cgroup subtree: virmux runs here get no memory/CPU/pids limits"
+    if [[ "$own" == "$cg_root" ]]; then
+      log_info "This process sits at the cgroup root (a container, or no systemd); limits need root or a delegated cgroup."
+      return
+    fi
     log_info "$(basename "$own") is outside the systemd user manager (typical for ssh/console logins)."
     log_info "Run virmux through the user manager instead: systemd-run --user --scope virmux run ..."
     return
