@@ -84,7 +84,13 @@ virmux_core_lib = static_library(
     'src/tui/tui.cpp',
   ],
   include_directories: inc,
-  cpp_args: fuzz_instrument_args,
+  cpp_args: fuzz_instrument_args + [
+    # Where `meson install` puts the interceptor (prefix + distro libdir, e.g.
+    # lib/x86_64-linux-gnu on Debian/Ubuntu), so an installed virmux finds it.
+    '-DVIRMUX_INTERCEPT_INSTALL_PATH="@0@"'.format(
+      get_option('prefix') / get_option('libdir') / 'libvirmux_intercept.so',
+    ),
+  ],
   dependencies: [threads_dep, ncurses_dep, util_dep],
   install: false,
 )

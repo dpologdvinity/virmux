@@ -135,6 +135,15 @@ std::string resolve_interceptor_path() {
     }
   }
 
+#ifdef VIRMUX_INTERCEPT_INSTALL_PATH
+  // Install location baked in by meson (honours --prefix and the distro
+  // libdir, which the relative candidates above miss on multiarch systems).
+  if (std::filesystem::exists(VIRMUX_INTERCEPT_INSTALL_PATH, ec)) {
+    return std::filesystem::canonical(VIRMUX_INTERCEPT_INSTALL_PATH, ec)
+        .string();
+  }
+#endif
+
   auto cwd = std::filesystem::current_path(ec);
   if (!ec) {
     auto cand_cwd = cwd / "build" / "libvirmux_intercept.so";
