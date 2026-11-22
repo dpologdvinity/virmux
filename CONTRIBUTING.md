@@ -29,7 +29,20 @@ Thank you for your interest in contributing to `virmux`!
    ninja -C build test
    ```
 
-4. **Fuzzing (optional, clang only):** libFuzzer harnesses for the IPC,
+4. **Delegated cgroup tests:** the `delegation` suite checks that real
+   memory, CPU and pids limits apply without root. It needs a shell inside
+   the systemd user manager (any desktop terminal); elsewhere it is skipped.
+   To run it from anywhere, and fail instead of skipping:
+
+   ```bash
+   systemd-run --user --wait --pipe --same-dir -E PATH \
+     -E VIRMUX_REQUIRE_DELEGATION=1 -- meson test -C build --suite delegation
+   ```
+
+   `scripts/doctor.sh` shows which cgroup subtree virmux will use. Unit tests
+   create (and remove) real run cgroups on a delegated machine.
+
+5. **Fuzzing (optional, clang only):** libFuzzer harnesses for the IPC,
    daemon-request, session-list, bench-report and size parsers live in
    `tests/fuzz/`. See [`tests/fuzz/README.md`](tests/fuzz/README.md):
 
@@ -49,7 +62,7 @@ reproduced locally with the command shown.
 | Workflow | Why it exists | Reproduce locally |
 | -------- | ------------- | ----------------- |
 | **Lint** (`lint.yml`) | Formatting, clang-tidy bug-pattern checks, docs and workflow linting. Runs in parallel with builds so a style nit never hides a real failure. | See [Local lint tools](#local-lint-tools) |
-| **CI** (`ci.yml`) | Ubuntu 22.04/24.04 × GCC/Clang × debug/release, native **arm64** (the interceptor issues architecture-specific raw syscalls), **Fedora latest** (newest GCC/Clang warnings, tmpfs `/tmp`) and a **coverage** report in the job summary. | `meson setup build -Dwarning_level=3 -Dwerror=true && meson test -C build` |
+| **CI** (`ci.yml`) | Ubuntu 22.04/24.04 × GCC/Clang × debug/release, native **arm64** (the interceptor issues architecture-specific raw syscalls), **Fedora latest** (newest GCC/Clang warnings, tmpfs `/tmp`), a **delegation** job (tests inside the systemd user manager with stock cgroup permissions, `VIRMUX_REQUIRE_DELEGATION=1`) and a **coverage** report in the job summary. | `meson setup build -Dwarning_level=3 -Dwerror=true && meson test -C build` |
 | **Sanitizers** (`sanitizers.yml`) | ASan+UBSan (UB fails the build) and TSan for the multithreaded, forking daemon. | `CC=clang CXX=clang++ meson setup build-tsan -Db_sanitize=thread -Db_lundef=false && meson test -C build-tsan` |
 | **Fuzz** (`fuzz.yml`) | libFuzzer on every parser of untrusted socket/JSON input: 2 minutes per target on PRs, 15 minutes nightly with an accumulated corpus. | See [`tests/fuzz/README.md`](tests/fuzz/README.md) |
 | **CodeQL** (`codeql.yml`) | Taint-tracking security analysis across the socket, `/proc` and mount boundaries; weekly re-scan for new queries. | GitHub only |

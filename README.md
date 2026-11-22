@@ -44,11 +44,17 @@ So `npm test`, `make -j$(nproc)`, `pytest -n auto`, PyTorch and friends start 2
 workers instead of 10, with no changes to your project. This works for every
 user, with no special permissions. It covers programs that use the system C
 library (Node, Python, most C/C++ and Rust tools) and anything that reads
-`OMP_NUM_THREADS`; statically linked programs such as most Go binaries still see
-the real hardware.
+`OMP_NUM_THREADS`. The command is also pinned to that many real CPUs, so Go and
+other statically linked programs count the right number of cores too (pass
+`--no-pin` to keep all CPUs available).
 
 **It also:**
 
+- **Enforces the limits.** From an ordinary desktop terminal, each run gets its
+  own cgroup in the part of the cgroup tree systemd hands to your user. Going
+  over `--mem` gets the command killed instead of your machine swapping to a
+  halt, and it gets at most `--cores` CPUs' worth of time. On machines with four
+  or more CPUs, the two lowest are left free for your shell.
 - **Sacrifices the command first when memory runs out.** If the machine runs out
   of memory, Linux kills the command running under `virmux` instead of your
   editor or terminal.
@@ -77,7 +83,8 @@ you when that happens.
 | Process-count cap (`--max-pids`) | Yes | |
 | Freeze and resume sessions | Yes | |
 | Throwaway project copies (`--ephemeral`) | Yes, where unprivileged user namespaces are enabled (Ubuntu, Debian, WSL2) | |
-| Hard CPU pinning and memory throttling | | Write access to cgroups v2, e.g. a systemd-delegated cgroup. Without it, only the reported counts above apply. |
+| Pinning to `--cores` real CPUs (`--no-pin` turns it off) | Yes | |
+| Enforced memory, CPU-time and process limits | Yes, from a terminal in a systemd desktop session (anything running under the systemd user manager) | ssh and console logins sit outside the user manager: run `systemd-run --user --scope virmux run ...`. Without it, `virmux` prints one warning and only the reported counts above apply. `scripts/doctor.sh` shows which case you are in. |
 | Sharing identical memory pages between sessions (KSM) | | Enable KSM (`echo 1 \| sudo tee /sys/kernel/mm/ksm/run`) and set `VIRMUX_KSM_AUTO_MERGE=1` |
 | Compressed swap in RAM (zram) | | Set up zram yourself; `virmux stats` and `virmux pack` then use it |
 | Swapping out a session's idle memory (`pack`, auto-freeze) | | The `CAP_SYS_NICE` capability, for example running as root. Without it the kernel refuses ([#5](https://github.com/dpologdvinity/virmux/issues/5)). |
@@ -108,6 +115,9 @@ published yet). Unpack one anywhere and run `bin/virmux`.
 ```bash
 # Run a command limited to 2 cores and 2 GB
 virmux run --cores 2 --mem 2G -- npm test
+
+# Keep every CPU available (still capped at 2 CPUs' worth of time)
+virmux run --cores 2 --no-pin -- make -j8
 
 # Run against a throwaway copy of a repository
 virmux run --ephemeral --workspace ~/code/my-repo -- npx playwright test

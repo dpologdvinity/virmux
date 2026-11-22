@@ -65,7 +65,9 @@
 3. **`src/core/sandbox.cpp` (Fault Isolation & Blast Radius):**
    - Deterministic OOM score adjuster (`set_process_oom_score`): writes `-900` to supervisor daemon (shielded from kernel OOM) and `+800` to worker children before `execvpe` (sacrificial leaf tasks).
    - Child launch: the parent prepares envp, chdir targets, cgroup and rlimit values, then starts the child with `clone()` (with `CLONE_NEWUSER | CLONE_NEWNS` for ephemeral runs, so namespaces are created atomically instead of via `unshare()` in a possibly multi-threaded child). The child only makes async-signal-safe syscalls before `execvpe`.
-   - Fork-bomb containment: clamps cgroups v2 `pids.max` on slice with defensive `setrlimit(RLIMIT_NPROC)` fallback when cgroups are unavailable.
+   - Per-run cgroup without root: `find_cgroup_delegation()` (`src/core/cgroup.cpp`) reads the `0::` line of `/proc/self/cgroup` and walks up to the nearest writable `user@<uid>.service` (systemd delegates `cpu memory pids` there), else the highest writable ancestor (root, containers). `create_run()` creates `<D>/virmux/run-<pid>-<seq>`, enabling in virmux's own `virmux` directory every controller D hands down; D's own files are never written. Stale run cgroups are removed by `sweep_stale_runs()`. Shells in an ssh/console `session-N.scope` cannot leave their scope without D-Bus and fall back with a single warning suggesting `systemd-run --user --scope`.
+   - Limits are applied independently (`CgroupSlice::apply_limits()`): `memory.max` = `--mem`, `memory.high` = 15/16 of it, `memory.swap.max` = 1/4, `cpu.max` = N CPUs' worth, `cpuset.cpus` when delegated, and `pids.max`. Control files are opened without `O_CREAT`, so a controller that is not delegated fails visibly instead of creating a stray file. `compute_memory_limits()` (`src/core/hw_view.cpp`) feeds both the cgroup and the synthetic `/proc/meminfo`, so they always agree.
+   - Fork-bomb containment: clamps cgroups v2 `pids.max` with defensive `setrlimit(RLIMIT_NPROC)` fallback when cgroups are unavailable.
 
 4. **`src/ipc/` (Binary Framing & Transport):**
    - Packed 12-byte binary TLV header (`IpcHeader`):
@@ -89,8 +91,7 @@
    - Real-time telemetry reader for host memory, `/proc/meminfo`, KSM statistics, and `/sys/block/zram*` metrics.
 
 7. **`src/sched/` (CPU Slicing & Admission Gate):**
-   - Shields interactive cores (Cores 0–1) by pinning managed tasks to worker cores via cgroups v2 `cpuset.cpus`.
-   - Enforces memory soft ceiling via `memory.high`.
+   - CPU placement (`src/core/cpu_select.cpp`): available CPUs are the online CPUs intersected with the parent's affinity mask. With four or more, the two lowest are kept for the interactive shell; `select_cpus()` takes a rotating contiguous window of N CPUs from the rest (a per-CPU load input is reserved for least-loaded placement). The parent builds the CPU mask and the child applies it with `sched_setaffinity` before `execvpe`, plus `cpuset.cpus` when cpuset is delegated. `--no-pin` keeps the inherited mask; `cpu.max` still caps CPU time.
    - Token-bucket concurrency gate (`AdmissionGate`) throttling heavy bursts to prevent cache thrashing.
 
 8. **`src/storage/` (Workspace Isolation & CAS Subsystem):**

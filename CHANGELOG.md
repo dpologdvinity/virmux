@@ -9,11 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Real memory, CPU and pids limits for ordinary users: each `virmux run` gets its own cgroup in the subtree systemd delegates to the user (`user@<uid>.service/virmux/run-<pid>-<seq>`), with `memory.max`, `memory.high`, `memory.swap.max`, `cpu.max`, `pids.max` and, when delegated, `cpuset.cpus`. Shells outside the user manager (ssh, console) print one warning suggesting `systemd-run --user --scope`.
+- `virmux run --no-pin` keeps the inherited CPU mask.
+- `scripts/doctor.sh` reports the delegated cgroup subtree virmux will use and its controllers.
+- A `delegation` test suite and CI job that run the tests inside the systemd user manager without relaxing cgroup permissions.
+
+### Changed
+
+- Runs are pinned to `--cores` real CPUs by default (`sched_setaffinity`), chosen from the online CPUs in the inherited mask; with four or more CPUs the two lowest stay free for the interactive shell. Replaces the hardcoded `2-11` cpuset.
+- Run cgroups moved from `/sys/fs/cgroup/virmux-run-*.slice` to `<delegation root>/virmux/run-<pid>-<seq>`.
+- Cgroup limits are applied independently: one controller that is not delegated no longer discards the others, and a missing control file is never created.
+- At most one warning line per run explains missing limits.
+
 - CI: lint workflow (pinned clang-format/clang-tidy, markdownlint, actionlint), arm64 and newest-toolchain (Fedora) builds, coverage summary, TSan, CodeQL, libFuzzer fuzzing on PRs and nightly, and attested release tarballs on version tags.
 - libFuzzer harnesses for IPC frames, daemon requests, session-list JSON, bench report JSON and size arguments (`-Dfuzzing=true`).
 
 ### Fixed
 
+- `virmux pack --all` finds run cgroups nested in a delegated subtree.
 - An installed `virmux` (`meson install`) now finds its interceptor in the distro library directory (e.g. `lib/x86_64-linux-gnu`); previously memory and `sysconf()` core spoofing silently stopped working after installation.
 - Synthetic `/proc/meminfo` is only exported to sandboxes when fully written.
 - Backgrounded daemon exits if it cannot report readiness, and treats a failed `chdir("/")` as an init failure.
