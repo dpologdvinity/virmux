@@ -91,7 +91,7 @@ you when that happens.
 | Freeze and resume sessions | Yes | |
 | Throwaway project copies (`--ephemeral`) | Yes, where unprivileged user namespaces are enabled (Ubuntu, Debian, WSL2) | |
 | Pinning to `--cores` real CPUs (`--no-pin` turns it off) | Yes | |
-| Enforced memory, CPU-time and process limits | Yes, from a terminal in a systemd desktop session (anything running under the systemd user manager) | ssh and console logins sit outside the user manager: run `systemd-run --user --scope virmux run ...`. Without it, `virmux` prints one warning and only the reported counts above apply. `scripts/doctor.sh` shows which case you are in. |
+| Enforced memory and process limits, plus a CPU-time cap | Yes, from a terminal in a systemd desktop session (anything running under the systemd user manager). The CPU-time cap (`cpu.max`) needs systemd 252 or newer, which delegates the cpu controller; on older systemd, pinning alone limits CPU use. | ssh and console logins sit outside the user manager: run `systemd-run --user --scope virmux run ...`. Without it, `virmux` prints one warning and only the reported counts above apply. `scripts/doctor.sh` shows which case you are in. |
 | Sharing identical memory pages between sessions (KSM) | | Enable KSM (`echo 1 \| sudo tee /sys/kernel/mm/ksm/run`) and set `VIRMUX_KSM_AUTO_MERGE=1` |
 | Compressed swap in RAM (zram) | | Set up zram yourself; `virmux stats` and `virmux pack` then use it |
 | Swapping out a session's idle memory (`pack`, auto-freeze) | | The `CAP_SYS_NICE` capability, for example running as root. Without it the kernel refuses ([#5](https://github.com/dpologdvinity/virmux/issues/5)). |

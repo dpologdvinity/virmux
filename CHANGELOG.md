@@ -15,17 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `GOMAXPROCS`, `RAYON_NUM_THREADS`, `CARGO_BUILD_JOBS`, `CMAKE_BUILD_PARALLEL_LEVEL` and `PYTHON_CPU_COUNT` are set alongside the OpenMP/BLAS variables.
 - `scripts/doctor.sh` reports the delegated cgroup subtree virmux will use and its controllers.
 - A `delegation` test suite and CI job that run the tests inside the systemd user manager without relaxing cgroup permissions.
+- CI: lint workflow (pinned clang-format/clang-tidy, markdownlint, actionlint), arm64 and newest-toolchain (Fedora) builds, coverage summary, TSan, CodeQL, libFuzzer fuzzing on PRs and nightly, and attested release tarballs on version tags.
+- libFuzzer harnesses for IPC frames, daemon requests, session-list JSON, bench report JSON and size arguments (`-Dfuzzing=true`).
 
 ### Changed
 
 - Runs are pinned to `--cores` real CPUs by default (`sched_setaffinity`), chosen from the online CPUs in the inherited mask; with four or more CPUs the two lowest stay free for the interactive shell. Replaces the hardcoded `2-11` cpuset.
 - Run cgroups moved from `/sys/fs/cgroup/virmux-run-*.slice` to `<delegation root>/virmux/run-<pid>-<seq>`.
 - Cgroup limits are applied independently: one controller that is not delegated no longer discards the others, and a missing control file is never created.
+- `--mem` is now a hard limit (`memory.max`, the command is OOM-killed above it) with `memory.high` at 15/16 of it, instead of a `memory.high` throttle.
 - At most one warning line per run explains missing limits.
 - Thread-pool variables follow an "at most N" policy: a user's positive value no larger than the core count is kept instead of overwritten; larger or invalid values become the core count.
-
-- CI: lint workflow (pinned clang-format/clang-tidy, markdownlint, actionlint), arm64 and newest-toolchain (Fedora) builds, coverage summary, TSan, CodeQL, libFuzzer fuzzing on PRs and nightly, and attested release tarballs on version tags.
-- libFuzzer harnesses for IPC frames, daemon requests, session-list JSON, bench report JSON and size arguments (`-Dfuzzing=true`).
 
 ### Fixed
 
