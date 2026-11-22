@@ -41,6 +41,22 @@ extern "C" {
 #define VIRMUX_ENV_SPOOFED_MEMINFO "VIRMUX_SPOOFED_MEMINFO"
 
 /**
+ * @brief Environment variable specifying synthetic /proc/cpuinfo redirect path.
+ *
+ * When set, read-only opens of "/proc/cpuinfo" read this file instead: the
+ * real cpuinfo filtered to the CPUs the sandbox is pinned to.
+ */
+#define VIRMUX_ENV_SPOOFED_CPUINFO "VIRMUX_SPOOFED_CPUINFO"
+
+/**
+ * @brief Environment variable specifying synthetic
+ * /sys/devices/system/cpu/online redirect path.
+ *
+ * When set, read-only opens of the online CPU list read this file instead.
+ */
+#define VIRMUX_ENV_SPOOFED_CPU_ONLINE "VIRMUX_SPOOFED_CPU_ONLINE"
+
+/**
  * @brief Environment variable enabling proactive MADV_MERGEABLE registration.
  *
  * When set to "1", intercepted mmap() and mmap64() calls for anonymous memory

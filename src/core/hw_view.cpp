@@ -5,6 +5,7 @@
 
 #include "virmux/hw_view.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <cstring>
 #include <iterator>
@@ -34,6 +35,40 @@ std::string generate_synthetic_meminfo(const MemoryLimits& limits) {
       << "SwapTotal:       " << swap_total_kb << " kB\n"
       << "SwapFree:        " << swap_total_kb << " kB\n";
   return oss.str();
+}
+
+std::string filter_cpuinfo(const std::string& real, const CpuList& cpus) {
+  if (cpus.empty()) {
+    return real;
+  }
+  std::string out;
+  size_t pos = 0;
+  while (pos < real.size()) {
+    // A stanza runs up to and including its terminating blank line.
+    size_t end = real.find("\n\n", pos);
+    end = end == std::string::npos ? real.size() : end + 2;
+    const std::string stanza = real.substr(pos, end - pos);
+    pos = end;
+
+    bool keep = true;
+    if (stanza.starts_with("processor")) {
+      const size_t colon = stanza.find(':');
+      const auto ids = colon == std::string::npos
+                           ? std::nullopt
+                           : parse_cpu_list(stanza.substr(
+                                 colon + 1, stanza.find('\n') - colon - 1));
+      keep = ids && ids->size() == 1 &&
+             std::binary_search(cpus.begin(), cpus.end(), ids->front());
+    }
+    if (keep) {
+      out += stanza;
+    }
+  }
+  return out;
+}
+
+std::string format_online(const CpuList& cpus) {
+  return format_cpu_list(cpus) + "\n";
 }
 
 std::vector<std::pair<std::string, std::string>> compute_thread_env(

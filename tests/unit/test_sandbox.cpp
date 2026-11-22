@@ -329,6 +329,21 @@ void test_sandbox_reports_pinned_core_count(void) {
                                            std::to_string(avail) + "\""));
 }
 
+void test_sandbox_exports_spoofed_cpu_files(void) {
+  const auto avail = virmux::available_cpus().size();
+  const std::string want = std::to_string(avail < 2 ? avail : 2);
+  virmux::SandboxConfig cfg{.virtual_cores = 2};
+  TEST_ASSERT_EQUAL_INT(
+      0,
+      run_sh(cfg,
+             "test -f \"$VIRMUX_SPOOFED_CPUINFO\" && "
+             "test \"$(grep -c '^processor' \"$VIRMUX_SPOOFED_CPUINFO\")\" = " +
+                 want +
+                 " && "
+                 "test \"$(cat \"$VIRMUX_SPOOFED_CPU_ONLINE\")\" = "
+                 "\"$(grep Cpus_allowed_list /proc/self/status | cut -f2)\""));
+}
+
 void test_sandbox_at_most_one_warning_line(void) {
   virmux::SandboxConfig cfg{};
   TEST_ASSERT_TRUE(count_warning_lines(cfg) <= 1);
@@ -358,6 +373,7 @@ int main(void) {
   RUN_TEST(test_sandbox_pins_child_to_requested_cpus);
   RUN_TEST(test_sandbox_no_pin_keeps_full_mask);
   RUN_TEST(test_sandbox_reports_pinned_core_count);
+  RUN_TEST(test_sandbox_exports_spoofed_cpu_files);
   RUN_TEST(test_sandbox_at_most_one_warning_line);
   RUN_TEST(test_sandbox_fallback_warns_exactly_once_with_reason);
   return UNITY_END();

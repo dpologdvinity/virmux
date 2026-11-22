@@ -120,6 +120,65 @@ void test_thread_env_leaves_makeflags_alone(void) {
                            env_value(2, "UV_THREADPOOL_SIZE").c_str());
 }
 
+namespace {
+
+// Trimmed real-world /proc/cpuinfo layouts.
+constexpr const char* kX86Cpuinfo =
+    "processor\t: 0\nvendor_id\t: GenuineIntel\nmodel name\t: Fake CPU\n"
+    "core id\t\t: 0\n\n"
+    "processor\t: 1\nvendor_id\t: GenuineIntel\nmodel name\t: Fake CPU\n"
+    "core id\t\t: 1\n\n"
+    "processor\t: 2\nvendor_id\t: GenuineIntel\nmodel name\t: Fake CPU\n"
+    "core id\t\t: 2\n\n"
+    "processor\t: 3\nvendor_id\t: GenuineIntel\nmodel name\t: Fake CPU\n"
+    "core id\t\t: 3\n\n";
+
+constexpr const char* kArm64Cpuinfo =
+    "processor\t: 0\nBogoMIPS\t: 50.00\nCPU implementer\t: 0x41\n\n"
+    "processor\t: 1\nBogoMIPS\t: 50.00\nCPU implementer\t: 0x41\n\n"
+    "processor\t: 2\nBogoMIPS\t: 50.00\nCPU implementer\t: 0x41\n\n"
+    "processor\t: 3\nBogoMIPS\t: 50.00\nCPU implementer\t: 0x41\n\n"
+    "Hardware\t: Fake SoC\n";
+
+int count_processors(const std::string& text) {
+  int count = 0;
+  for (size_t pos = 0;
+       (pos = text.find("processor\t:", pos)) != std::string::npos; ++pos) {
+    ++count;
+  }
+  return count;
+}
+
+}  // namespace
+
+void test_filter_cpuinfo_x86_keeps_chosen_cpus(void) {
+  const std::string out = virmux::filter_cpuinfo(kX86Cpuinfo, {1, 3});
+  TEST_ASSERT_EQUAL_INT(2, count_processors(out));
+  TEST_ASSERT_NOT_NULL(std::strstr(out.c_str(), "processor\t: 1\n"));
+  TEST_ASSERT_NOT_NULL(std::strstr(out.c_str(), "processor\t: 3\n"));
+  TEST_ASSERT_NULL(std::strstr(out.c_str(), "processor\t: 0\n"));
+  TEST_ASSERT_NULL(std::strstr(out.c_str(), "core id\t\t: 2"));
+  // Stanzas stay blank-line separated, as parsers expect.
+  TEST_ASSERT_NOT_NULL(std::strstr(out.c_str(), "core id\t\t: 1\n\nprocessor"));
+}
+
+void test_filter_cpuinfo_arm64_keeps_global_section(void) {
+  const std::string out = virmux::filter_cpuinfo(kArm64Cpuinfo, {2});
+  TEST_ASSERT_EQUAL_INT(1, count_processors(out));
+  TEST_ASSERT_NOT_NULL(std::strstr(out.c_str(), "processor\t: 2\n"));
+  TEST_ASSERT_NOT_NULL(std::strstr(out.c_str(), "Hardware\t: Fake SoC"));
+}
+
+void test_filter_cpuinfo_empty_selection_keeps_everything(void) {
+  TEST_ASSERT_EQUAL_STRING(kX86Cpuinfo,
+                           virmux::filter_cpuinfo(kX86Cpuinfo, {}).c_str());
+}
+
+void test_format_online_matches_sysfs_format(void) {
+  TEST_ASSERT_EQUAL_STRING("2-3\n", virmux::format_online({2, 3}).c_str());
+  TEST_ASSERT_EQUAL_STRING("2,9\n", virmux::format_online({2, 9}).c_str());
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_memory_limits_derive_high_and_swap_from_max);
@@ -131,5 +190,9 @@ int main(void) {
   RUN_TEST(test_thread_env_caps_larger_user_value);
   RUN_TEST(test_thread_env_replaces_junk);
   RUN_TEST(test_thread_env_leaves_makeflags_alone);
+  RUN_TEST(test_filter_cpuinfo_x86_keeps_chosen_cpus);
+  RUN_TEST(test_filter_cpuinfo_arm64_keeps_global_section);
+  RUN_TEST(test_filter_cpuinfo_empty_selection_keeps_everything);
+  RUN_TEST(test_format_online_matches_sysfs_format);
   return UNITY_END();
 }

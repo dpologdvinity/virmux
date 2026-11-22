@@ -26,8 +26,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iterator>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -45,19 +47,6 @@
 namespace virmux {
 
 namespace {
-
-/**
- * @brief RAII guard ensuring temporary synthetic meminfo file is unlinked.
- */
-struct MeminfoGuard {
-  std::string path;
-  ~MeminfoGuard() {
-    if (!path.empty()) {
-      std::error_code ec;
-      std::filesystem::remove(path, ec);
-    }
-  }
-};
 
 /**
  * @brief Write the entire buffer to fd, retrying on EINTR and short writes.
@@ -78,6 +67,57 @@ bool write_all(int fd, const std::string& data) {
     remaining -= static_cast<size_t>(written);
   }
   return true;
+}
+
+/**
+ * @brief Temporary files describing the child's synthetic hardware view
+ * (meminfo, cpuinfo, online CPU list); all are removed when the run ends.
+ */
+class SpoofFiles {
+ public:
+  /** @param prefix Path prefix shared by this run's files. */
+  explicit SpoofFiles(std::string prefix) : prefix_(std::move(prefix)) {}
+
+  ~SpoofFiles() {
+    for (const auto& path : paths_) {
+      std::error_code ec;
+      std::filesystem::remove(path, ec);
+    }
+  }
+
+  SpoofFiles(const SpoofFiles&) = delete;
+  SpoofFiles& operator=(const SpoofFiles&) = delete;
+
+  /**
+   * @brief Create `<prefix><name>` (0600, never an existing file) with
+   * @p content.
+   * @return The path, or "" unless the content was fully written: a
+   * truncated file would corrupt the child's view, so it is not advertised.
+   */
+  std::string add(const std::string& name, const std::string& content) {
+    std::string path = prefix_ + name;
+    const int fd =
+        ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (fd < 0) {
+      return "";
+    }
+    paths_.push_back(path);
+    const bool ok = write_all(fd, content);
+    ::close(fd);
+    return ok ? path : "";
+  }
+
+ private:
+  std::string prefix_;
+  std::vector<std::string> paths_;
+};
+
+/** @brief Whole contents of @p path ("" if unreadable). */
+std::string read_text_file(const char* path) {
+  std::ifstream in(path);
+  std::ostringstream text;
+  text << in.rdbuf();
+  return text.str();
 }
 
 /**
@@ -535,19 +575,10 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
 
   // Generate synthetic /proc/meminfo file with unique atomic sequence per call
   uint64_t seq = s_sandbox_counter.fetch_add(1, std::memory_order_relaxed);
-  std::string meminfo_path = "/tmp/virmux_" + std::to_string(::getpid()) + "_" +
-                             std::to_string(seq) + "_meminfo";
-  int mem_fd = ::open(meminfo_path.c_str(),
-                      O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-  // Only advertise the spoofed file to the interceptor if it was fully
-  // written; a truncated file would corrupt the child's /proc/meminfo view.
-  bool meminfo_ready = false;
-  if (mem_fd >= 0) {
-    std::string mem_content = generate_synthetic_meminfo(mem_limits);
-    meminfo_ready = write_all(mem_fd, mem_content);
-    ::close(mem_fd);
-  }
-  MeminfoGuard meminfo_guard{meminfo_path};
+  SpoofFiles spoof("/tmp/virmux_" + std::to_string(::getpid()) + "_" +
+                   std::to_string(seq) + "_");
+  const std::string meminfo_path =
+      spoof.add("meminfo", generate_synthetic_meminfo(mem_limits));
 
   // Pre-fork hygiene: resolve interceptor path and prepare environment strings
   // before fork to avoid dynamic allocations or path lookup failures after
@@ -580,6 +611,23 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
                                    : std::min(cfg.virtual_cores,
                                               static_cast<int>(pinned.size()));
   std::string vcores_str = std::to_string(cores);
+
+  // /proc/cpuinfo and the online list describe the CPUs the child runs on
+  // (without pinning: the first `cores` available CPUs).
+  CpuList shown = pinned;
+  if (shown.empty()) {
+    shown = available_cpus();
+    if (cores > 0 && shown.size() > static_cast<size_t>(cores)) {
+      shown.resize(static_cast<size_t>(cores));
+    }
+  }
+  std::string cpuinfo_path;
+  std::string online_path;
+  if (!shown.empty()) {
+    cpuinfo_path = spoof.add(
+        "cpuinfo", filter_cpuinfo(read_text_file("/proc/cpuinfo"), shown));
+    online_path = spoof.add("cpu_online", format_online(shown));
+  }
 
   // Per-run cgroup in a delegated subtree (systemd user manager, or a
   // writable ancestor when root / in a container). Without one the run still
@@ -648,7 +696,13 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
     env_overrides.emplace_back("LD_PRELOAD", preload_val);
   }
   env_overrides.emplace_back(VIRMUX_ENV_VIRTUAL_CORES, vcores_str);
-  if (meminfo_ready) {
+  if (!cpuinfo_path.empty()) {
+    env_overrides.emplace_back(VIRMUX_ENV_SPOOFED_CPUINFO, cpuinfo_path);
+  }
+  if (!online_path.empty()) {
+    env_overrides.emplace_back(VIRMUX_ENV_SPOOFED_CPU_ONLINE, online_path);
+  }
+  if (!meminfo_path.empty()) {
     env_overrides.emplace_back(VIRMUX_ENV_SPOOFED_MEMINFO, meminfo_path);
   }
   // Thread-pool sizing variables, "at most N" (see compute_thread_env).

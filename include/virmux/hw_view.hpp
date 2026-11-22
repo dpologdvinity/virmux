@@ -14,6 +14,8 @@
 #include <utility>
 #include <vector>
 
+#include "virmux/cpu_select.hpp"
+
 namespace virmux {
 
 /**
@@ -44,6 +46,25 @@ struct MemoryLimits {
  */
 [[nodiscard]] std::string generate_synthetic_meminfo(
     const MemoryLimits& limits);
+
+/**
+ * @brief Filter a /proc/cpuinfo text down to the CPUs in @p cpus.
+ *
+ * cpuinfo is a series of blank-line-separated stanzas, one per CPU, each
+ * starting with "processor : N". Stanzas for other CPUs are dropped; stanzas
+ * without a processor line (arm64's trailing "Hardware" section) are kept.
+ * Processor numbers are not renumbered, so they match the affinity mask.
+ * @param real Contents of the real /proc/cpuinfo.
+ * @param cpus CPUs to keep (empty keeps everything).
+ * @return Filtered cpuinfo text.
+ */
+[[nodiscard]] std::string filter_cpuinfo(const std::string& real,
+                                         const CpuList& cpus);
+
+/**
+ * @brief Synthetic /sys/devices/system/cpu/online for @p cpus ("2-3\n").
+ */
+[[nodiscard]] std::string format_online(const CpuList& cpus);
 
 /// getenv-compatible lookup, injectable for tests.
 using GetenvFn = const char* (*)(const char*);
