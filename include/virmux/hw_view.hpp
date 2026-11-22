@@ -11,6 +11,8 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace virmux {
 
@@ -42,5 +44,24 @@ struct MemoryLimits {
  */
 [[nodiscard]] std::string generate_synthetic_meminfo(
     const MemoryLimits& limits);
+
+/// getenv-compatible lookup, injectable for tests.
+using GetenvFn = const char* (*)(const char*);
+
+/**
+ * @brief Thread-count environment variables for a run limited to @p n CPUs.
+ *
+ * Covers OpenMP, OpenBLAS, MKL, NumExpr, Go (GOMAXPROCS), Rayon, Cargo, CMake
+ * and Python 3.13+ (PYTHON_CPU_COUNT). Policy "at most N": a user's value is
+ * kept if it is a positive integer no larger than @p n (asking for fewer
+ * threads is fine); anything else (unset, larger, junk) becomes @p n.
+ * MAKEFLAGS and UV_THREADPOOL_SIZE are deliberately left alone: the first
+ * mixes job counts with other flags, the second sizes an I/O pool.
+ * @param n CPU count of the run (values below 1 are treated as 1).
+ * @param getenv_fn Environment lookup (std::getenv in production).
+ * @return (name, value) pairs to set in the child.
+ */
+[[nodiscard]] std::vector<std::pair<std::string, std::string>>
+compute_thread_env(int n, GetenvFn getenv_fn);
 
 }  // namespace virmux

@@ -114,6 +114,8 @@ void test_sandbox_virtual_env_and_meminfo(void) {
   char arg2[] =
       "test \"$VIRMUX_VIRTUAL_CORES\" = \"3\" && "
       "test \"$OMP_NUM_THREADS\" = \"3\" && "
+      "test \"$GOMAXPROCS\" = \"3\" && "
+      "test \"$RAYON_NUM_THREADS\" = \"3\" && "
       "grep -q \"MemTotal:[[:space:]]*524288 kB\" /proc/meminfo";
   char* argv[] = {arg0, arg1, arg2, nullptr};
 

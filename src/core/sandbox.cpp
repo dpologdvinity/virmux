@@ -651,10 +651,13 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
   if (meminfo_ready) {
     env_overrides.emplace_back(VIRMUX_ENV_SPOOFED_MEMINFO, meminfo_path);
   }
-  env_overrides.emplace_back("OMP_NUM_THREADS", vcores_str);
-  env_overrides.emplace_back("OPENBLAS_NUM_THREADS", vcores_str);
-  env_overrides.emplace_back("MKL_NUM_THREADS", vcores_str);
-  env_overrides.emplace_back("NUMEXPR_NUM_THREADS", vcores_str);
+  // Thread-pool sizing variables, "at most N" (see compute_thread_env).
+  auto real_getenv = [](const char* name) -> const char* {
+    return std::getenv(name);
+  };
+  for (auto& kv : compute_thread_env(cores, real_getenv)) {
+    env_overrides.push_back(std::move(kv));
+  }
   std::vector<std::string> child_env = build_child_environment(env_overrides);
   std::vector<char*> child_envp;
   child_envp.reserve(child_env.size() + 1);
