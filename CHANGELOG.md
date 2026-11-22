@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An installed `virmux` (`meson install`) now finds its interceptor in the distro library directory (e.g. `lib/x86_64-linux-gnu`); previously memory and `sysconf()` core spoofing silently stopped working after installation.
 - Synthetic `/proc/meminfo` is only exported to sandboxes when fully written.
 - Backgrounded daemon exits if it cannot report readiness, and treats a failed `chdir("/")` as an init failure.
 - Session-list JSON parsing no longer reads past the end of its input, and rejects overflowing timestamps.

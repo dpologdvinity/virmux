@@ -1,7 +1,6 @@
 # virmux
 
-> **Virtual Resource Multiplexer in C++20/C for Linux & WSL2.**  
-> High-Density Memory Deduplication, CPU Slicing, Workspace Isolation, and Admission Scheduling for Heavy Concurrent Workloads.
+**Run heavy commands without freezing your machine.**
 
 [![CI](https://github.com/dpologdvinity/virmux/actions/workflows/ci.yml/badge.svg)](https://github.com/dpologdvinity/virmux/actions/workflows/ci.yml)
 [![Sanitizers](https://github.com/dpologdvinity/virmux/actions/workflows/sanitizers.yml/badge.svg)](https://github.com/dpologdvinity/virmux/actions/workflows/sanitizers.yml)
@@ -9,192 +8,179 @@
 [![Fuzz](https://github.com/dpologdvinity/virmux/actions/workflows/fuzz.yml/badge.svg)](https://github.com/dpologdvinity/virmux/actions/workflows/fuzz.yml)
 [![CodeQL](https://github.com/dpologdvinity/virmux/actions/workflows/codeql.yml/badge.svg)](https://github.com/dpologdvinity/virmux/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Standard: C++20 / C17](https://img.shields.io/badge/Standard-C%2B%2B20%20%7C%20C17-blue.svg)](https://en.wikipedia.org/wiki/C%2B%2B20)
 [![Platform: Linux / WSL2](https://img.shields.io/badge/Platform-Linux%20%7C%20WSL2-orange.svg)](https://learn.microsoft.com/en-us/windows/wsl/)
-[![Build: Meson + Ninja](https://img.shields.io/badge/Build-Meson%20%7C%20Ninja-green.svg)](https://mesonbuild.com/)
 
----
+Test suites, compilers and AI coding agents each assume they own the whole
+computer: they start a worker for every CPU core and size their memory use to
+all of your RAM. Run a few of them at once and your laptop grinds to a halt.
+On WSL2, the whole Windows desktop can lock up.
 
-## The Problem
-
-Running multiple terminal sessions or autonomous AI agent swarms simultaneously (e.g. running Playwright tests, compiling C++/Rust, training neural models in PyTorch, building Docker images) quickly brings even high-end laptops and workstations to a crawl:
-
-- Test frameworks and compilers greedily spawn 12+ worker threads each, invalidating CPU caches and starving the host OS.
-- Dozens of Chromium or Python runtimes duplicate gigabytes of identical memory pages in RAM, rapidly overflowing physical memory into swap thrashing.
-- In WSL2, host memory saturation (`vmmem`) locks up the entire Windows desktop and triggers harsh Linux OOM kills.
-
-## The Solution: `virmux`
-
-`virmux` acts as an in-kernel resource multiplexer and hypervisor. While tools like `tmux` multiplex terminal screens, `virmux` multiplexes the underlying hardware:
-
-1. **Memory Multiplexing:** Deduplicates identical memory pages across processes via **KSM (Kernel Samepage Merging)**, compresses inactive heaps into RAM with **`zram`**, and actively reclaims memory using **`process_madvise(MADV_PAGEOUT)`**.
-2. **CPU Shielding & Admission Gate:** Pins Cores 0–1 strictly for your interactive shell and editor (`cpuset.cpus`), while queuing heavy bursts (compilers, test runners) through an admission token-bucket to eliminate CPU cache thrashing.
-3. **Fault Isolation & Blast Radius Containment:** Configures deterministic OOM priority hierarchy (`oom_score_adj = -900` daemon protection, `+800` sacrificial worker) and fork-bomb limits (`pids.max` with `RLIMIT_NPROC` fallback) so unruly child processes cannot bring down siblings or the host OS.
-4. **Transparent Inactivity Auto-Freeze:** Background telemetry continuously monitors CPU tick deltas and cgroups v2 `cpu.stat`; idle sessions (>500ms inactivity) are automatically frozen via cgroups or `SIGSTOP` with heap memory paged out via `process_madvise(MADV_PAGEOUT)`.
-5. **Session Checkpointing & Hibernation:** Save and restore running sessions (`virmux checkpoint` / `virmux restore`) using CRIU dump/restore when elevated capabilities exist, falling back to deep freeze + pageout in standard unprivileged environments.
-6. **Copy-on-Write Ephemeral Workspaces:** Provisions unprivileged **OverlayFS** workspaces with in-memory `tmpfs` scratch directories—dozens of agent workspaces share a single repository on disk with zero write leakage.
-7. **Content-Addressable Storage (CAS):** 2-level directory-sharded artifact cache (`objects/ab/cd/<hash>`) with atomic staging, RFC 6234 SHA-256 validation, and true LRU eviction.
-8. **Transparent Hardware Spoofing:** Intercepts `nproc` and `/proc/meminfo` via `LD_PRELOAD`, tricking greedy runtimes into behaving politely without changing a single line of project code.
-9. **Supervisor Daemon & IPC:** Lightweight Unix domain socket server with binary TLV framing (`VMUX`), background telemetry, process tree signaling, and lifecycle state management.
-10. **Interactive TUI Dashboard:** Real-time ncurses dashboard (`virmux top`) showing active sessions, memory saved, CPU topology, and hotkey lifecycle controls (`Space` freeze/thaw, `K` kill, `q` quit).
-
----
-
-## Quickstart
-
-### Prerequisites
-
-- Linux kernel 5.10+ (standard in Ubuntu 22.04+, WSL2, Debian 12+)
-- `meson`, `ninja`, `gcc` (>= 13) or `clang`
-- `libncursesw5-dev`
+`virmux` is a command-line tool you put in front of those commands. It keeps
+each one on a leash so your editor and shell stay responsive.
 
 ```bash
-# Clone the repository
+virmux run --cores 2 --mem 2G -- npm test
+```
+
+## What it does
+
+**It tells the command your machine is smaller than it is.** Most tools decide
+how many workers to start by asking how many cores and how much memory exist.
+Inside `virmux run`, they get the answer you chose:
+
+```console
+$ nproc
+10
+$ virmux run --cores 2 -- nproc
+2
+
+$ grep MemTotal /proc/meminfo
+MemTotal:       25644240 kB
+$ virmux run --mem 2G -- grep MemTotal /proc/meminfo
+MemTotal:        2097152 kB
+```
+
+So `npm test`, `make -j$(nproc)`, `pytest -n auto`, PyTorch and friends start 2
+workers instead of 10, with no changes to your project. This works for every
+user, with no special permissions. It covers programs that use the system C
+library (Node, Python, most C/C++ and Rust tools) and anything that reads
+`OMP_NUM_THREADS`; statically linked programs such as most Go binaries still see
+the real hardware.
+
+**It also:**
+
+- **Sacrifices the command first when memory runs out.** If the machine runs out
+  of memory, Linux kills the command running under `virmux` instead of your
+  editor or terminal.
+- **Caps runaway process creation.** `--max-pids` stops a fork bomb or a
+  misbehaving build from spawning thousands of processes.
+- **Freezes idle sessions.** Pause and resume a session by hand, or let the
+  background helper freeze sessions that have gone idle, so they stop using
+  CPU until you need them again.
+- **Gives each run a throwaway copy of your project.** With `--ephemeral`, the
+  command sees your repository but its writes go to a temporary layer that is
+  discarded afterwards. Useful for running several AI agents on one checkout
+  without them overwriting each other.
+- **Shows everything in a dashboard.** `virmux top` lists running sessions and
+  lets you freeze or kill them with a keypress.
+
+## What needs extra setup
+
+Some features depend on permissions or kernel settings that a normal Linux or
+WSL2 user does not have by default. `virmux` falls back gracefully and tells
+you when that happens.
+
+| Feature | Works out of the box | Needs extra setup |
+| ------- | -------------------- | ----------------- |
+| Smaller core and memory counts reported to the command | Yes | |
+| Command killed first when memory runs out | Yes | |
+| Process-count cap (`--max-pids`) | Yes | |
+| Freeze and resume sessions | Yes | |
+| Throwaway project copies (`--ephemeral`) | Yes, where unprivileged user namespaces are enabled (Ubuntu, Debian, WSL2) | |
+| Hard CPU pinning and memory throttling | | Write access to cgroups v2, e.g. a systemd-delegated cgroup. Without it, only the reported counts above apply. |
+| Sharing identical memory pages between sessions (KSM) | | Enable KSM (`echo 1 \| sudo tee /sys/kernel/mm/ksm/run`) and set `VIRMUX_KSM_AUTO_MERGE=1` |
+| Compressed swap in RAM (zram) | | Set up zram yourself; `virmux stats` and `virmux pack` then use it |
+| Swapping out a session's idle memory (`pack`, auto-freeze) | | The `CAP_SYS_NICE` capability, for example running as root. Without it the kernel refuses ([#5](https://github.com/dpologdvinity/virmux/issues/5)). |
+| Full process snapshots (`checkpoint` / `restore`) | | [CRIU](https://criu.org/) with root privileges. Without it, checkpoint falls back to freezing the session. |
+
+Run `bash scripts/doctor.sh` to see which of these your machine supports.
+
+## Install
+
+Requires Linux kernel 5.10 or newer (Ubuntu 22.04+, Debian 12+ or WSL2),
+`meson`, `ninja`, GCC 13+ or Clang, and the ncurses development headers.
+
+```bash
+sudo apt-get install -y build-essential meson ninja-build libncurses-dev
 git clone https://github.com/dpologdvinity/virmux.git
 cd virmux
-
-# Build with Meson
-meson setup build
+meson setup build --buildtype=release
 ninja -C build
-
-# Run unit and integration test suite (46 tests)
-ninja -C build test
+sudo meson install -C build   # optional: installs virmux to /usr/local
 ```
 
----
+Tagged versions will also ship prebuilt x86_64 and arm64 tarballs on the
+[Releases page](https://github.com/dpologdvinity/virmux/releases) (none
+published yet). Unpack one anywhere and run `bin/virmux`.
 
-## Usage & Subcommands
-
-### 1. Execute Command in Managed Sandbox (`virmux run`)
+## Usage
 
 ```bash
-# Runs command in 2-core, 2GB memory ceiling sandbox with hardware virtualization
+# Run a command limited to 2 cores and 2 GB
 virmux run --cores 2 --mem 2G -- npm test
 
-# Runs command inside a throwaway Copy-on-Write ephemeral workspace (OverlayFS)
-virmux run --ephemeral --workspace ~/git/my-repo -- npx playwright test
-
-# Enqueue as heavy compute burst through admission gate
-virmux run --heavy --cores 4 --mem 4G -- cargo build --release
+# Run against a throwaway copy of a repository
+virmux run --ephemeral --workspace ~/code/my-repo -- npx playwright test
 ```
 
-### 2. Start Supervisor Daemon (`virmux daemon`)
+To track sessions, start the background helper once. Every `virmux run` after
+that registers with it:
 
 ```bash
-# Start background daemon (uses readiness pipe for instant synchronization)
-virmux daemon
-
-# Run daemon in foreground for debugging
-virmux daemon --foreground
+virmux daemon                 # add --auto-freeze to freeze idle sessions
+virmux list                   # show sessions
+virmux freeze 1               # pause session 1
+virmux thaw 1                 # resume it
+virmux kill 1                 # stop it and everything it started
+virmux top                    # interactive dashboard
 ```
 
-### 3. Real-Time Interactive TUI Dashboard (`virmux top`)
+`virmux top` (shown here with `--headless`, which prints one snapshot):
 
-```bash
-# Launch interactive ncurses dashboard (sub-0.5% CPU budget)
-virmux top
-
-# Render one-shot headless snapshot to stdout
-virmux top --headless
+```text
++------------------------------------------------------------------------------+
+| VIRMUX v0.1.0  [Linux / 10 Cores / 24.5G RAM]               Host Load: 13.99 |
+| Dedicated Shield: Cores 0-1 (Fluid)   | Worker Pool: Cores 2-9 (Managed)     |
+| KSM Dedup: 0 B Saved  | zram: 0 B (1.0x) | Sessions: 2                       |
++------------------------------------------------------------------------------+
+| S# | NAME        | STATE   | V-CORES | RAM (RSS) | DEDUP | COMMAND           |
++------------------------------------------------------------------------------+
+|>1  | sleep       | RUNNING | 2       | 3.8 MiB   | 0 B   | sleep 20          |
+| 2  | sleep       | RUNNING | 4       | 3.7 MiB   | 0 B   | sleep 20          |
++------------------------------------------------------------------------------+
+| [j/k] Navigate  [Space] Freeze/Thaw  [K] Kill  [q] Quit                      |
++------------------------------------------------------------------------------+
 ```
 
-**TUI Hotkeys:**
+Other commands: `virmux stats` (memory overview), `virmux pack` (ask the
+kernel to swap out a process's idle memory), `virmux checkpoint` / `restore`,
+`virmux cas` (build artifact cache) and `virmux bench` (stress benchmark). Run
+`virmux <command> --help` for details.
 
-- `j` / `k` or `Up` / `Down`: Navigate active session table
-- `Space`: Freeze or thaw selected session
-- `K`: Kill selected session process tree
-- `q`: Exit dashboard
+## How it compares
 
-### 4. Manage Session Lifecycles (`virmux list`, `freeze`, `thaw`, `kill`)
+- **`nice` / `taskset`** change priority or pin cores, but the command still
+  starts one worker per core it can see.
+- **`systemd-run --user --scope -p MemoryMax=… -p CPUQuota=…`** enforces hard
+  limits, but the command still sees all of your cores and RAM, so it starts
+  too many workers and then gets throttled or killed.
+- **`.wslconfig` memory limits** cap the whole WSL2 VM, not individual jobs.
 
-```bash
-# List all active managed sessions in formatted table
-virmux list
+`virmux` combines per-command limits with changing what the command *sees*, so
+well-behaved tools size themselves correctly from the start.
 
-# Output session state as machine-readable JSON
-virmux list --json
+## Status
 
-# Freeze and thaw sessions via cgroups v2 / SIGSTOP fallback
-virmux freeze 1
-virmux thaw 1
+Early development (v0.1.0). Linux and WSL2 only. Expect rough edges and open an
+[issue](https://github.com/dpologdvinity/virmux/issues) when you hit one.
 
-# Terminate session process tree and child tasks
-virmux kill 1
-```
+Known gaps:
 
-### 5. Session Checkpointing & Hibernation (`virmux checkpoint`, `virmux restore`)
+- `virmux run --heavy` is meant to limit how many heavy jobs run at once, but
+  separate `virmux run` commands do not coordinate yet
+  ([#4](https://github.com/dpologdvinity/virmux/issues/4)).
+- Without `CAP_SYS_NICE`, `virmux pack` reports memory as reclaimed even when the
+  kernel refused to swap it out
+  ([#5](https://github.com/dpologdvinity/virmux/issues/5)).
 
-```bash
-# Checkpoint running session to disk (CRIU dump or deep-freeze pageout fallback)
-virmux checkpoint 1
+## Learn more
 
-# Restore checkpointed session back to running state
-virmux restore 1
-```
-
-### 6. Fault Isolation & Auto-Freeze Options
-
-```bash
-# Start daemon with automatic inactivity freeze (defaults to 500ms idle threshold)
-virmux daemon --auto-freeze --idle-ms 500
-
-# Execute sandboxed workload with fork-bomb ceiling (pids.max and RLIMIT_NPROC fallback)
-virmux run --max-pids 64 -- python3 worker.py
-```
-
-### 7. Telemetry & Compaction (`virmux stats`, `virmux pack`)
-
-```bash
-# Inspect host memory, KSM deduplication, and zram compression telemetry
-virmux stats
-
-# Output telemetry as JSON
-virmux stats --json
-
-# Proactively compact anonymous memory into swap/zram via process_madvise
-virmux pack
-virmux pack 1234 5678
-```
-
-### 8. Content-Addressable Storage (`virmux cas`)
-
-```bash
-# Inspect CAS cache size, hit/miss ratios, and entry counts
-virmux cas stats
-
-# Prune CAS cache down to a maximum byte threshold via LRU
-virmux cas clean --max-bytes 500M
-```
-
-### 9. Stress Benchmarking (`virmux bench run`, `virmux bench report`)
-
-```bash
-# Run 12-task baseline vs managed gauntlet stress benchmark
-virmux bench run --quick --tasks 12 --output report.json
-
-# Display formatted comparison report from JSON file or stdin
-virmux bench report report.json
-cat report.json | virmux bench report
-```
-
----
-
-## Architecture & Detailed Specs
-
-Comprehensive technical design specifications are available in [`docs/specs/`](docs/specs/):
-
-- [00. Overview & Core Architecture](docs/specs/00-OVERVIEW.md)
-- [01. Memory Multiplexing Subsystem](docs/specs/01-MEMORY-SUBSYSTEM.md)
-- [02. CPU & Concurrency Scheduling Subsystem](docs/specs/02-CPU-SCHEDULING-SUBSYSTEM.md)
-- [03. Storage & Workspace Subsystem](docs/specs/03-STORAGE-WORKSPACE-SUBSYSTEM.md)
-- [04. Runtime Virtualization & Spoofing](docs/specs/04-RUNTIME-VIRTUALIZATION.md)
-- [05. Fault Isolation & Lifecycle Management](docs/specs/05-FAULT-ISOLATION-LIFECYCLE.md)
-- [06. CLI & Interactive TUI Specification](docs/specs/06-CLI-AND-TUI-SPEC.md)
-- [07. Testing, Verification & Benchmark Strategy](docs/specs/07-TESTING-AND-BENCHMARKS.md)
-- [08. Tooling, Diagnostics & Dev Environment](docs/specs/08-TOOLING-AND-DEV-ENVIRONMENT.md)
-
----
+- [ARCHITECTURE.md](ARCHITECTURE.md) explains how it works: the preloaded
+  library that changes reported hardware, the supervisor, cgroups, namespaces
+  and the memory subsystem.
+- [`docs/specs/`](docs/specs/) has detailed design specs for each subsystem.
+- [CONTRIBUTING.md](CONTRIBUTING.md) covers development setup, tests and CI.
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE).
