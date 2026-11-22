@@ -407,7 +407,11 @@ CgroupSlice create_run(const CgroupDelegation& delegation,
     if (fd >= 0) {
       ScopedFd scoped(fd);
       const std::string req = "+" + c;
-      (void)::write(scoped.get(), req.data(), req.size());
+      // A refused controller is not fatal: its control files will be
+      // missing and apply_limits() reports the affected limits.
+      if (::write(scoped.get(), req.data(), req.size()) < 0) {
+        continue;
+      }
     }
   }
 

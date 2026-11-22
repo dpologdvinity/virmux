@@ -252,7 +252,7 @@ std::vector<std::string> find_virmux_cgroup_procs(
   std::vector<std::string> found;
 
   // Adds @p dir's cgroup.procs and those of all cgroups beneath it.
-  auto collect_subtree = [&found, kOpts](const fs::path& dir) {
+  auto collect_subtree = [&found](const fs::path& dir) {
     std::error_code ec;
     if (fs::exists(dir / "cgroup.procs", ec)) {
       found.push_back((dir / "cgroup.procs").string());
