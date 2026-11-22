@@ -249,12 +249,41 @@ class CgroupSlice {
 
   int last_errno_{0};
 
+  // Records why the run directory could not be created.
+  friend CgroupSlice create_run(const CgroupDelegation& delegation,
+                                const std::string& name);
+
   /**
    * @brief Write @p value to an existing control file (never creates it).
    * Silent: failures are recorded in last_errno_ for the caller to report.
    */
   bool write_file(const std::string& filename, const std::string& value);
 };
+
+/**
+ * @brief One-line summary of limits that could not be applied ("" if none).
+ *
+ * A missing control file (ENOENT: controller not delegated) is expected and
+ * not reported for cpuset.cpus (sched_setaffinity pins the child instead) and
+ * memory.swap.max (no swap accounting), nor for cpu.max when @p pinned (the
+ * affinity mask already caps the run at its CPU count; older systemd
+ * delegates only memory and pids).
+ * @param results Output of CgroupSlice::apply_limits().
+ * @param pinned Whether the child is pinned with sched_setaffinity.
+ */
+[[nodiscard]] std::string describe_limit_failures(
+    const std::vector<LimitResult>& results, bool pinned);
+
+/**
+ * @brief Whether process @p pid is a member of cgroup @p cgroup_dir.
+ * @param pid Process to check.
+ * @param cgroup_dir Absolute cgroup directory, e.g. "<root>/virmux/run-1-0".
+ * @param cgroup_root cgroup2 mount point the 0:: path is relative to.
+ * @return true/false, or std::nullopt if /proc/<pid>/cgroup is unreadable
+ * (process gone) or has no cgroup v2 line.
+ */
+[[nodiscard]] std::optional<bool> process_in_cgroup(
+    pid_t pid, const std::string& cgroup_dir, const std::string& cgroup_root);
 
 /// virmux's own directory under the delegation root; runs live beneath it.
 inline constexpr const char* kVirmuxCgroupDir = "virmux";

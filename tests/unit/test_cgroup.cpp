@@ -130,12 +130,23 @@ void test_scoped_fd_reset(void) {
 }
 
 void test_cgroup_unprivileged_fallback_logs_warning(void) {
+  if (geteuid() == 0) {
+    TEST_IGNORE_MESSAGE("root bypasses the read-only base directory");
+  }
+  // A base directory we cannot write to stands in for a cgroup tree we do
+  // not own. (/sys/fs/cgroup itself may be writable, e.g. in CI.)
+  char tmpl[] = "/tmp/virmux_cgroup_ro_XXXXXX";
+  const char* base = mkdtemp(tmpl);
+  TEST_ASSERT_NOT_NULL(base);
+  TEST_ASSERT_EQUAL_INT(0, chmod(base, 0555));
+
   virmux::CgroupSlice slice("test-unprivileged");
-  // Under unprivileged execution, init should not crash; it logs warning and
-  // sets valid=false
-  bool res = slice.setup("/sys/fs/cgroup/nonexistent_test_slice",
+  bool res = slice.setup(std::string(base) + "/nonexistent_test_slice",
                          1024ULL * 1024 * 500, "2-11");
+  chmod(base, 0755);
+  std::filesystem::remove_all(base);
   TEST_ASSERT_FALSE(res);
+  TEST_ASSERT_EQUAL_INT(EACCES, slice.last_error());
   TEST_ASSERT_FALSE(slice.is_valid());
   TEST_ASSERT_FALSE(slice.valid());
   TEST_ASSERT_FALSE(slice.attach_pid(getpid()));
@@ -419,6 +430,73 @@ void test_delegation_root_without_user_manager_uses_cgroup_root(void) {
   TEST_ASSERT_EQUAL_STRING(fs.root().c_str(), d.root.c_str());
 }
 
+void test_delegation_at_cgroup_root_gives_no_user_manager_advice(void) {
+  if (geteuid() == 0) {
+    TEST_IGNORE_MESSAGE("root bypasses the read-only modes this test needs");
+  }
+  // Containers and WSL without systemd: we sit at the (read-only) root.
+  virmux::testing::FakeCgroupFs fs;
+  fs.add("", false);
+  const auto d = virmux::find_cgroup_delegation(probe_for(fs, "", 1000));
+  TEST_ASSERT_FALSE(d.usable());
+  TEST_ASSERT_NULL(std::strstr(d.reason.c_str(), "systemd-run"));
+  TEST_ASSERT_NOT_NULL(std::strstr(d.reason.c_str(), "cgroup root"));
+}
+
+void test_create_run_reports_mkdir_errno(void) {
+  const virmux::CgroupDelegation d{
+      .kind = virmux::DelegationKind::kUserManager,
+      .root = "/nonexistent/virmux-test-delegation",
+      .self = "",
+      .reason = "",
+  };
+  virmux::CgroupSlice slice = virmux::create_run(d, "run-1-0");
+  TEST_ASSERT_FALSE(slice.is_valid());
+  TEST_ASSERT_EQUAL_INT(ENOENT, slice.last_error());
+}
+
+void test_describe_limit_failures_optional_files(void) {
+  auto fail = [](const char* file, int err) {
+    return virmux::LimitResult{
+        .file = file, .value = "x", .applied = false, .error = err};
+  };
+  const virmux::LimitResult ok{
+      .file = "memory.max", .value = "1", .applied = true, .error = 0};
+
+  // Not delegated (ENOENT) and covered by other means: silent.
+  TEST_ASSERT_EQUAL_STRING(
+      "", virmux::describe_limit_failures(
+              {ok, fail("cpuset.cpus", ENOENT), fail("memory.swap.max", ENOENT),
+               fail("cpu.max", ENOENT)},
+              true)
+              .c_str());
+  // Without pinning nothing else caps CPU use, so a missing cpu.max matters.
+  const std::string unpinned =
+      virmux::describe_limit_failures({fail("cpu.max", ENOENT)}, false);
+  TEST_ASSERT_NOT_NULL(std::strstr(unpinned.c_str(), "cpu.max"));
+  // Real errors are always reported.
+  const std::string denied =
+      virmux::describe_limit_failures({fail("memory.max", EACCES)}, true);
+  TEST_ASSERT_NOT_NULL(std::strstr(denied.c_str(), "memory.max"));
+  TEST_ASSERT_NOT_NULL(std::strstr(denied.c_str(), std::strerror(EACCES)));
+}
+
+void test_process_in_cgroup(void) {
+  const virmux::CgroupProbe probe = virmux::CgroupProbe::current();
+  const auto d = virmux::find_cgroup_delegation(probe);
+  if (d.self.empty()) {
+    TEST_IGNORE_MESSAGE("no cgroup v2 here");
+  }
+  const auto in_own = virmux::process_in_cgroup(getpid(), d.self, probe.root);
+  TEST_ASSERT_TRUE(in_own.has_value() && *in_own);
+  const auto in_other = virmux::process_in_cgroup(
+      getpid(), probe.root + "/virmux/run-nope", probe.root);
+  TEST_ASSERT_TRUE(in_other.has_value() && !*in_other);
+  // An unreadable /proc/<pid>/cgroup (no such process) is unknown, not "no".
+  TEST_ASSERT_FALSE(
+      virmux::process_in_cgroup(0x3fffffff, d.self, probe.root).has_value());
+}
+
 void test_delegation_missing_proc_self_cgroup_falls_back(void) {
   virmux::testing::FakeCgroupFs fs;
   const virmux::CgroupProbe probe{
@@ -548,6 +626,10 @@ int main(void) {
   RUN_TEST(test_delegation_fully_writable_tree_prefers_user_manager);
   RUN_TEST(test_delegation_root_without_user_manager_uses_cgroup_root);
   RUN_TEST(test_delegation_missing_proc_self_cgroup_falls_back);
+  RUN_TEST(test_delegation_at_cgroup_root_gives_no_user_manager_advice);
+  RUN_TEST(test_create_run_reports_mkdir_errno);
+  RUN_TEST(test_describe_limit_failures_optional_files);
+  RUN_TEST(test_process_in_cgroup);
   RUN_TEST(test_controllers_to_enable_skips_enabled_and_unknown);
   RUN_TEST(test_destructor_removes_created_cgroup_with_rmdir);
   RUN_TEST(test_create_run_without_delegation_is_invalid);

@@ -414,28 +414,6 @@ CpuList plan_cpus(const SandboxConfig& cfg, uint64_t rotation) {
   return select_cpus(avail, cfg.virtual_cores, rotation, {});
 }
 
-/**
- * @brief One-line summary of limits that could not be applied ("" if none).
- *
- * A missing cpuset.cpus (cpuset not delegated; sched_setaffinity already
- * pins the child) or memory.swap.max (no swap accounting) is expected and not
- * reported.
- */
-std::string describe_limit_failures(const std::vector<LimitResult>& results) {
-  std::string failed;
-  for (const auto& r : results) {
-    const bool optional =
-        (r.file == "cpuset.cpus" || r.file == "memory.swap.max") &&
-        r.error == ENOENT;
-    if (r.applied || optional) {
-      continue;
-    }
-    failed += failed.empty() ? "" : ", ";
-    failed += r.file + " (" + std::strerror(r.error) + ")";
-  }
-  return failed.empty() ? failed : "some limits were not applied: " + failed;
-}
-
 uint64_t count_user_threads() {
   uint64_t count = 0;
   uid_t uid = ::getuid();
@@ -673,10 +651,7 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
     cgroup_pids_active = std::any_of(
         results.begin(), results.end(),
         [](const LimitResult& r) { return r.file == "pids.max" && r.applied; });
-    cgroup_warning = describe_limit_failures(results);
-  }
-  if (!cgroup_warning.empty()) {
-    std::fprintf(stderr, "warning: virmux: %s\n", cgroup_warning.c_str());
+    cgroup_warning = describe_limit_failures(results, !pinned.empty());
   }
 
   // Only scan procfs and compute fallback RLIMIT_NPROC if cgroups pids.max is
@@ -768,7 +743,23 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
 
   // --- In parent process ---
   if (slice.is_valid()) {
-    slice.attach_pid(pid);
+    // The child joins itself before exec; this write is a backstop. Check
+    // membership so a failed join never goes unreported (unknown, e.g. the
+    // child already exited, is not reported).
+    const bool attached = slice.attach_pid(pid);
+    const int attach_errno = slice.last_error();
+    const auto joined = process_in_cgroup(pid, slice.path(), cfg.cgroup_root);
+    if (joined.has_value() && !*joined) {
+      cgroup_warning =
+          "no cgroup limits for this run: could not join " + slice.path();
+      if (!attached) {
+        cgroup_warning += std::string(" (") + std::strerror(attach_errno) + ")";
+      }
+    }
+  }
+  // At most one warning line per run, naming why limits are missing.
+  if (!cgroup_warning.empty()) {
+    std::fprintf(stderr, "warning: virmux: %s\n", cgroup_warning.c_str());
   }
 
   // Check if supervisor daemon is active and register session

@@ -105,11 +105,51 @@ CgroupDelegation find_cgroup_delegation(const CgroupProbe& probe) {
     }
   }
 
+  if (own == probe.root) {
+    // Containers and systems without systemd (e.g. WSL without systemd):
+    // there is no user manager to point at.
+    d.reason =
+        "this process sits at the cgroup root, which it cannot write, "
+        "and no delegated cgroup subtree is available";
+    return d;
+  }
   d.reason = "this shell's cgroup (" +
              std::filesystem::path(own).filename().string() +
              ") is outside the systemd user manager; run virmux under "
              "`systemd-run --user --scope virmux run ...` to get limits";
   return d;
+}
+
+std::string describe_limit_failures(const std::vector<LimitResult>& results,
+                                    bool pinned) {
+  std::string failed;
+  for (const auto& r : results) {
+    const bool covered_elsewhere = r.file == "cpuset.cpus" ||
+                                   r.file == "memory.swap.max" ||
+                                   (pinned && r.file == "cpu.max");
+    if (r.applied || (covered_elsewhere && r.error == ENOENT)) {
+      continue;
+    }
+    failed += failed.empty() ? "" : ", ";
+    failed += r.file + " (" + std::strerror(r.error) + ")";
+  }
+  return failed.empty() ? failed : "some limits were not applied: " + failed;
+}
+
+std::optional<bool> process_in_cgroup(pid_t pid, const std::string& cgroup_dir,
+                                      const std::string& cgroup_root) {
+  std::ifstream in("/proc/" + std::to_string(pid) + "/cgroup");
+  if (!in) {
+    return std::nullopt;
+  }
+  std::ostringstream text;
+  text << in.rdbuf();
+  const auto rel = unified_cgroup_path(text.str());
+  if (!rel) {
+    return std::nullopt;
+  }
+  const std::string where = *rel == "/" ? cgroup_root : cgroup_root + *rel;
+  return where == cgroup_dir;
 }
 
 CgroupSlice::CgroupSlice(std::string name) : name_(std::move(name)) {}
@@ -389,6 +429,7 @@ CgroupSlice create_run(const CgroupDelegation& delegation,
   }
   const std::string base = delegation.root + "/" + kVirmuxCgroupDir;
   if (::mkdir(base.c_str(), 0755) != 0 && errno != EEXIST) {
+    slice.last_errno_ = errno;
     return slice;
   }
 
