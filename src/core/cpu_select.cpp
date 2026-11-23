@@ -122,7 +122,7 @@ std::string format_cpu_list(const CpuList& cpus) {
 }
 
 CpuList available_cpus() {
-  const CpuList affinity = affinity_cpus();
+  CpuList affinity = affinity_cpus();
   std::ifstream in("/sys/devices/system/cpu/online");
   std::ostringstream text;
   text << in.rdbuf();

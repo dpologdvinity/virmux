@@ -424,12 +424,19 @@ void test_freeze_nested_delegated_run_cgroup(void) {
 
   TEST_ASSERT_TRUE(reg.freeze_session(id));
   TEST_ASSERT_EQUAL_STRING("1", read_freeze().c_str());
-  TEST_ASSERT_EQUAL(virmux::SessionState::FROZEN, reg.get_session(id)->state);
+  const auto frozen = reg.get_session(id);
+  TEST_ASSERT_TRUE(frozen.has_value());
+  if (frozen.has_value()) {
+    TEST_ASSERT_EQUAL(virmux::SessionState::FROZEN, frozen->state);
+  }
 
   TEST_ASSERT_TRUE(reg.thaw_session(id));
   TEST_ASSERT_EQUAL_STRING("0", read_freeze().c_str());
-  TEST_ASSERT_EQUAL(virmux::SessionState::RUNNING_NORMAL,
-                    reg.get_session(id)->state);
+  const auto thawed = reg.get_session(id);
+  TEST_ASSERT_TRUE(thawed.has_value());
+  if (thawed.has_value()) {
+    TEST_ASSERT_EQUAL(virmux::SessionState::RUNNING_NORMAL, thawed->state);
+  }
 
   ::kill(pid, SIGKILL);
   int st = 0;

@@ -281,8 +281,16 @@ int count_warning_lines(const virmux::SandboxConfig& cfg,
   std::fflush(stderr);
   char tmpl[] = "/tmp/virmux_sandbox_stderr_XXXXXX";
   const int fd = mkstemp(tmpl);
-  TEST_ASSERT_TRUE(fd >= 0);
+  if (fd < 0) {
+    TEST_FAIL_MESSAGE("mkstemp failed");
+    return -1;
+  }
   const int saved = dup(STDERR_FILENO);
+  if (saved < 0) {
+    close(fd);
+    TEST_FAIL_MESSAGE("dup(stderr) failed");
+    return -1;
+  }
   dup2(fd, STDERR_FILENO);
   const int rc = run_sh(cfg, "exit 0");
   std::fflush(stderr);
