@@ -107,7 +107,8 @@ fi
 # ---------------------------------------------------------------------------
 # 3. The child is pinned to --cores real CPUs
 # ---------------------------------------------------------------------------
-HOST_CPUS="$(nproc --all)"
+# CPUs this process may use (affinity-aware, unlike `nproc --all`).
+HOST_CPUS="$(nproc)"
 WANT_CPUS=2
 if [[ "$HOST_CPUS" -lt 2 ]]; then
   WANT_CPUS="$HOST_CPUS"
@@ -126,17 +127,27 @@ fi
 # ---------------------------------------------------------------------------
 # 4. cpu.max caps CPU time at --cores CPUs' worth
 # ---------------------------------------------------------------------------
-CPU_MAX="$("$VIRMUX" run --cores 2 -- sh -c "cat ${OWN_CGROUP}/cpu.max")"
-if [[ "$CPU_MAX" == "200000 100000" ]]; then
-  log_success "cpu.max is '200000 100000'"
+# systemd < 252 does not delegate the cpu controller; pinning alone then
+# limits CPU use, so only this assertion is skipped.
+CPU_MAX="$("$VIRMUX" run --cores 2 -- sh -c "cat ${OWN_CGROUP}/cpu.max 2>/dev/null || echo missing")"
+WANT_CPU_MAX="$((WANT_CPUS * 100000)) 100000"
+if [[ "$CPU_MAX" == "missing" ]]; then
+  log_skip "cpu controller not delegated here (no cpu.max)"
+elif [[ "$CPU_MAX" == "$WANT_CPU_MAX" ]]; then
+  log_success "cpu.max is '${WANT_CPU_MAX}'"
 else
-  fail "cpu.max: expected '200000 100000', got '${CPU_MAX}'"
+  fail "cpu.max: expected '${WANT_CPU_MAX}', got '${CPU_MAX}'"
 fi
 
 # ---------------------------------------------------------------------------
 # 5. Run cgroups are removed afterwards
 # ---------------------------------------------------------------------------
 RUN_DIR="$("$VIRMUX" run --cores 1 -- sh -c "echo ${OWN_CGROUP}")"
+# rmdir happens after waitpid; allow the kernel a moment to release it.
+for _ in 1 2 3 4 5; do
+  [[ -d "$RUN_DIR" ]] || break
+  sleep 0.2
+done
 if [[ ! -d "$RUN_DIR" ]]; then
   log_success "run cgroup removed after exit"
 else
