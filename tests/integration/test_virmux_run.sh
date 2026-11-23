@@ -73,7 +73,9 @@ echo -e "\n${BOLD}Test 1: Python CPU core spoofing${RESET}"
 log_success "virmux run --cores 2 correctly spoofed os.cpu_count() == 2"
 
 # Runs are pinned to real CPUs, so a machine with fewer than 4 reports them all.
-HOST_CPUS="$(nproc)"
+# Count the affinity mask directly: nproc also honours OMP_NUM_THREADS,
+# OMP_THREAD_LIMIT and (newer coreutils) cgroup CPU quotas.
+HOST_CPUS="$(python3 -c 'import os; print(len(os.sched_getaffinity(0)))')"
 WANT4=$((HOST_CPUS < 4 ? HOST_CPUS : 4))
 "$VIRMUX" run --cores 4 -- python3 -c "import os; count = os.cpu_count(); assert count == ${WANT4}, f'Expected ${WANT4}, got {count}'"
 log_success "virmux run --cores 4 correctly spoofed os.cpu_count() == ${WANT4}"
@@ -219,6 +221,8 @@ fi
 echo -e "\n${BOLD}Test 6: Core count seen by every runtime${RESET}"
 
 WANT2=$((HOST_CPUS < 2 ? HOST_CPUS : 2))
+# A caller's OMP_THREAD_LIMIT caps nproc by design; measure virmux, not it.
+unset OMP_THREAD_LIMIT
 expect_cores() {
   local what="$1" got="$2"
   if [[ "$got" == "$WANT2" ]]; then

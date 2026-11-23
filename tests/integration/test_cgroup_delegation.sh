@@ -107,17 +107,28 @@ fi
 # ---------------------------------------------------------------------------
 # 3. The child is pinned to --cores real CPUs
 # ---------------------------------------------------------------------------
-# CPUs this process may use (affinity-aware, unlike `nproc --all`).
-HOST_CPUS="$(nproc)"
+# Number of CPUs in a cpulist such as "0-3,8,10-11".
+count_cpulist() {
+  local total=0 part lo hi
+  local -a parts
+  IFS=',' read -r -a parts <<<"$1"
+  for part in "${parts[@]}"; do
+    lo="${part%-*}"
+    hi="${part#*-}"
+    total=$((total + hi - lo + 1))
+  done
+  echo "$total"
+}
+
+# Count CPUs straight from the affinity mask. Not nproc: it also honours
+# OMP_NUM_THREADS/OMP_THREAD_LIMIT and (newer coreutils) cgroup CPU quotas.
+HOST_CPUS="$(count_cpulist "$(sed -n 's/^Cpus_allowed_list:[[:space:]]*//p' /proc/self/status)")"
 WANT_CPUS=2
 if [[ "$HOST_CPUS" -lt 2 ]]; then
   WANT_CPUS="$HOST_CPUS"
 fi
-if command -v python3 >/dev/null 2>&1; then
-  AFFINITY="$("$VIRMUX" run --cores 2 -- python3 -c 'import os; print(len(os.sched_getaffinity(0)))')"
-else
-  AFFINITY="$("$VIRMUX" run --cores 2 -- nproc)"
-fi
+CHILD_MASK="$("$VIRMUX" run --cores 2 -- sed -n 's/^Cpus_allowed_list:[[:space:]]*//p' /proc/self/status)"
+AFFINITY="$(count_cpulist "$CHILD_MASK")"
 if [[ "$AFFINITY" == "$WANT_CPUS" ]]; then
   log_success "affinity mask has ${WANT_CPUS} CPUs"
 else
