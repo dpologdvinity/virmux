@@ -40,6 +40,19 @@ void print_stats_table(const HostMemoryStats& host, const KsmStats& ksm);
 int cmd_stats(int argc, char* const argv[]);
 
 /**
+ * @brief cgroup.procs files of every virmux-managed cgroup under
+ * @p cgroup_root.
+ *
+ * Finds `virmux*` cgroups at the root (legacy and root-run layouts) and every
+ * nested `virmux` directory, e.g. `user@1000.service/virmux/run-<pid>-<seq>`
+ * in a systemd user manager, including all of their descendants.
+ * @param cgroup_root cgroup2 mount point (normally /sys/fs/cgroup).
+ * @return Absolute cgroup.procs paths; unreadable subtrees are skipped.
+ */
+[[nodiscard]] std::vector<std::string> find_virmux_cgroup_procs(
+    const std::string& cgroup_root);
+
+/**
  * @brief Executes the `virmux pack` CLI subcommand.
  * @return 0 on success, non-zero on failure.
  */

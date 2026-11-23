@@ -42,13 +42,27 @@ MemTotal:        2097152 kB
 
 So `npm test`, `make -j$(nproc)`, `pytest -n auto`, PyTorch and friends start 2
 workers instead of 10, with no changes to your project. This works for every
-user, with no special permissions. It covers programs that use the system C
-library (Node, Python, most C/C++ and Rust tools) and anything that reads
-`OMP_NUM_THREADS`; statically linked programs such as most Go binaries still see
-the real hardware.
+user, with no special permissions. `nproc`, Python, Node, Go, Rust,
+`/proc/cpuinfo`, `/sys/devices/system/cpu/online` and `/proc/meminfo` all agree,
+because the command is also pinned to that many real CPUs (pass `--no-pin` to
+keep all CPUs available). Statically linked programs that read `/proc/meminfo`
+themselves still see the real amount of memory.
+
+Thread-pool variables are set to the core count as well: `OMP_NUM_THREADS`,
+`OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, `NUMEXPR_NUM_THREADS`, `GOMAXPROCS`,
+`RAYON_NUM_THREADS`, `CARGO_BUILD_JOBS`, `CMAKE_BUILD_PARALLEL_LEVEL` and
+`PYTHON_CPU_COUNT`. If you already set one to a smaller number, your value is
+kept; larger or invalid values are lowered to the core count. `MAKEFLAGS` is
+left alone.
 
 **It also:**
 
+- **Enforces the limits.** From an ordinary desktop terminal, each run gets its
+  own cgroup in the part of the cgroup tree systemd hands to your user. Going
+  over `--mem` gets the command killed instead of your machine swapping to a
+  halt, and it gets at most `--cores` CPUs' worth of time. On machines with four
+  or more CPUs, the two lowest are left free for your shell unless `--cores`
+  asks for more CPUs than the rest.
 - **Sacrifices the command first when memory runs out.** If the machine runs out
   of memory, Linux kills the command running under `virmux` instead of your
   editor or terminal.
@@ -77,7 +91,8 @@ you when that happens.
 | Process-count cap (`--max-pids`) | Yes | |
 | Freeze and resume sessions | Yes | |
 | Throwaway project copies (`--ephemeral`) | Yes, where unprivileged user namespaces are enabled (Ubuntu, Debian, WSL2) | |
-| Hard CPU pinning and memory throttling | | Write access to cgroups v2, e.g. a systemd-delegated cgroup. Without it, only the reported counts above apply. |
+| Pinning to `--cores` real CPUs (`--no-pin` turns it off) | Yes | |
+| Enforced memory and process limits, plus a CPU-time cap | Yes, from a terminal in a systemd desktop session (anything running under the systemd user manager). The CPU-time cap (`cpu.max`) needs systemd 252 or newer, which delegates the cpu controller; on older systemd, pinning alone limits CPU use. | ssh and console logins sit outside the user manager: run `systemd-run --user --scope virmux run ...`. Without it, `virmux` prints one warning and only the reported counts above apply. `scripts/doctor.sh` shows which case you are in. |
 | Sharing identical memory pages between sessions (KSM) | | Enable KSM (`echo 1 \| sudo tee /sys/kernel/mm/ksm/run`) and set `VIRMUX_KSM_AUTO_MERGE=1` |
 | Compressed swap in RAM (zram) | | Set up zram yourself; `virmux stats` and `virmux pack` then use it |
 | Swapping out a session's idle memory (`pack`, auto-freeze) | | The `CAP_SYS_NICE` capability, for example running as root. Without it the kernel refuses ([#5](https://github.com/dpologdvinity/virmux/issues/5)). |
@@ -108,6 +123,9 @@ published yet). Unpack one anywhere and run `bin/virmux`.
 ```bash
 # Run a command limited to 2 cores and 2 GB
 virmux run --cores 2 --mem 2G -- npm test
+
+# Keep every CPU available (still capped at 2 CPUs' worth of time)
+virmux run --cores 2 --no-pin -- make -j8
 
 # Run against a throwaway copy of a repository
 virmux run --ephemeral --workspace ~/code/my-repo -- npx playwright test

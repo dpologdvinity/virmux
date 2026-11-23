@@ -20,7 +20,12 @@ class AdmissionGate;
 struct SandboxConfig {
   int virtual_cores{2};
   uint64_t memory_limit_bytes{2ULL * 1024 * 1024 * 1024};
-  std::string cpuset_cores{"2-11"};
+  /// Explicit cpulist to pin from (e.g. "4-7"): the run takes the lowest
+  /// virtual_cores of these that it may use. "" picks CPUs automatically.
+  std::string cpuset_cores{""};
+  /// Pin the child to virtual_cores real CPUs (sched_setaffinity, plus
+  /// cpuset.cpus when delegated). false keeps the inherited affinity mask.
+  bool pin_cpus{true};
   uint64_t max_pids{256};
   bool is_heavy{false};
   bool heavy{false};
@@ -29,6 +34,8 @@ struct SandboxConfig {
   std::string scratch_dir{""};
   std::string workspace_path{""};
   AdmissionGate* gate{nullptr};
+  /// cgroup2 mount point used to find a delegated subtree.
+  std::string cgroup_root{"/sys/fs/cgroup"};
 };
 
 /**

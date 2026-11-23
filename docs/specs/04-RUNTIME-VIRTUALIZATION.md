@@ -67,16 +67,22 @@ Target applications and runtimes (Python, Node.js, Chromium, PyTorch, CMake) are
 
    ```c
    int open(const char *pathname, int flags, ...) {
-       if (pathname && strcmp(pathname, "/proc/meminfo") == 0) {
-           const char *spoofed_path = getenv("VIRMUX_SPOOFED_MEMINFO");
-           if (spoofed_path) {
-               pathname = spoofed_path; /* Point to virtual 2GB meminfo */
+       /* Only read-only opens: writes must reach the real file. */
+       if (is_read_only_open(flags)) {
+           const char *spoofed = spoofed_path_for(pathname);
+           if (spoofed) {
+               pathname = spoofed; /* Point to virtual 2GB meminfo */
            }
        }
        /* Call real open */
        ...
    }
    ```
+
+   The same table covers `/proc/cpuinfo` (filtered to the pinned CPUs) and
+   `/sys/devices/system/cpu/online`, and `fopen`/`fopen64` are hooked too,
+   because glibc's `fopen` (and so `std::ifstream`) opens files through an
+   internal, non-interposable `open`.
 
    The synthetic `meminfo` provides balanced, proportional fields:
 
@@ -96,7 +102,16 @@ Target applications and runtimes (Python, Node.js, Chromium, PyTorch, CMake) are
    export OPENBLAS_NUM_THREADS=2
    export MKL_NUM_THREADS=2
    export NUMEXPR_NUM_THREADS=2
+   export GOMAXPROCS=2
+   export RAYON_NUM_THREADS=2
+   export CARGO_BUILD_JOBS=2
+   export CMAKE_BUILD_PARALLEL_LEVEL=2
+   export PYTHON_CPU_COUNT=2
    ```
+
+   Policy "at most N": a value the user already set is kept when it is a
+   positive integer no larger than N; anything else becomes N. `MAKEFLAGS`
+   and `UV_THREADPOOL_SIZE` are left alone.
 
    This prevents PyTorch, NumPy, and scientific C/C++ libraries from overwhelming CPU execution units.
 

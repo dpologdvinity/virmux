@@ -25,8 +25,8 @@ The CPU Scheduling Subsystem prevents scheduler thrashing, CPU cache invalidatio
                   |                                                       |
                   |  [Token Bucket: Max 2 Concurrent Heavy Bursts]        |
                   |                                                       |
-                  |  Session A: [RUNNING]  -> 100% Burst on Cores 2-11    |
-                  |  Session B: [RUNNING]  -> 100% Burst on Cores 2-11    |
+                  |  Session A: [RUNNING]  -> 100% Burst on its N cores   |
+                  |  Session B: [RUNNING]  -> 100% Burst on its N cores   |
                   |  Session C: [QUEUED]   -> Paused via SIGSTOP / FIFO   |
                   |  Session D: [FROZEN]   -> cgroup.freeze = 1 (0% CPU)  |
                   +-------------------------------------------------------+
@@ -42,20 +42,16 @@ When a test suite or compiler detects 12 cores, it launches 12 worker processes 
 
 #### The Implementation
 
-`virmux` partitions the CPU topology using the Linux cgroups v2 `cpuset` controller:
+`virmux` pins each run to real CPUs chosen from the machine's actual topology (`src/core/cpu_select.cpp`); nothing is hardcoded:
 
 1. **Topology Detection:**
-   At startup, `virmux` reads `/sys/devices/system/cpu/online` to discover total logical cores (e.g. `0-11`).
+   Available CPUs are `/sys/devices/system/cpu/online` intersected with the affinity mask `virmux` itself inherited, so a `virmux` started under `taskset` or inside a container cpuset never pins outside it.
 2. **Partition Assignment:**
-   - **Host Reserved (Cores 0–1):** Never allocated to background worker sessions. Reserved strictly for user interactive shells, window managers, and host processes.
-   - **Worker Pool (Cores 2–11):** Assigned to the root `virmux.slice` via:
-
-     ```bash
-     echo "2-11" > /sys/fs/cgroup/virmux.slice/cpuset.cpus
-     ```
-
+   - **Host Reserved (two lowest CPUs):** On machines with four or more available CPUs, the two lowest are left out of the worker pool for interactive shells, window managers and host processes, unless a run asks for more CPUs than the pool has.
+   - **Worker Pool (the rest):** Each run gets a contiguous window of `--cores` CPUs whose start rotates between runs (wrapping around the pool), so concurrent sessions spread out. A per-CPU load input is reserved for least-loaded placement.
+   - **Enforcement:** the child calls `sched_setaffinity` with the chosen mask before `exec` (so `nproc`, Go, Rust and Python's `os.sched_getaffinity` see the real count), `cpu.max` caps CPU time at `--cores` CPUs' worth, and `cpuset.cpus` is written as well when the cpuset controller is delegated. `virmux run --no-pin` keeps the inherited mask.
 3. **Outcome:**
-   Even if all worker sessions hit 100% compute load, Cores 0 and 1 remain completely unencumbered, guaranteeing instant shell responsiveness.
+   Even if all worker sessions hit 100% compute load, the reserved CPUs remain unencumbered, guaranteeing instant shell responsiveness.
 
 ---
 

@@ -16,6 +16,13 @@ inputs:
     description: Additional apt packages, space separated.
     required: false
     default: ""
+  relax-cgroups:
+    description: >-
+      Make /sys/fs/cgroup world-writable so tests can create cgroups at the
+      root. Set to false to keep the stock layout and exercise systemd user
+      delegation instead.
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -38,13 +45,18 @@ runs:
 
     - name: Enable kernel prerequisites
       shell: bash
+      env:
+        RELAX_CGROUPS: ${{ inputs.relax-cgroups }}
       run: |
         # Ubuntu 24.04 blocks unprivileged user namespaces via AppArmor; the
         # sysctl does not exist on 22.04, hence the tolerated failure.
         sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
         sudo sysctl -w kernel.unprivileged_userns_clone=1 2>/dev/null || true
-        # Let session cgroups be created without root.
-        sudo chmod -R a+rw /sys/fs/cgroup 2>/dev/null || true
+        # Let session cgroups be created without root (virmux then uses the
+        # cgroup root as its "highest writable ancestor").
+        if [[ "$RELAX_CGROUPS" == true ]]; then
+          sudo chmod -R a+rw /sys/fs/cgroup 2>/dev/null || true
+        fi
         # Clang 18's ASan/TSan/libFuzzer runtimes crash under the 32-bit
         # mmap ASLR entropy used by newer runner kernels.
         sudo sysctl -w vm.mmap_rnd_bits=28

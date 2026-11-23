@@ -85,6 +85,9 @@ void print_run_usage(std::ostream& out) {
          "Copy-on-Write OverlayFS sandbox\n"
       << "  --heavy              Register as heavy compute task with admission "
          "gate\n"
+      << "  --no-pin             Do not pin the command to --cores real CPUs "
+         "(keeps the full CPU mask; usage is still capped where the cgroup "
+         "cpu controller is delegated)\n"
       << "  -h, --help           Show this help message\n";
 }
 
@@ -191,9 +194,9 @@ bool parse_cores(std::string_view str, int& out_cores) {
 /**
  * @brief Dispatcher for the `virmux run` command.
  *
- * Parses `--cores`, `--mem`, `--workspace`, `--heavy`, and the command
- * arguments following `--`. Executes `virmux::spawn_command`, optionally
- * cleanses the workspace directory, and returns the exit code.
+ * Parses `--cores`, `--mem`, `--workspace`, `--heavy`, `--no-pin` and the
+ * command arguments following `--`. Executes `virmux::spawn_command`,
+ * optionally cleanses the workspace directory, and returns the exit code.
  *
  * @param argc Argument count from main.
  * @param argv Argument vector from main.
@@ -296,6 +299,8 @@ int handle_run(int argc, char* argv[]) {
       cfg.ephemeral = true;
     } else if (arg == "--heavy") {
       cfg.is_heavy = true;
+    } else if (arg == "--no-pin") {
+      cfg.pin_cpus = false;
     } else {
       std::cerr
           << "Error: unrecognized option or missing '--' before command: '"

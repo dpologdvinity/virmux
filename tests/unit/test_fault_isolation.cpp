@@ -102,6 +102,12 @@ void test_cgroup_set_pids_max_mock(void) {
   char* tmp_dir = mkdtemp(template_path);
   TEST_ASSERT_NOT_NULL(tmp_dir);
 
+  // Pre-create the files the kernel would populate in a real cgroup.
+  const std::string mock_dir = std::string(tmp_dir) + "/pids-mock";
+  mkdir(mock_dir.c_str(), 0755);
+  std::ofstream(mock_dir + "/cgroup.procs").close();
+  std::ofstream(mock_dir + "/pids.max").close();
+
   virmux::CgroupSlice slice("pids-mock");
   bool res = slice.setup(tmp_dir, 0, "");
   TEST_ASSERT_TRUE(res);
@@ -128,6 +134,7 @@ void test_cgroup_set_pids_max_mock(void) {
 
   // Cleanup
   unlink((slice_path + "/pids.max").c_str());
+  unlink((slice_path + "/cgroup.procs").c_str());
   rmdir(slice_path.c_str());
   rmdir(tmp_dir);
 }

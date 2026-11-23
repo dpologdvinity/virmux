@@ -35,10 +35,27 @@ extern "C" {
 /**
  * @brief Environment variable specifying synthetic /proc/meminfo redirect path.
  *
- * When set to an existing file path, calls to open() or open64() for
- * "/proc/meminfo" are redirected to this path.
+ * When set to an existing file path, read-only opens of "/proc/meminfo"
+ * (open, openat and their 64-bit variants, fopen, fopen64) read this path
+ * instead. Opens that could write are never redirected.
  */
 #define VIRMUX_ENV_SPOOFED_MEMINFO "VIRMUX_SPOOFED_MEMINFO"
+
+/**
+ * @brief Environment variable specifying synthetic /proc/cpuinfo redirect path.
+ *
+ * When set, read-only opens of "/proc/cpuinfo" read this file instead: the
+ * real cpuinfo filtered to the CPUs the sandbox is pinned to.
+ */
+#define VIRMUX_ENV_SPOOFED_CPUINFO "VIRMUX_SPOOFED_CPUINFO"
+
+/**
+ * @brief Environment variable specifying synthetic
+ * /sys/devices/system/cpu/online redirect path.
+ *
+ * When set, read-only opens of the online CPU list read this file instead.
+ */
+#define VIRMUX_ENV_SPOOFED_CPU_ONLINE "VIRMUX_SPOOFED_CPU_ONLINE"
 
 /**
  * @brief Environment variable enabling proactive MADV_MERGEABLE registration.
@@ -56,6 +73,7 @@ int open(const char* pathname, int flags, ...);
 int open64(const char* pathname, int flags, ...);
 int openat(int dirfd, const char* pathname, int flags, ...);
 int openat64(int dirfd, const char* pathname, int flags, ...);
+/* fopen/fopen64 are also exported; their prototypes come from <stdio.h>. */
 int execve(const char* pathname, char* const argv[],
            char* const envp[]) __THROW;
 void* mmap(void* addr, size_t length, int prot, int flags, int fd,

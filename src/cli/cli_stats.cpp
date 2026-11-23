@@ -245,6 +245,49 @@ int cmd_stats(int argc, char* const argv[]) {
   return 0;
 }
 
+std::vector<std::string> find_virmux_cgroup_procs(
+    const std::string& cgroup_root) {
+  namespace fs = std::filesystem;
+  constexpr auto kOpts = fs::directory_options::skip_permission_denied;
+  std::vector<std::string> found;
+
+  // Adds @p dir's cgroup.procs and those of all cgroups beneath it.
+  auto collect_subtree = [&found](const fs::path& dir) {
+    std::error_code ec;
+    if (fs::exists(dir / "cgroup.procs", ec)) {
+      found.push_back((dir / "cgroup.procs").string());
+    }
+    for (fs::recursive_directory_iterator it(dir, kOpts, ec), end;
+         !ec && it != end; it.increment(ec)) {
+      std::error_code entry_ec;
+      if (it->is_directory(entry_ec) &&
+          fs::exists(it->path() / "cgroup.procs", entry_ec)) {
+        found.push_back((it->path() / "cgroup.procs").string());
+      }
+    }
+  };
+
+  std::error_code ec;
+  for (fs::recursive_directory_iterator it(cgroup_root, kOpts, ec), end;
+       !ec && it != end; it.increment(ec)) {
+    std::error_code entry_ec;
+    if (!it->is_directory(entry_ec)) {
+      continue;
+    }
+    const std::string name = it->path().filename().string();
+    // Root-level virmux* cgroups (legacy virmux.slice / virmux-run-*, or the
+    // virmux dir when the delegation root is the cgroup root), and the
+    // virmux dir inside any delegated subtree such as user@<uid>.service.
+    const bool ours =
+        name == "virmux" || (it.depth() == 0 && name.starts_with("virmux"));
+    if (ours) {
+      collect_subtree(it->path());
+      it.disable_recursion_pending();
+    }
+  }
+  return found;
+}
+
 int cmd_pack(int argc, char* const argv[]) {
   if (argv == nullptr || argc <= 0) {
     return 1;
@@ -300,41 +343,8 @@ int cmd_pack(int argc, char* const argv[]) {
   uint64_t total_bytes_advised = 0;
 
   if (pids.empty() || all_mode) {
-    std::error_code ec;
-    std::filesystem::path cgroup_root = "/sys/fs/cgroup";
-    if (std::filesystem::exists(cgroup_root, ec) &&
-        std::filesystem::is_directory(cgroup_root, ec)) {
-      std::filesystem::directory_iterator dir_it(
-          cgroup_root,
-          std::filesystem::directory_options::skip_permission_denied, ec);
-      std::filesystem::directory_iterator dir_end;
-      while (!ec && dir_it != dir_end) {
-        if (dir_it->is_directory(ec)) {
-          std::string dir_name = dir_it->path().filename().string();
-          if (dir_name.starts_with("virmux")) {
-            std::filesystem::path procs_file = dir_it->path() / "cgroup.procs";
-            if (std::filesystem::exists(procs_file, ec)) {
-              total_compacted += mgr.compact_cgroup_procs(procs_file.string());
-            }
-            std::filesystem::recursive_directory_iterator sub_it(
-                dir_it->path(),
-                std::filesystem::directory_options::skip_permission_denied, ec);
-            std::filesystem::recursive_directory_iterator sub_end;
-            while (!ec && sub_it != sub_end) {
-              if (sub_it->is_regular_file(ec) &&
-                  sub_it->path().filename() == "cgroup.procs") {
-                if (sub_it->path() != procs_file) {
-                  total_compacted +=
-                      mgr.compact_cgroup_procs(sub_it->path().string());
-                }
-              }
-              sub_it.increment(ec);
-            }
-            ec.clear();
-          }
-        }
-        dir_it.increment(ec);
-      }
+    for (const auto& procs : find_virmux_cgroup_procs("/sys/fs/cgroup")) {
+      total_compacted += mgr.compact_cgroup_procs(procs);
     }
   }
 

@@ -26,6 +26,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -34,8 +36,10 @@
 #include <vector>
 
 #include "virmux/cgroup.hpp"
+#include "virmux/cpu_select.hpp"
 #include "virmux/daemon.hpp"
 #include "virmux/gate.hpp"
+#include "virmux/hw_view.hpp"
 #include "virmux/intercept.h"
 #include "virmux/overlay.hpp"
 #include "virmux/scratch.hpp"
@@ -43,41 +47,6 @@
 namespace virmux {
 
 namespace {
-
-/**
- * @brief Format synthetic /proc/meminfo content based on configured memory
- * limit.
- * @param memory_limit_bytes Soft/hard memory ceiling in bytes.
- * @return Formatted meminfo text string.
- */
-std::string generate_synthetic_meminfo(uint64_t memory_limit_bytes) {
-  uint64_t total_kb = memory_limit_bytes / 1024;
-  uint64_t free_kb = (total_kb * 3) / 4;
-  uint64_t avail_kb = (total_kb * 7) / 8;
-  uint64_t swap_total_kb = total_kb / 4;
-  uint64_t swap_free_kb = swap_total_kb;
-
-  std::ostringstream oss;
-  oss << "MemTotal:        " << total_kb << " kB\n"
-      << "MemFree:         " << free_kb << " kB\n"
-      << "MemAvailable:    " << avail_kb << " kB\n"
-      << "SwapTotal:       " << swap_total_kb << " kB\n"
-      << "SwapFree:        " << swap_free_kb << " kB\n";
-  return oss.str();
-}
-
-/**
- * @brief RAII guard ensuring temporary synthetic meminfo file is unlinked.
- */
-struct MeminfoGuard {
-  std::string path;
-  ~MeminfoGuard() {
-    if (!path.empty()) {
-      std::error_code ec;
-      std::filesystem::remove(path, ec);
-    }
-  }
-};
 
 /**
  * @brief Write the entire buffer to fd, retrying on EINTR and short writes.
@@ -98,6 +67,57 @@ bool write_all(int fd, const std::string& data) {
     remaining -= static_cast<size_t>(written);
   }
   return true;
+}
+
+/**
+ * @brief Temporary files describing the child's synthetic hardware view
+ * (meminfo, cpuinfo, online CPU list); all are removed when the run ends.
+ */
+class SpoofFiles {
+ public:
+  /** @param prefix Path prefix shared by this run's files. */
+  explicit SpoofFiles(std::string prefix) : prefix_(std::move(prefix)) {}
+
+  ~SpoofFiles() {
+    for (const auto& path : paths_) {
+      std::error_code ec;
+      std::filesystem::remove(path, ec);
+    }
+  }
+
+  SpoofFiles(const SpoofFiles&) = delete;
+  SpoofFiles& operator=(const SpoofFiles&) = delete;
+
+  /**
+   * @brief Create `<prefix><name>` (0600, never an existing file) with
+   * @p content.
+   * @return The path, or "" unless the content was fully written: a
+   * truncated file would corrupt the child's view, so it is not advertised.
+   */
+  std::string add(const std::string& name, const std::string& content) {
+    std::string path = prefix_ + name;
+    const int fd =
+        ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (fd < 0) {
+      return "";
+    }
+    paths_.push_back(path);
+    const bool ok = write_all(fd, content);
+    ::close(fd);
+    return ok ? path : "";
+  }
+
+ private:
+  std::string prefix_;
+  std::vector<std::string> paths_;
+};
+
+/** @brief Whole contents of @p path ("" if unreadable). */
+std::string read_text_file(const char* path) {
+  std::ifstream in(path);
+  std::ostringstream text;
+  text << in.rdbuf();
+  return text.str();
 }
 
 /**
@@ -214,6 +234,10 @@ struct ChildLaunchPlan {
   const char* cgroup_procs_path{nullptr};
   bool apply_nproc_limit{false};
   rlim_t nproc_limit{0};
+  /// Pin to @ref cpu_mask with sched_setaffinity (built here, not in the
+  /// child, so the child stays syscall-only).
+  bool apply_affinity{false};
+  cpu_set_t cpu_mask{};
 };
 
 /// oom_score_adj applied to sandboxed children so they are sacrificed first.
@@ -273,6 +297,11 @@ int sandbox_child_main(void* arg) {
   // 2. Attach to the cgroup before exec so grandchildren are always covered.
   if (plan.cgroup_procs_path != nullptr) {
     (void)child_write_file(plan.cgroup_procs_path, "0\n");
+  }
+
+  // Real pinning: what nproc, Go, Rust and Python's sched_getaffinity see.
+  if (plan.apply_affinity) {
+    (void)::sched_setaffinity(0, sizeof(plan.cpu_mask), &plan.cpu_mask);
   }
 
   // Fork-bomb fallback: RLIMIT_NPROC ceiling when cgroup pids.max is absent.
@@ -355,6 +384,40 @@ pid_t clone_sandbox_child(ChildLaunchPlan& plan, bool new_namespaces) {
               flags, &plan);
   ::munmap(stack, kChildStackSize);
   return pid;
+}
+
+/// cpu.max period: quota = cores * period gives exactly `cores` CPUs' worth.
+constexpr uint64_t kCpuMaxPeriodUs = 100000;
+
+/**
+ * @brief Choose the CPUs the child is pinned to.
+ * @param cfg Sandbox configuration (pin_cpus, cpuset_cores, virtual_cores).
+ * @param rotation Window rotation so concurrent runs spread out.
+ * @return Sorted CPUs, or empty to keep the inherited affinity mask.
+ */
+CpuList plan_cpus(const SandboxConfig& cfg, uint64_t rotation) {
+  if (!cfg.pin_cpus) {
+    return {};
+  }
+  const CpuList avail = available_cpus();
+  if (!cfg.cpuset_cores.empty()) {
+    // An explicit list is the pool to pin from, as far as this process may
+    // use it; the run still gets virtual_cores CPUs (its lowest ones), so
+    // the reported count, synthetic files and affinity mask agree.
+    if (const auto wanted = parse_cpu_list(cfg.cpuset_cores)) {
+      CpuList both;
+      std::set_intersection(wanted->begin(), wanted->end(), avail.begin(),
+                            avail.end(), std::back_inserter(both));
+      const auto n = static_cast<size_t>(std::max(cfg.virtual_cores, 1));
+      if (both.size() > n) {
+        both.resize(n);
+      }
+      if (!both.empty()) {
+        return both;
+      }
+    }
+  }
+  return select_cpus(avail, cfg.virtual_cores, rotation, {});
 }
 
 uint64_t count_user_threads() {
@@ -490,22 +553,16 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
   uid_t orig_uid = ::getuid();
   gid_t orig_gid = ::getgid();
 
+  // One derivation feeds both the cgroup limits and the synthetic meminfo,
+  // so what the child sees always matches what the kernel enforces.
+  const MemoryLimits mem_limits = compute_memory_limits(cfg.memory_limit_bytes);
+
   // Generate synthetic /proc/meminfo file with unique atomic sequence per call
   uint64_t seq = s_sandbox_counter.fetch_add(1, std::memory_order_relaxed);
-  std::string meminfo_path = "/tmp/virmux_" + std::to_string(::getpid()) + "_" +
-                             std::to_string(seq) + "_meminfo";
-  int mem_fd = ::open(meminfo_path.c_str(),
-                      O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-  // Only advertise the spoofed file to the interceptor if it was fully
-  // written; a truncated file would corrupt the child's /proc/meminfo view.
-  bool meminfo_ready = false;
-  if (mem_fd >= 0) {
-    std::string mem_content =
-        generate_synthetic_meminfo(cfg.memory_limit_bytes);
-    meminfo_ready = write_all(mem_fd, mem_content);
-    ::close(mem_fd);
-  }
-  MeminfoGuard meminfo_guard{meminfo_path};
+  SpoofFiles spoof("/tmp/virmux_" + std::to_string(::getpid()) + "_" +
+                   std::to_string(seq) + "_");
+  const std::string meminfo_path =
+      spoof.add("meminfo", generate_synthetic_meminfo(mem_limits));
 
   // Pre-fork hygiene: resolve interceptor path and prepare environment strings
   // before fork to avoid dynamic allocations or path lookup failures after
@@ -530,17 +587,77 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
     }
   }
 
-  std::string vcores_str = std::to_string(cfg.virtual_cores);
+  // Real CPUs for the child (empty = keep the inherited mask). The reported
+  // core count never exceeds what the child can actually run on.
+  const CpuList pinned =
+      plan_cpus(cfg, static_cast<uint64_t>(::getpid()) + seq);
+  const int cores = pinned.empty() ? cfg.virtual_cores
+                                   : std::min(cfg.virtual_cores,
+                                              static_cast<int>(pinned.size()));
+  std::string vcores_str = std::to_string(cores);
 
-  // Set up cgroups v2 slice with unique sub-slice per run (gracefully falls
-  // back if unprivileged)
-  std::string slice_name = "virmux-run-" + std::to_string(::getpid()) + "-" +
-                           std::to_string(seq) + ".slice";
-  CgroupSlice slice(slice_name);
+  // /proc/cpuinfo and the online list describe the CPUs the child runs on
+  // (without pinning: the first `cores` available CPUs).
+  CpuList shown = pinned;
+  if (shown.empty()) {
+    shown = available_cpus();
+    if (cores > 0 && shown.size() > static_cast<size_t>(cores)) {
+      shown.resize(static_cast<size_t>(cores));
+    }
+  }
+  std::string cpuinfo_path;
+  std::string online_path;
+  if (!shown.empty()) {
+    cpuinfo_path = spoof.add(
+        "cpuinfo", filter_cpuinfo(read_text_file("/proc/cpuinfo"), shown));
+    online_path = spoof.add("cpu_online", format_online(shown));
+  }
+
+  // Per-run cgroup in a delegated subtree (systemd user manager, or a
+  // writable ancestor when root / in a container). Without one the run still
+  // proceeds, with a single warning naming the reason.
+  CgroupProbe probe = CgroupProbe::current();
+  probe.root = cfg.cgroup_root;
+  const CgroupDelegation delegation = find_cgroup_delegation(probe);
+  CgroupSlice slice;
+  std::string cgroup_warning;
+  if (delegation.usable()) {
+    (void)sweep_stale_runs(delegation.root + "/" + kVirmuxCgroupDir);
+    slice = create_run(delegation, "run-" + std::to_string(::getpid()) + "-" +
+                                       std::to_string(seq));
+    if (!slice.is_valid()) {
+      cgroup_warning =
+          "no cgroup limits for this run: cannot create a cgroup "
+          "under " +
+          delegation.root + "/" + kVirmuxCgroupDir + " (" +
+          std::strerror(slice.last_error()) + ")";
+    }
+  } else {
+    cgroup_warning = "no cgroup limits for this run: " + delegation.reason;
+  }
+
   bool cgroup_pids_active = false;
-  slice.setup("", cfg.memory_limit_bytes, cfg.cpuset_cores);
-  if (slice.is_valid() && cfg.max_pids > 0) {
-    cgroup_pids_active = slice.set_pids_max(cfg.max_pids);
+  if (slice.is_valid()) {
+    CgroupLimits limits;
+    if (mem_limits.max > 0) {
+      limits.memory_max = mem_limits.max;
+      limits.memory_high = mem_limits.high;
+      limits.swap_max = mem_limits.swap_max;
+    }
+    if (cores > 0) {
+      limits.cpu_max =
+          std::to_string(static_cast<uint64_t>(cores) * kCpuMaxPeriodUs) + " " +
+          std::to_string(kCpuMaxPeriodUs);
+    }
+    limits.cpuset_cpus = format_cpu_list(pinned);
+    if (cfg.max_pids > 0) {
+      limits.pids_max = cfg.max_pids;
+    }
+    const std::vector<LimitResult> results = slice.apply_limits(limits);
+    cgroup_pids_active = std::any_of(
+        results.begin(), results.end(),
+        [](const LimitResult& r) { return r.file == "pids.max" && r.applied; });
+    cgroup_warning = describe_limit_failures(results, !pinned.empty());
   }
 
   // Only scan procfs and compute fallback RLIMIT_NPROC if cgroups pids.max is
@@ -560,13 +677,22 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
     env_overrides.emplace_back("LD_PRELOAD", preload_val);
   }
   env_overrides.emplace_back(VIRMUX_ENV_VIRTUAL_CORES, vcores_str);
-  if (meminfo_ready) {
+  if (!cpuinfo_path.empty()) {
+    env_overrides.emplace_back(VIRMUX_ENV_SPOOFED_CPUINFO, cpuinfo_path);
+  }
+  if (!online_path.empty()) {
+    env_overrides.emplace_back(VIRMUX_ENV_SPOOFED_CPU_ONLINE, online_path);
+  }
+  if (!meminfo_path.empty()) {
     env_overrides.emplace_back(VIRMUX_ENV_SPOOFED_MEMINFO, meminfo_path);
   }
-  env_overrides.emplace_back("OMP_NUM_THREADS", vcores_str);
-  env_overrides.emplace_back("OPENBLAS_NUM_THREADS", vcores_str);
-  env_overrides.emplace_back("MKL_NUM_THREADS", vcores_str);
-  env_overrides.emplace_back("NUMEXPR_NUM_THREADS", vcores_str);
+  // Thread-pool sizing variables, "at most N" (see compute_thread_env).
+  auto real_getenv = [](const char* name) -> const char* {
+    return std::getenv(name);
+  };
+  for (auto& kv : compute_thread_env(cores, real_getenv)) {
+    env_overrides.push_back(std::move(kv));
+  }
   std::vector<std::string> child_env = build_child_environment(env_overrides);
   std::vector<char*> child_envp;
   child_envp.reserve(child_env.size() + 1);
@@ -596,6 +722,15 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
   if (!cgroup_procs_path.empty()) {
     plan.cgroup_procs_path = cgroup_procs_path.c_str();
   }
+  if (!pinned.empty()) {
+    plan.apply_affinity = true;
+    CPU_ZERO(&plan.cpu_mask);
+    for (int cpu : pinned) {
+      if (cpu < CPU_SETSIZE) {
+        CPU_SET(cpu, &plan.cpu_mask);
+      }
+    }
+  }
   if (cfg.max_pids > 0 && !cgroup_pids_active) {
     plan.apply_nproc_limit = true;
     plan.nproc_limit = static_cast<rlim_t>(baseline_threads + cfg.max_pids);
@@ -614,7 +749,23 @@ int spawn_command(const SandboxConfig& cfg, char* const argv[]) {
 
   // --- In parent process ---
   if (slice.is_valid()) {
-    slice.attach_pid(pid);
+    // The child joins itself before exec; this write is a backstop. Check
+    // membership so a failed join never goes unreported (unknown, e.g. the
+    // child already exited, is not reported).
+    const bool attached = slice.attach_pid(pid);
+    const int attach_errno = slice.last_error();
+    const auto joined = process_in_cgroup(pid, slice.path(), cfg.cgroup_root);
+    if (joined.has_value() && !*joined) {
+      cgroup_warning =
+          "no cgroup limits for this run: could not join " + slice.path();
+      if (!attached) {
+        cgroup_warning += std::string(" (") + std::strerror(attach_errno) + ")";
+      }
+    }
+  }
+  // At most one warning line per run, naming why limits are missing.
+  if (!cgroup_warning.empty()) {
+    std::fprintf(stderr, "warning: virmux: %s\n", cgroup_warning.c_str());
   }
 
   // Check if supervisor daemon is active and register session

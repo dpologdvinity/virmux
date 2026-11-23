@@ -10,6 +10,9 @@
 #             would otherwise first surface on users' rolling-release distros.
 # - coverage: line/branch coverage of src/ published to the job summary, so
 #             reviewers can see which paths a change leaves untested.
+# - delegation: the stock cgroup layout (no chmod), with the tests run
+#             inside the systemd user manager, the way an ordinary user's
+#             terminal runs virmux. Proves limits work without root.
 name: CI
 
 on:
@@ -131,6 +134,51 @@ jobs:
               ninja -C build
               meson test -C build --print-errorlogs
             '
+
+  delegation:
+    name: delegated cgroups (systemd user manager)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-virmux
+        with:
+          relax-cgroups: false
+          # systemd-run --user talks to the user manager over the session bus.
+          extra-packages: dbus-user-session
+
+      - name: Configure
+        run: meson setup build --buildtype=debug -Dwarning_level=3 -Dwerror=true
+
+      - name: Build
+        run: ninja -C build
+
+      # Lingering starts user@<uid>.service, which systemd delegates the cpu,
+      # memory and pids controllers to; systemd-run --user puts the tests in
+      # a unit under it, like a desktop terminal.
+      - name: Start the systemd user manager
+        run: |
+          sudo loginctl enable-linger "$USER"
+          uid="$(id -u)"
+          for _ in $(seq 1 30); do
+            [[ -S "/run/user/${uid}/bus" ]] && break
+            sleep 1
+          done
+          if [[ ! -S "/run/user/${uid}/bus" ]]; then
+            echo "::error::user bus /run/user/${uid}/bus never appeared"
+            systemctl status "user@${uid}.service" --no-pager || true
+            exit 1
+          fi
+          echo "XDG_RUNTIME_DIR=/run/user/${uid}" >> "$GITHUB_ENV"
+          cat "/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service/cgroup.subtree_control"
+
+      - name: Test inside the user manager
+        env:
+          VIRMUX_REQUIRE_DELEGATION: "1"
+        run: >-
+          systemd-run --user --wait --pipe --same-dir
+          -E PATH -E VIRMUX_REQUIRE_DELEGATION
+          -- meson test -C build --suite delegation --suite unit --print-errorlogs
 
   coverage:
     name: coverage

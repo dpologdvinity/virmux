@@ -72,8 +72,13 @@ echo -e "\n${BOLD}Test 1: Python CPU core spoofing${RESET}"
 "$VIRMUX" run --cores 2 -- python3 -c "import os; count = os.cpu_count(); assert count == 2, f'Expected 2, got {count}'"
 log_success "virmux run --cores 2 correctly spoofed os.cpu_count() == 2"
 
-"$VIRMUX" run --cores 4 -- python3 -c "import os; count = os.cpu_count(); assert count == 4, f'Expected 4, got {count}'"
-log_success "virmux run --cores 4 correctly spoofed os.cpu_count() == 4"
+# Runs are pinned to real CPUs, so a machine with fewer than 4 reports them all.
+# Count the affinity mask directly: nproc also honours OMP_NUM_THREADS,
+# OMP_THREAD_LIMIT and (newer coreutils) cgroup CPU quotas.
+HOST_CPUS="$(python3 -c 'import os; print(len(os.sched_getaffinity(0)))')"
+WANT4=$((HOST_CPUS < 4 ? HOST_CPUS : 4))
+"$VIRMUX" run --cores 4 -- python3 -c "import os; count = os.cpu_count(); assert count == ${WANT4}, f'Expected ${WANT4}, got {count}'"
+log_success "virmux run --cores 4 correctly spoofed os.cpu_count() == ${WANT4}"
 
 # ---------------------------------------------------------------------------
 # Test 2: Virtual /proc/meminfo reporting
@@ -211,8 +216,85 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 6: Every way of counting CPUs agrees with --cores 2
+# ---------------------------------------------------------------------------
+echo -e "\n${BOLD}Test 6: Core count seen by every runtime${RESET}"
+
+WANT2=$((HOST_CPUS < 2 ? HOST_CPUS : 2))
+# A caller's OMP_THREAD_LIMIT caps nproc by design; measure virmux, not it.
+unset OMP_THREAD_LIMIT
+expect_cores() {
+  local what="$1" got="$2"
+  if [[ "$got" == "$WANT2" ]]; then
+    log_success "${what} reports ${WANT2}"
+  else
+    log_error "${what}: expected ${WANT2}, got '${got}'"
+    exit 1
+  fi
+}
+
+expect_cores "nproc" "$("$VIRMUX" run --cores 2 -- nproc)"
+expect_cores "Python os.cpu_count()" \
+  "$("$VIRMUX" run --cores 2 -- python3 -c 'import os; print(os.cpu_count())')"
+expect_cores "Python len(os.sched_getaffinity(0))" \
+  "$("$VIRMUX" run --cores 2 -- python3 -c 'import os; print(len(os.sched_getaffinity(0)))')"
+expect_cores "/proc/cpuinfo processor count (grep)" \
+  "$("$VIRMUX" run --cores 2 -- grep -c '^processor' /proc/cpuinfo)"
+expect_cores "/proc/cpuinfo processor count (Python open)" \
+  "$("$VIRMUX" run --cores 2 -- python3 -c 'print(sum(l.startswith("processor") for l in open("/proc/cpuinfo")))')"
+ONLINE="$("$VIRMUX" run --cores 2 -- cat /sys/devices/system/cpu/online)"
+expect_cores "/sys/devices/system/cpu/online (${ONLINE})" \
+  "$(python3 -c 'import sys
+n = 0
+for part in sys.argv[1].split(","):
+    lo, _, hi = part.partition("-")
+    n += int(hi or lo) - int(lo) + 1
+print(n)' "$ONLINE")"
+
+if command -v node >/dev/null 2>&1; then
+  expect_cores "Node os.availableParallelism()" \
+    "$("$VIRMUX" run --cores 2 -- node -e 'console.log(require("os").availableParallelism())')"
+else
+  echo "  [SKIP] node not installed"
+fi
+
+if command -v go >/dev/null 2>&1; then
+  GO_SRC="${TMP_MOCK_DIR}/numcpu.go"
+  cat <<'EOF' >"$GO_SRC"
+package main
+
+import (
+	"fmt"
+	"runtime"
+)
+
+func main() { fmt.Println(runtime.NumCPU()) }
+EOF
+  if (cd "$TMP_MOCK_DIR" && CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS='' go build -o numcpu numcpu.go) >/dev/null 2>&1; then
+    expect_cores "static Go runtime.NumCPU()" "$("$VIRMUX" run --cores 2 -- "${TMP_MOCK_DIR}/numcpu")"
+  else
+    echo "  [SKIP] go build failed"
+  fi
+else
+  echo "  [SKIP] go not installed"
+fi
+
+# Thread-count variables: a smaller user value is kept, a larger one capped.
+# The single-quoted $GOMAXPROCS is expanded by the sandboxed shell.
+# shellcheck disable=SC2016
+ECHO_GOMAX='echo "$GOMAXPROCS"'
+GOMAX_1="$(GOMAXPROCS=1 "$VIRMUX" run --cores 2 -- sh -c "$ECHO_GOMAX")"
+GOMAX_8="$(GOMAXPROCS=8 "$VIRMUX" run --cores 2 -- sh -c "$ECHO_GOMAX")"
+if [[ "$GOMAX_1" == "1" && "$GOMAX_8" == "$WANT2" ]]; then
+  log_success "GOMAXPROCS=1 kept, GOMAXPROCS=8 capped to ${WANT2}"
+else
+  log_error "GOMAXPROCS policy: 1 -> '${GOMAX_1}' (want 1), 8 -> '${GOMAX_8}' (want ${WANT2})"
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo "================================================="
-echo -e "${GREEN}${BOLD}All virmux run integration tests passed successfully! (5/5)${RESET}"
+echo -e "${GREEN}${BOLD}All virmux run integration tests passed successfully! (6/6)${RESET}"
 exit 0

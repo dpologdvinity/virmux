@@ -59,6 +59,8 @@ virmux_core_lib = static_library(
   [
     'src/core/version.cpp',
     'src/core/cgroup.cpp',
+    'src/core/hw_view.cpp',
+    'src/core/cpu_select.cpp',
     'src/sched/gate.cpp',
     'src/core/sandbox.cpp',
     'src/core/checkpoint.cpp',
@@ -194,6 +196,22 @@ test_cgroup_exe = executable(
 )
 
 test('test_cgroup', test_cgroup_exe, suite: 'unit')
+
+test_hw_view_exe = executable(
+  'test_hw_view',
+  'tests/unit/test_hw_view.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_hw_view', test_hw_view_exe, suite: 'unit')
+
+test_cpu_select_exe = executable(
+  'test_cpu_select',
+  'tests/unit/test_cpu_select.cpp',
+  dependencies: [virmux_core_dep, unity_dep],
+)
+
+test('test_cpu_select', test_cpu_select_exe, suite: 'unit')
 
 test_gate_exe = executable(
   'test_gate',
@@ -408,6 +426,14 @@ test(
 )
 
 test(
+  'test_cli_run_no_pin',
+  virmux_exe,
+  args: ['run', '--no-pin', '--cores', '1', '--', '/bin/sh', '-c', 'exit 0'],
+  depends: [virmux_intercept_lib],
+  suite: 'cli',
+)
+
+test(
   'test_cli_version',
   virmux_exe,
   args: ['--version'],
@@ -570,6 +596,20 @@ test(
   depends: [virmux_exe, virmux_intercept_lib],
   timeout: 120,
   suite: 'integration',
+)
+
+# Real cgroup limits through a delegated subtree. Exits 77 (SKIP) without
+# delegation unless VIRMUX_REQUIRE_DELEGATION=1; see CONTRIBUTING.md.
+test(
+  'integration_cgroup_delegation',
+  find_program('bash'),
+  args: [
+    meson.current_source_dir() / 'tests/integration/test_cgroup_delegation.sh',
+    meson.current_build_dir(),
+  ],
+  depends: [virmux_exe, virmux_intercept_lib],
+  timeout: 120,
+  suite: 'delegation',
 )
 
 # ---------------------------------------------------------------------------

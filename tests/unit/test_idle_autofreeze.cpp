@@ -386,6 +386,64 @@ void test_touch_session_auto_thaws(void) {
   ::waitpid(pid, &st, 0);
 }
 
+/**
+ * @brief Test 9: Freeze/thaw reach a run cgroup nested in a delegated subtree
+ * (`user@<uid>.service/virmux/run-<pid>-<seq>`), not just root-level slices.
+ */
+void test_freeze_nested_delegated_run_cgroup(void) {
+  const std::string base =
+      "/tmp/virmux_nested_freeze_" + std::to_string(::getpid());
+  const std::string run_cg =
+      base + "/user.slice/user-1000.slice/user@1000.service/virmux/run-1-0";
+  std::error_code ec;
+  std::filesystem::create_directories(run_cg, ec);
+  std::ofstream(run_cg + "/cgroup.freeze").close();
+
+  pid_t pid = ::fork();
+  TEST_ASSERT_TRUE(pid >= 0);
+  if (pid == 0) {
+    while (true) {
+      ::pause();
+    }
+  }
+
+  virmux::SessionRegistry reg;
+  virmux::SessionRegistration req;
+  req.name = "nested-run";
+  req.pid = pid;
+  req.command = "nested";
+  req.cgroup_path = run_cg;
+  const uint64_t id = reg.register_session(req);
+
+  auto read_freeze = [&run_cg]() {
+    std::ifstream in(run_cg + "/cgroup.freeze");
+    std::string v;
+    in >> v;
+    return v;
+  };
+
+  TEST_ASSERT_TRUE(reg.freeze_session(id));
+  TEST_ASSERT_EQUAL_STRING("1", read_freeze().c_str());
+  const auto frozen = reg.get_session(id);
+  TEST_ASSERT_TRUE(frozen.has_value());
+  if (frozen.has_value()) {
+    TEST_ASSERT_EQUAL(virmux::SessionState::FROZEN, frozen->state);
+  }
+
+  TEST_ASSERT_TRUE(reg.thaw_session(id));
+  TEST_ASSERT_EQUAL_STRING("0", read_freeze().c_str());
+  const auto thawed = reg.get_session(id);
+  TEST_ASSERT_TRUE(thawed.has_value());
+  if (thawed.has_value()) {
+    TEST_ASSERT_EQUAL(virmux::SessionState::RUNNING_NORMAL, thawed->state);
+  }
+
+  ::kill(pid, SIGKILL);
+  int st = 0;
+  ::waitpid(pid, &st, 0);
+  std::filesystem::remove_all(base, ec);
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_stat_cpu_ticks_parsing);
@@ -396,5 +454,6 @@ int main(void) {
   RUN_TEST(test_supervisor_daemon_auto_freeze_wiring);
   RUN_TEST(test_cgroup_cpustat_parsing);
   RUN_TEST(test_touch_session_auto_thaws);
+  RUN_TEST(test_freeze_nested_delegated_run_cgroup);
   return UNITY_END();
 }

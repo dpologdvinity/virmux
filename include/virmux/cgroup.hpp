@@ -3,16 +3,89 @@
 #include <sys/types.h>
 
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace virmux {
 
 /**
+ * @brief Resource limits to write into a cgroup. Unset fields are left alone.
+ */
+struct CgroupLimits {
+  std::optional<uint64_t> memory_max;   ///< memory.max (hard ceiling, bytes)
+  std::optional<uint64_t> memory_high;  ///< memory.high (throttle point)
+  std::optional<uint64_t> swap_max;     ///< memory.swap.max (bytes)
+  std::string cpu_max;      ///< cpu.max, e.g. "200000 100000" ("" = unset)
+  std::string cpuset_cpus;  ///< cpuset.cpus list, e.g. "2-3" ("" = unset)
+  std::optional<uint64_t> pids_max;  ///< pids.max (0 writes "max")
+};
+
+/**
+ * @brief Inputs for delegation discovery (injectable for tests).
+ */
+struct CgroupProbe {
+  std::string proc_self_cgroup;        ///< Contents of /proc/self/cgroup.
+  std::string root{"/sys/fs/cgroup"};  ///< cgroup2 mount point.
+  uid_t uid{0};                        ///< Real uid of the caller.
+
+  /** @brief Probe describing the calling process. */
+  static CgroupProbe current();
+};
+
+/** @brief Where virmux may create its own cgroups. */
+enum class DelegationKind {
+  kNone,              ///< Nowhere: run without cgroup limits.
+  kUserManager,       ///< The systemd user manager's user@<uid>.service tree.
+  kWritableAncestor,  ///< Highest writable ancestor (root, containers, CI).
+};
+
+/**
+ * @brief Result of find_cgroup_delegation().
+ */
+struct CgroupDelegation {
+  DelegationKind kind{DelegationKind::kNone};
+  std::string root;    ///< Delegation root D (absolute); "" when kNone.
+  std::string self;    ///< Our own cgroup (absolute); "" if unknown.
+  std::string reason;  ///< One-line explanation when kNone.
+
+  [[nodiscard]] bool usable() const noexcept {
+    return kind != DelegationKind::kNone;
+  }
+};
+
+/**
+ * @brief Find a cgroup subtree the caller may create cgroups in.
+ *
+ * Reads the cgroup v2 ("0::") line of /proc/self/cgroup and walks up from the
+ * caller's cgroup. The nearest `user@<uid>.service` ancestor whose
+ * cgroup.procs and cgroup.subtree_control are writable wins (systemd
+ * delegates cpu/memory/pids there). Otherwise the highest writable ancestor
+ * is used (root, containers). Otherwise there is no delegation, for example a
+ * shell in an ssh/console `session-N.scope`, which cannot leave its scope
+ * without D-Bus; @ref CgroupDelegation::reason then suggests
+ * `systemd-run --user --scope`.
+ */
+[[nodiscard]] CgroupDelegation find_cgroup_delegation(const CgroupProbe& probe);
+
+/**
+ * @brief Outcome of writing one control file.
+ */
+struct LimitResult {
+  std::string file;   ///< Control file name, e.g. "memory.max".
+  std::string value;  ///< Value that was (or would have been) written.
+  bool applied{false};
+  int error{0};  ///< errno of the failed open/write; 0 when applied.
+};
+
+/**
  * @brief Controller for Linux cgroups v2 slices.
  *
- * Configures resource limits (memory.high, cpuset.cpus), attaches processes,
+ * Configures resource limits (memory, cpu, cpuset, pids), attaches processes,
  * and controls freeze/thaw states. Degrades gracefully under unprivileged
- * environments without throwing exceptions or aborting.
+ * environments without throwing exceptions or aborting. Control files are
+ * only ever written, never created: a missing file means the controller is
+ * not enabled for this cgroup.
  */
 class CgroupSlice {
  public:
@@ -50,12 +123,46 @@ class CgroupSlice {
    * @param memory_high_bytes Soft memory ceiling in bytes (0 to leave unset).
    * @param cpuset_cpus_str Allowed CPU core list (e.g. "2-11", empty to leave
    * unset).
-   * @return true on success, false on permission/path error (unprivileged
-   * fallback).
+   * Limits are applied independently; a limit that cannot be written does
+   * not make the slice invalid.
+   * Never prints; see last_error() on failure.
+   * @return true if the slice is valid (see is_valid()), false on
+   * permission/path error (unprivileged fallback).
    */
   bool setup(const std::string& base_cgroup_path,
              uint64_t memory_high_bytes = 0,
              const std::string& cpuset_cpus_str = "");
+
+  /**
+   * @brief Write every limit set in @p limits, each independently.
+   *
+   * A failure (for example a controller that is not delegated, so its control
+   * file does not exist) never prevents the remaining limits from applying.
+   * @return One result per requested limit, in a fixed order: memory.max,
+   * memory.high, memory.swap.max, cpu.max, cpuset.cpus, pids.max.
+   */
+  std::vector<LimitResult> apply_limits(const CgroupLimits& limits);
+
+  /**
+   * @brief Configure memory.max hard limit.
+   * @param bytes Memory limit in bytes.
+   * @return true on success, false on error.
+   */
+  bool set_memory_max(uint64_t bytes);
+
+  /**
+   * @brief Configure memory.swap.max.
+   * @param bytes Swap limit in bytes.
+   * @return true on success, false on error.
+   */
+  bool set_swap_max(uint64_t bytes);
+
+  /**
+   * @brief Configure cpu.max bandwidth ("<quota> <period>" or "max <period>").
+   * @param value Raw cpu.max value.
+   * @return true on success, false on error.
+   */
+  bool set_cpu_max(const std::string& value);
 
   /**
    * @brief Configure memory.high soft limit.
@@ -113,8 +220,10 @@ class CgroupSlice {
 
   /**
    * @brief Check whether the cgroup slice is valid and functional.
-   * @return true if successfully initialized with write permissions, false
-   * otherwise.
+   *
+   * Valid means the directory exists and its cgroup.procs is writable, so
+   * processes can join it. Limits are reported separately by apply_limits().
+   * @return true if processes can be attached, false otherwise.
    */
   [[nodiscard]] bool is_valid() const noexcept;
 
@@ -124,13 +233,95 @@ class CgroupSlice {
    */
   [[nodiscard]] bool valid() const noexcept;
 
+  /**
+   * @brief errno of the most recent failed operation (0 after a success).
+   *
+   * The slice never prints; callers decide how (and whether) to report.
+   * @return errno value.
+   */
+  [[nodiscard]] int last_error() const noexcept;
+
  private:
   std::string name_;
   std::string path_;
   bool valid_{false};
   bool created_{false};
 
+  int last_errno_{0};
+
+  // Records why the run directory could not be created.
+  friend CgroupSlice create_run(const CgroupDelegation& delegation,
+                                const std::string& name);
+
+  /**
+   * @brief Write @p value to an existing control file (never creates it).
+   * Silent: failures are recorded in last_errno_ for the caller to report.
+   */
   bool write_file(const std::string& filename, const std::string& value);
 };
+
+/**
+ * @brief One-line summary of limits that could not be applied ("" if none).
+ *
+ * A missing control file (ENOENT: controller not delegated) is expected and
+ * not reported for cpuset.cpus (sched_setaffinity pins the child instead) and
+ * memory.swap.max (no swap accounting), nor for cpu.max when @p pinned (the
+ * affinity mask already caps the run at its CPU count; older systemd
+ * delegates only memory and pids).
+ * @param results Output of CgroupSlice::apply_limits().
+ * @param pinned Whether the child is pinned with sched_setaffinity.
+ */
+[[nodiscard]] std::string describe_limit_failures(
+    const std::vector<LimitResult>& results, bool pinned);
+
+/**
+ * @brief Whether process @p pid is a member of cgroup @p cgroup_dir.
+ * @param pid Process to check.
+ * @param cgroup_dir Absolute cgroup directory, e.g. "<root>/virmux/run-1-0".
+ * @param cgroup_root cgroup2 mount point the 0:: path is relative to.
+ * @return true/false, or std::nullopt if /proc/<pid>/cgroup is unreadable
+ * (process gone) or has no cgroup v2 line.
+ */
+[[nodiscard]] std::optional<bool> process_in_cgroup(
+    pid_t pid, const std::string& cgroup_dir, const std::string& cgroup_root);
+
+/// virmux's own directory under the delegation root; runs live beneath it.
+inline constexpr const char* kVirmuxCgroupDir = "virmux";
+
+/**
+ * @brief Controllers from @p available that should be enabled for children
+ * but are not yet in @p enabled (only cpu, cpuset, memory and pids).
+ * @param available Contents of cgroup.controllers.
+ * @param enabled Contents of cgroup.subtree_control.
+ * @return Controller names in @p available's order.
+ */
+[[nodiscard]] std::vector<std::string> controllers_to_enable(
+    const std::string& available, const std::string& enabled);
+
+/**
+ * @brief Create the cgroup for one run: `<D>/virmux/<name>`.
+ *
+ * Creates `<D>/virmux` if needed and enables in it every controller that D
+ * hands down. Only cgroups virmux created itself are ever written: D's own
+ * files are never touched. The returned slice removes its directory (rmdir)
+ * when destroyed; a cgroup that still has processes is left for
+ * sweep_stale_runs().
+ * @param delegation Result of find_cgroup_delegation().
+ * @param name Run cgroup name, conventionally "run-<pid>-<seq>".
+ * @return The slice; check is_valid() (false without delegation or on error).
+ */
+[[nodiscard]] CgroupSlice create_run(const CgroupDelegation& delegation,
+                                     const std::string& name);
+
+/**
+ * @brief Remove `run-<pid>-<seq>` cgroups under @p virmux_dir whose creating
+ * virmux process no longer exists.
+ *
+ * Uses rmdir only, so a cgroup that still holds processes (EBUSY) or has
+ * children is left alone.
+ * @param virmux_dir The `<D>/virmux` directory.
+ * @return Number of cgroups removed.
+ */
+size_t sweep_stale_runs(const std::string& virmux_dir);
 
 }  // namespace virmux
