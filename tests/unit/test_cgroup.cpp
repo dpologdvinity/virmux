@@ -453,6 +453,13 @@ void test_create_run_reports_mkdir_errno(void) {
   virmux::CgroupSlice slice = virmux::create_run(d, "run-1-0");
   TEST_ASSERT_FALSE(slice.is_valid());
   TEST_ASSERT_EQUAL_INT(ENOENT, slice.last_error());
+
+  // spawn_command assigns into an existing slice: moves keep the errno.
+  virmux::CgroupSlice assigned;
+  assigned = virmux::create_run(d, "run-1-1");
+  TEST_ASSERT_EQUAL_INT(ENOENT, assigned.last_error());
+  virmux::CgroupSlice constructed(std::move(assigned));
+  TEST_ASSERT_EQUAL_INT(ENOENT, constructed.last_error());
 }
 
 void test_describe_limit_failures_optional_files(void) {

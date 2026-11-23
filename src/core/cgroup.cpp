@@ -167,7 +167,8 @@ CgroupSlice::CgroupSlice(CgroupSlice&& other) noexcept
     : name_(std::move(other.name_)),
       path_(std::move(other.path_)),
       valid_(other.valid_),
-      created_(other.created_) {
+      created_(other.created_),
+      last_errno_(other.last_errno_) {
   other.valid_ = false;
   other.created_ = false;
 }
@@ -181,6 +182,7 @@ CgroupSlice& CgroupSlice::operator=(CgroupSlice&& other) noexcept {
     path_ = std::move(other.path_);
     valid_ = other.valid_;
     created_ = other.created_;
+    last_errno_ = other.last_errno_;
     other.valid_ = false;
     other.created_ = false;
   }
