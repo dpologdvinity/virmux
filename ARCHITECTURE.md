@@ -91,7 +91,7 @@
    - Real-time telemetry reader for host memory, `/proc/meminfo`, KSM statistics, and `/sys/block/zram*` metrics.
 
 7. **`src/sched/` (CPU Slicing & Admission Gate):**
-   - CPU placement (`src/core/cpu_select.cpp`): available CPUs are the online CPUs intersected with the parent's affinity mask. With four or more, the two lowest are kept for the interactive shell; `select_cpus()` takes a rotating contiguous window of N CPUs from the rest (a per-CPU load input is reserved for least-loaded placement). The parent builds the CPU mask and the child applies it with `sched_setaffinity` before `execvpe`, plus `cpuset.cpus` when cpuset is delegated. `--no-pin` keeps the inherited mask; `cpu.max` still caps CPU time.
+   - CPU placement (`src/core/cpu_select.cpp`): available CPUs are the online CPUs intersected with the parent's affinity mask. With four or more, the two lowest are kept for the interactive shell unless the request needs them; `select_cpus()` takes a rotating contiguous window of N CPUs from the rest (a per-CPU load input is reserved for least-loaded placement). The parent builds the CPU mask and the child applies it with `sched_setaffinity` before `execvpe`, plus `cpuset.cpus` when cpuset is delegated. `--no-pin` keeps the inherited mask; `cpu.max` still caps CPU time where the cpu controller is delegated.
    - Token-bucket concurrency gate (`AdmissionGate`) throttling heavy bursts to prevent cache thrashing.
 
 8. **`src/storage/` (Workspace Isolation & CAS Subsystem):**

@@ -86,7 +86,8 @@ void print_run_usage(std::ostream& out) {
       << "  --heavy              Register as heavy compute task with admission "
          "gate\n"
       << "  --no-pin             Do not pin the command to --cores real CPUs "
-         "(keeps the full CPU mask; cpu.max still caps usage)\n"
+         "(keeps the full CPU mask; usage is still capped where the cgroup "
+         "cpu controller is delegated)\n"
       << "  -h, --help           Show this help message\n";
 }
 

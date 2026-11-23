@@ -61,7 +61,8 @@ left alone.
   own cgroup in the part of the cgroup tree systemd hands to your user. Going
   over `--mem` gets the command killed instead of your machine swapping to a
   halt, and it gets at most `--cores` CPUs' worth of time. On machines with four
-  or more CPUs, the two lowest are left free for your shell.
+  or more CPUs, the two lowest are left free for your shell unless `--cores`
+  asks for more CPUs than the rest.
 - **Sacrifices the command first when memory runs out.** If the machine runs out
   of memory, Linux kills the command running under `virmux` instead of your
   editor or terminal.
