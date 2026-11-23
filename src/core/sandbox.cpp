@@ -401,11 +401,17 @@ CpuList plan_cpus(const SandboxConfig& cfg, uint64_t rotation) {
   }
   const CpuList avail = available_cpus();
   if (!cfg.cpuset_cores.empty()) {
-    // An explicit list is honoured as far as this process may use it.
+    // An explicit list is the pool to pin from, as far as this process may
+    // use it; the run still gets virtual_cores CPUs (its lowest ones), so
+    // the reported count, synthetic files and affinity mask agree.
     if (const auto wanted = parse_cpu_list(cfg.cpuset_cores)) {
       CpuList both;
       std::set_intersection(wanted->begin(), wanted->end(), avail.begin(),
                             avail.end(), std::back_inserter(both));
+      const auto n = static_cast<size_t>(std::max(cfg.virtual_cores, 1));
+      if (both.size() > n) {
+        both.resize(n);
+      }
       if (!both.empty()) {
         return both;
       }

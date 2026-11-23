@@ -109,15 +109,30 @@ void test_sandbox_virtual_env_and_meminfo(void) {
       .memory_limit_bytes = mem_limit,
   };
 
+  // Runs are pinned, so a machine with fewer than 3 CPUs reports them all.
+  const size_t avail = virmux::available_cpus().size();
+  const std::string want = std::to_string(avail < 3 ? avail : 3);
+  // Smaller inherited values would be kept ("at most N"); start clean.
+  unsetenv("OMP_NUM_THREADS");
+  unsetenv("GOMAXPROCS");
+  unsetenv("RAYON_NUM_THREADS");
+
   char arg0[] = "/bin/sh";
   char arg1[] = "-c";
-  char arg2[] =
-      "test \"$VIRMUX_VIRTUAL_CORES\" = \"3\" && "
-      "test \"$OMP_NUM_THREADS\" = \"3\" && "
-      "test \"$GOMAXPROCS\" = \"3\" && "
-      "test \"$RAYON_NUM_THREADS\" = \"3\" && "
-      "grep -q \"MemTotal:[[:space:]]*524288 kB\" /proc/meminfo";
-  char* argv[] = {arg0, arg1, arg2, nullptr};
+  std::string script = "test \"$VIRMUX_VIRTUAL_CORES\" = \"" + want +
+                       "\" && "
+                       "test \"$OMP_NUM_THREADS\" = \"" +
+                       want +
+                       "\" && "
+                       "test \"$GOMAXPROCS\" = \"" +
+                       want +
+                       "\" && "
+                       "test \"$RAYON_NUM_THREADS\" = \"" +
+                       want +
+                       "\" && "
+                       "grep -q \"MemTotal:[[:space:]]*524288 kB\" "
+                       "/proc/meminfo";
+  char* argv[] = {arg0, arg1, script.data(), nullptr};
 
   int exit_code = virmux::spawn_command(cfg, argv);
   TEST_ASSERT_EQUAL_INT(0, exit_code);
@@ -291,12 +306,19 @@ int count_warning_lines(const virmux::SandboxConfig& cfg,
     TEST_FAIL_MESSAGE("dup(stderr) failed");
     return -1;
   }
-  dup2(fd, STDERR_FILENO);
+  if (dup2(fd, STDERR_FILENO) < 0) {
+    close(saved);
+    close(fd);
+    TEST_FAIL_MESSAGE("dup2 into the capture file failed");
+    return -1;
+  }
   const int rc = run_sh(cfg, "exit 0");
   std::fflush(stderr);
-  dup2(saved, STDERR_FILENO);
+  // Restore stderr before any assertion so later tests report normally.
+  const int restored = dup2(saved, STDERR_FILENO);
   close(saved);
   close(fd);
+  TEST_ASSERT_TRUE_MESSAGE(restored >= 0, "restoring stderr failed");
   TEST_ASSERT_EQUAL_INT(0, rc);
 
   std::ifstream in(tmpl);
@@ -327,6 +349,24 @@ void test_sandbox_no_pin_keeps_full_mask(void) {
   const int avail = static_cast<int>(virmux::available_cpus().size());
   virmux::SandboxConfig cfg{.virtual_cores = 1, .pin_cpus = false};
   TEST_ASSERT_EQUAL_INT(avail, child_cpu_count(cfg));
+}
+
+void test_sandbox_explicit_cpuset_pins_virtual_cores(void) {
+  const auto avail = virmux::available_cpus();
+  if (avail.size() < 4) {
+    TEST_IGNORE_MESSAGE("needs at least 4 available CPUs");
+  }
+  // A wider explicit list still pins (and reports) exactly virtual_cores.
+  virmux::SandboxConfig cfg{
+      .virtual_cores = 2,
+      .cpuset_cores = virmux::format_cpu_list(
+          virmux::CpuList(avail.begin(), avail.begin() + 4)),
+  };
+  TEST_ASSERT_EQUAL_INT(2, child_cpu_count(cfg));
+  TEST_ASSERT_EQUAL_INT(0, run_sh(cfg,
+                                  "test \"$VIRMUX_VIRTUAL_CORES\" = 2 && "
+                                  "test \"$(grep -c '^processor' "
+                                  "\"$VIRMUX_SPOOFED_CPUINFO\")\" = 2"));
 }
 
 void test_sandbox_reports_pinned_core_count(void) {
@@ -380,6 +420,7 @@ int main(void) {
   RUN_TEST(test_sandbox_meminfo_cleaned_up);
   RUN_TEST(test_sandbox_pins_child_to_requested_cpus);
   RUN_TEST(test_sandbox_no_pin_keeps_full_mask);
+  RUN_TEST(test_sandbox_explicit_cpuset_pins_virtual_cores);
   RUN_TEST(test_sandbox_reports_pinned_core_count);
   RUN_TEST(test_sandbox_exports_spoofed_cpu_files);
   RUN_TEST(test_sandbox_at_most_one_warning_line);
